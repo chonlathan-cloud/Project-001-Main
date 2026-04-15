@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, CheckCircle2, LoaderCircle, ReceiptText, TriangleAlert } from 'lucide-react';
+import { ArrowUp, CheckCircle2, ExternalLink, LoaderCircle, ReceiptText, TriangleAlert } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Loading from './components/Loading';
 import ConstructionAnimation from './components/ConstructionAnimation';
 import {
   extractInputReceipt,
+  getInputRequestReceiptUrl,
   getInputProjectOptions,
   submitInputRequest,
+  uploadInputReceipt,
 } from './api';
 
 const ENTRY_TYPE_OPTIONS = [
@@ -27,6 +29,53 @@ const REQUEST_TYPE_OPTIONS = [
   { value: 'ค่าเบิกล่วงหน้า', label: 'ค่าเบิกล่วงหน้า' },
   { value: 'ค่าใช้จ่ายทั่วไป', label: 'ค่าใช้จ่ายทั่วไป' },
 ];
+
+const WORK_TYPE_ALIAS_MAP = {
+  งานบริหาร: 'งานบริหารโครงการ',
+};
+
+const REQUEST_TYPE_ALIAS_MAP = {
+  วัสดุ: 'ค่าวัสดุ',
+  ค่าใช้จ่าย: 'ค่าใช้จ่ายทั่วไป',
+  ทั่วไป: 'ค่าใช้จ่ายทั่วไป',
+  แรงงาน: 'ค่าแรง',
+  เบิกล่วงหน้า: 'ค่าเบิกล่วงหน้า',
+};
+
+const normalizeEntryType = (value) => {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase();
+  return ENTRY_TYPE_OPTIONS.some((option) => option.value === normalized) ? normalized : '';
+};
+
+const normalizeWorkType = (value) => {
+  const cleaned = String(value || '').trim();
+  const normalized = WORK_TYPE_ALIAS_MAP[cleaned] || cleaned;
+  return WORK_TYPE_OPTIONS.some((option) => option.value === normalized) ? normalized : '';
+};
+
+const normalizeRequestType = (value) => {
+  const cleaned = String(value || '').trim();
+  const normalized = REQUEST_TYPE_ALIAS_MAP[cleaned] || cleaned;
+  return REQUEST_TYPE_OPTIONS.some((option) => option.value === normalized) ? normalized : '';
+};
+
+const normalizeDateInputValue = (value) => {
+  const cleaned = String(value || '').trim();
+  if (!cleaned) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return cleaned;
+
+  const match = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (match) {
+    const [, day, month, year] = match;
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(cleaned);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toISOString().slice(0, 10);
+};
 
 const initialFormState = {
   entryType: 'EXPENSE',
@@ -171,13 +220,31 @@ const StatusBanner = ({ tone, text }) => {
 const formatEntryTypeLabel = (entryType) =>
   ENTRY_TYPE_OPTIONS.find((option) => option.value === entryType)?.label || '-';
 
+const formatOcrFieldLabel = (fieldName) => {
+  const labels = {
+    suggested_entry_type: 'ประเภทรายการ',
+    vendor_name: 'ผู้ขาย / ร้านค้า',
+    receipt_no: 'เลขที่ใบเสร็จ',
+    document_date: 'วันที่เอกสาร',
+    suggested_request_type: 'ประเภทการเบิก',
+    total_amount: 'ยอดรวม',
+    items: 'รายการสินค้า/บริการ',
+  };
+  return labels[fieldName] || fieldName;
+};
+
 const InputPage = () => {
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
   const [form, setForm] = useState(initialFormState);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [localReceiptPreviewUrl, setLocalReceiptPreviewUrl] = useState('');
   const [extractData, setExtractData] = useState(null);
+  const [uploadedReceipt, setUploadedReceipt] = useState(null);
   const [submitResult, setSubmitResult] = useState(null);
+  const [submitReceiptPreview, setSubmitReceiptPreview] = useState(null);
+  const [submitReceiptPreviewLoading, setSubmitReceiptPreviewLoading] = useState(false);
+  const [submitReceiptPreviewError, setSubmitReceiptPreviewError] = useState('');
   const [pageError, setPageError] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [flashMessage, setFlashMessage] = useState('');
@@ -202,6 +269,61 @@ const InputPage = () => {
 
     loadProjects();
   }, []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadSubmitReceiptPreview = async () => {
+      if (!submitResult?.request_id || !submitResult?.receipt_storage_key) {
+        if (isActive) {
+          setSubmitReceiptPreview(null);
+          setSubmitReceiptPreviewError('');
+          setSubmitReceiptPreviewLoading(false);
+        }
+        return;
+      }
+
+      try {
+        if (isActive) {
+          setSubmitReceiptPreviewLoading(true);
+          setSubmitReceiptPreviewError('');
+        }
+        const response = await getInputRequestReceiptUrl(submitResult.request_id, {
+          cacheToken: submitResult.receipt_storage_key || '',
+        });
+        if (!isActive) return;
+        setSubmitReceiptPreview(response);
+      } catch (error) {
+        if (!isActive) return;
+        setSubmitReceiptPreview(null);
+        setSubmitReceiptPreviewError(error.message || 'Failed to load receipt preview.');
+      } finally {
+        if (isActive) {
+          setSubmitReceiptPreviewLoading(false);
+        }
+      }
+    };
+
+    loadSubmitReceiptPreview();
+
+    return () => {
+      isActive = false;
+    };
+  }, [submitResult?.request_id, submitResult?.receipt_storage_key]);
+
+  useEffect(() => {
+    if (!selectedFile) {
+      setLocalReceiptPreviewUrl('');
+      return undefined;
+    }
+
+    const objectUrl = URL.createObjectURL(selectedFile);
+    setLocalReceiptPreviewUrl(objectUrl);
+
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [selectedFile]);
 
   const handleFieldChange = (field) => (event) => {
     const nextValue = event.target.value;
@@ -234,27 +356,39 @@ const InputPage = () => {
 
     setSelectedFile(file);
     setExtractData(null);
+    setUploadedReceipt(null);
     setSubmitError('');
     setFlashMessage('');
 
     try {
       setIsExtracting(true);
       const extracted = await extractInputReceipt(file);
-      setExtractData(extracted);
+      const normalizedExtracted = {
+        ...extracted,
+        suggested_entry_type:
+          normalizeEntryType(extracted.suggested_entry_type) || initialFormState.entryType,
+        suggested_request_type: normalizeRequestType(extracted.suggested_request_type),
+      };
+
+      setExtractData(normalizedExtracted);
       setForm((current) => ({
         ...current,
         amount: current.amount
           ? current.amount
-          : extracted.total_amount == null
+          : normalizedExtracted.total_amount == null
             ? ''
-            : String(extracted.total_amount),
-        documentDate: current.documentDate || extracted.document_date || '',
-        requestType: current.requestType || extracted.suggested_request_type || '',
-        vendorName: current.vendorName || extracted.vendor_name || '',
-        receiptNo: current.receiptNo || extracted.receipt_no || '',
+            : String(normalizedExtracted.total_amount),
+        documentDate: current.documentDate || normalizeDateInputValue(normalizedExtracted.document_date),
+        requestType: current.requestType || normalizedExtracted.suggested_request_type || '',
+        vendorName: current.vendorName || normalizedExtracted.vendor_name || '',
+        receiptNo: current.receiptNo || normalizedExtracted.receipt_no || '',
         note:
           current.note ||
-          [extracted.vendor_name, extracted.receipt_no, extracted.document_date]
+          [
+            normalizedExtracted.vendor_name,
+            normalizedExtracted.receipt_no,
+            normalizedExtracted.document_date,
+          ]
             .filter(Boolean)
             .join(' | '),
       }));
@@ -270,10 +404,16 @@ const InputPage = () => {
     event.preventDefault();
     setSubmitError('');
     setSubmitResult(null);
+    setSubmitReceiptPreview(null);
+    setSubmitReceiptPreviewError('');
     setFlashMessage('');
 
     if (!form.projectId) {
       setSubmitError('กรุณาเลือกโครงการก่อนส่งคำขอ');
+      return;
+    }
+    if (!selectedFile && !uploadedReceipt) {
+      setSubmitError('กรุณาอัปโหลดรูปหรือ PDF ของบิล/ใบเสร็จก่อนส่งคำขอ');
       return;
     }
     if (!form.requesterName.trim()) {
@@ -289,17 +429,46 @@ const InputPage = () => {
       return;
     }
 
+    const normalizedWorkType = normalizeWorkType(form.workType);
+    const normalizedRequestType = normalizeRequestType(form.requestType);
+    const normalizedDocumentDate = form.documentDate || form.requestDate;
+    const numericAmount = Number(form.amount);
+
+    if (form.workType && !normalizedWorkType) {
+      setSubmitError('ประเภทงานไม่ถูกต้อง กรุณาเลือกใหม่');
+      return;
+    }
+    if (form.requestType && !normalizedRequestType) {
+      setSubmitError('ประเภทการเบิกไม่ถูกต้อง กรุณาเลือกใหม่');
+      return;
+    }
+    if (normalizedRequestType === 'ค่าเบิกล่วงหน้า' && form.entryType !== 'EXPENSE') {
+      setSubmitError('ค่าเบิกล่วงหน้า ใช้ได้เฉพาะรายการรายจ่าย');
+      return;
+    }
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      setSubmitError('จำนวนเงินไม่ถูกต้อง');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
+      let uploadedReceiptPayload = uploadedReceipt;
+
+      if (selectedFile && !uploadedReceiptPayload) {
+        uploadedReceiptPayload = await uploadInputReceipt(selectedFile);
+        setUploadedReceipt(uploadedReceiptPayload);
+      }
+
       const response = await submitInputRequest({
         project_id: form.projectId,
         entry_type: form.entryType,
         requester_name: form.requesterName.trim(),
         phone: form.phone.trim() || null,
         request_date: form.requestDate,
-        document_date: form.documentDate || form.requestDate,
-        work_type: form.workType || null,
-        request_type: form.requestType || null,
+        document_date: normalizedDocumentDate,
+        work_type: normalizedWorkType || null,
+        request_type: normalizedRequestType || null,
         note: form.note.trim() || null,
         vendor_name: form.vendorName.trim() || null,
         receipt_no: form.receiptNo.trim() || null,
@@ -308,10 +477,14 @@ const InputPage = () => {
           account_no: form.accountNo.trim() || null,
           account_name: form.accountName.trim() || form.requesterName.trim(),
         },
-        amount: Number(form.amount),
-        receipt_file_name: selectedFile?.name || extractData?.file_name || null,
-        receipt_content_type: selectedFile?.type || extractData?.content_type || null,
-        receipt_storage_key: null,
+        amount: numericAmount,
+        receipt_file_name:
+          uploadedReceiptPayload?.file_name || selectedFile?.name || extractData?.file_name || null,
+        receipt_content_type:
+          uploadedReceiptPayload?.content_type || selectedFile?.type || extractData?.content_type || null,
+        receipt_storage_key: uploadedReceiptPayload?.storage_key || null,
+        ocr_raw_json: extractData?.ocr_raw_json || null,
+        ocr_low_confidence_fields: extractData?.low_confidence_fields || [],
       });
 
       setSubmitResult(response);
@@ -322,6 +495,7 @@ const InputPage = () => {
       });
       setSelectedFile(null);
       setExtractData(null);
+      setUploadedReceipt(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -343,6 +517,12 @@ const InputPage = () => {
   }
 
   const isIncome = form.entryType === 'INCOME';
+  const canPreviewLocalReceipt = Boolean(localReceiptPreviewUrl && selectedFile);
+  const isLocalReceiptImage = (selectedFile?.type || '').startsWith('image/');
+  const isLocalReceiptPdf = (selectedFile?.type || '') === 'application/pdf';
+  const canPreviewSubmittedReceipt = Boolean(submitReceiptPreview?.signed_url);
+  const isSubmittedReceiptImage = (submitReceiptPreview?.content_type || '').startsWith('image/');
+  const isSubmittedReceiptPdf = (submitReceiptPreview?.content_type || '') === 'application/pdf';
   const projectOptions = projects.map((project) => ({
     value: project.project_id,
     label: project.name,
@@ -391,6 +571,66 @@ const InputPage = () => {
               </AnimatePresence>
 
               {submitError ? <StatusBanner tone="error" text={submitError} /> : null}
+
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                  padding: '18px',
+                  borderRadius: '18px',
+                  backgroundColor: '#f8f1e3',
+                  border: '1px solid #d6c29f',
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ fontSize: '16px', fontWeight: '700', color: '#1a1a1a' }}>
+                    1. Upload Receipt File
+                  </div>
+                  <div style={{ fontSize: '13px', color: '#6b6256', lineHeight: 1.5 }}>
+                    อัปโหลดรูปหรือ PDF ของบิล/ใบเสร็จก่อน เพื่อให้ระบบอ่านข้อมูลและช่วยกรอกฟอร์มให้
+                  </div>
+                </div>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  style={{ display: 'none' }}
+                  onChange={handleFileChange}
+                />
+                <button
+                  type="button"
+                  onClick={handlePickFile}
+                  style={{
+                    width: '100%',
+                    height: '140px',
+                    backgroundColor: '#e6decb',
+                    border: '1px solid #bba684',
+                    borderRadius: '14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    cursor: 'pointer',
+                    color: '#1a1a1a',
+                  }}
+                >
+                  {isExtracting ? (
+                    <>
+                      <LoaderCircle size={18} className="spin" />
+                      <span style={{ fontSize: '14px', fontWeight: '600' }}>กำลังอ่านข้อมูลจากบิล...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: '14px', fontWeight: '600' }}>
+                        {selectedFile ? selectedFile.name : 'Upload Receipt Image / PDF'}
+                      </span>
+                      <ArrowUp size={16} />
+                    </>
+                  )}
+                </button>
+              </div>
 
               <SelectField
                 label="รายจ่าย / รายรับ"
@@ -512,48 +752,6 @@ const InputPage = () => {
                 />
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-                <label style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a' }}>Upload Image</label>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  style={{ display: 'none' }}
-                  onChange={handleFileChange}
-                />
-                <button
-                  type="button"
-                  onClick={handlePickFile}
-                  style={{
-                    width: '100%',
-                    height: '140px',
-                    backgroundColor: '#e6decb',
-                    border: '1px solid #bba684',
-                    borderRadius: '12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    cursor: 'pointer',
-                    color: '#1a1a1a',
-                  }}
-                >
-                  {isExtracting ? (
-                    <>
-                      <LoaderCircle size={18} className="spin" />
-                      <span style={{ fontSize: '14px', fontWeight: '600' }}>กำลังอ่านข้อมูลจากบิล...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>
-                        {selectedFile ? selectedFile.name : 'Upload Image bank bill'}
-                      </span>
-                      <ArrowUp size={16} />
-                    </>
-                  )}
-                </button>
-              </div>
-
               <div style={{ display: 'flex', justifyContent: 'center', marginTop: '4px' }}>
                 <button
                   type="submit"
@@ -614,6 +812,12 @@ const InputPage = () => {
                       text={submitResult.duplicate_reason || 'พบรายการซ้ำตามกฎ Receipt No. + Date + Amount'}
                     />
                   ) : null}
+                  {submitResult.ocr_low_confidence_fields?.length ? (
+                    <StatusBanner
+                      tone="warning"
+                      text={`OCR ยังไม่มั่นใจในบางช่อง: ${submitResult.ocr_low_confidence_fields.map(formatOcrFieldLabel).join(', ')}`}
+                    />
+                  ) : null}
                   <div className="card" style={{ backgroundColor: 'white', borderRadius: '20px', padding: '24px' }}>
                     <h2 style={{ fontSize: '22px', marginBottom: '16px' }}>Submission Summary</h2>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
@@ -628,6 +832,96 @@ const InputPage = () => {
                       <div><strong>Status:</strong> {submitResult.status}</div>
                     </div>
                   </div>
+                  <div className="card" style={{ backgroundColor: 'white', borderRadius: '20px', padding: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
+                      <div>
+                        <h2 style={{ fontSize: '22px', margin: 0 }}>Receipt Preview</h2>
+                        <div style={{ color: '#666', marginTop: '6px', fontSize: '13px' }}>
+                          {submitResult.receipt_file_name || 'ไม่มีไฟล์แนบ'}
+                        </div>
+                      </div>
+                      {canPreviewSubmittedReceipt ? (
+                        <a
+                          href={submitReceiptPreview.signed_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            textDecoration: 'none',
+                            color: '#1a1a1a',
+                            backgroundColor: '#f3eadb',
+                            border: '1px solid #d8cfbf',
+                            borderRadius: '12px',
+                            padding: '10px 12px',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                          }}
+                        >
+                          <ExternalLink size={16} />
+                          <span>Open Receipt</span>
+                        </a>
+                      ) : null}
+                    </div>
+
+                    {submitReceiptPreviewLoading ? (
+                      <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                        กำลังโหลดลิงก์ไฟล์จาก GCS...
+                      </div>
+                    ) : null}
+
+                    {submitReceiptPreviewError ? (
+                      <div style={{ color: '#912018', backgroundColor: '#fde8e8', border: '1px solid #de5b52', borderRadius: '12px', padding: '12px 14px' }}>
+                        {submitReceiptPreviewError}
+                      </div>
+                    ) : null}
+
+                    {!submitResult.receipt_storage_key && !submitReceiptPreviewLoading ? (
+                      <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                        คำขอนี้ไม่มีไฟล์ receipt ที่เก็บไว้
+                      </div>
+                    ) : null}
+
+                    {canPreviewSubmittedReceipt && isSubmittedReceiptImage ? (
+                      <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                        <img
+                          src={submitReceiptPreview.signed_url}
+                          alt={submitReceiptPreview.file_name || 'Receipt preview'}
+                          style={{
+                            width: '100%',
+                            maxHeight: '360px',
+                            objectFit: 'contain',
+                            borderRadius: '12px',
+                            display: 'block',
+                            backgroundColor: 'white',
+                          }}
+                        />
+                      </div>
+                    ) : null}
+
+                    {canPreviewSubmittedReceipt && isSubmittedReceiptPdf ? (
+                      <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                        <iframe
+                          src={submitReceiptPreview.signed_url}
+                          title={submitReceiptPreview.file_name || 'Receipt PDF preview'}
+                          style={{
+                            width: '100%',
+                            height: '520px',
+                            border: 'none',
+                            borderRadius: '12px',
+                            backgroundColor: 'white',
+                          }}
+                        />
+                      </div>
+                    ) : null}
+
+                    {canPreviewSubmittedReceipt && !isSubmittedReceiptImage && !isSubmittedReceiptPdf ? (
+                      <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                        ไฟล์นี้ไม่ใช่รูปภาพ ใช้ปุ่ม Open Receipt เพื่อเปิดไฟล์ต้นฉบับ
+                      </div>
+                    ) : null}
+                  </div>
                 </motion.div>
               ) : extractData ? (
                 <motion.div
@@ -637,10 +931,58 @@ const InputPage = () => {
                   exit={{ opacity: 0, y: -20 }}
                   style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}
                 >
+                  {extractData.low_confidence_fields?.length ? (
+                    <StatusBanner
+                      tone="warning"
+                      text={`OCR ยังไม่มั่นใจในบางช่อง: ${extractData.low_confidence_fields.map(formatOcrFieldLabel).join(', ')} กรุณาตรวจและแก้ไขก่อนส่ง`}
+                    />
+                  ) : null}
                   <div className="card" style={{ backgroundColor: 'white', borderRadius: '20px', padding: '24px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
                       <ReceiptText size={20} />
                       <h2 style={{ fontSize: '22px', margin: 0 }}>OCR Preview</h2>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '18px' }}>
+                      <strong>Uploaded Receipt</strong>
+
+                      {canPreviewLocalReceipt && isLocalReceiptImage ? (
+                        <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                          <img
+                            src={localReceiptPreviewUrl}
+                            alt={selectedFile?.name || 'Uploaded receipt preview'}
+                            style={{
+                              width: '100%',
+                              maxHeight: '360px',
+                              objectFit: 'contain',
+                              borderRadius: '12px',
+                              display: 'block',
+                              backgroundColor: 'white',
+                            }}
+                          />
+                        </div>
+                      ) : null}
+
+                      {canPreviewLocalReceipt && isLocalReceiptPdf ? (
+                        <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                          <iframe
+                            src={localReceiptPreviewUrl}
+                            title={selectedFile?.name || 'Uploaded receipt PDF preview'}
+                            style={{
+                              width: '100%',
+                              height: '520px',
+                              border: 'none',
+                              borderRadius: '12px',
+                              backgroundColor: 'white',
+                            }}
+                          />
+                        </div>
+                      ) : null}
+
+                      {canPreviewLocalReceipt && !isLocalReceiptImage && !isLocalReceiptPdf ? (
+                        <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                          ไฟล์นี้ไม่สามารถ preview ในเบราว์เซอร์ได้ แต่ระบบยังใช้ไฟล์นี้อ่าน OCR ได้
+                        </div>
+                      ) : null}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '18px' }}>
                       <div><strong>File:</strong> {extractData.file_name}</div>
@@ -684,7 +1026,7 @@ const InputPage = () => {
                       Input Workflow Preview
                     </h2>
                     <p style={{ color: '#6b6256', lineHeight: 1.6 }}>
-                      เลือกโครงการ อัปโหลดใบเสร็จเพื่อลอง OCR mock และส่งคำขอเข้า backend ใหม่ที่ออกแบบตาม flow
+                      เลือกโครงการ อัปโหลดใบเสร็จหรือ PDF เพื่อให้ Gemini ช่วยอ่านข้อมูลและส่งคำขอเข้า backend ใหม่ที่ออกแบบตาม flow
                       ของ subcontractor input และ admin review
                     </p>
                   </div>

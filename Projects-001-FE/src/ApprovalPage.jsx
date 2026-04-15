@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCheck, CircleDollarSign, Filter, LoaderCircle, OctagonX, Save, TriangleAlert } from 'lucide-react';
+import { CheckCheck, CircleDollarSign, ExternalLink, Filter, LoaderCircle, OctagonX, Save, TriangleAlert } from 'lucide-react';
 import Loading from './components/Loading';
 import {
   approveAdminInputRequest,
+  getAdminInputReceiptUrl,
   getAdminInputRequests,
   getInputProjectOptions,
   markPaidAdminInputRequest,
@@ -65,6 +66,18 @@ const emptyEditor = {
 };
 
 const formatEntryType = (value) => (value === 'INCOME' ? 'รายรับ' : 'รายจ่าย');
+const formatOcrFieldLabel = (fieldName) => {
+  const labels = {
+    suggested_entry_type: 'ประเภทรายการ',
+    vendor_name: 'ผู้ขาย / ร้านค้า',
+    receipt_no: 'เลขที่ใบเสร็จ',
+    document_date: 'วันที่เอกสาร',
+    suggested_request_type: 'ประเภทการเบิก',
+    total_amount: 'ยอดรวม',
+    items: 'รายการสินค้า/บริการ',
+  };
+  return labels[fieldName] || fieldName;
+};
 const isReviewableStatus = (value) => ['DRAFT', 'PENDING_ADMIN', 'REJECTED'].includes(value);
 const matchesFilters = (item, filters) =>
   (!filters.status || item.status === filters.status) &&
@@ -87,11 +100,40 @@ function ApprovalPage() {
   const [actionError, setActionError] = useState('');
   const [flashMessage, setFlashMessage] = useState('');
   const [busyAction, setBusyAction] = useState('');
+  const [receiptPreview, setReceiptPreview] = useState(null);
+  const [receiptPreviewLoading, setReceiptPreviewLoading] = useState(false);
+  const [receiptPreviewError, setReceiptPreviewError] = useState('');
 
   const selectedRequest = useMemo(
     () => requests.find((item) => item.request_id === selectedRequestId) || null,
     [requests, selectedRequestId]
   );
+
+  const refreshReceiptPreview = async (request = null) => {
+    const targetRequest = request || selectedRequest;
+
+    if (!targetRequest?.receipt_storage_key) {
+      setReceiptPreview(null);
+      setReceiptPreviewError('');
+      setReceiptPreviewLoading(false);
+      return;
+    }
+
+    try {
+      setReceiptPreviewLoading(true);
+      setReceiptPreviewError('');
+      const response = await getAdminInputReceiptUrl(targetRequest.request_id, {
+        cacheToken: targetRequest.receipt_storage_key || '',
+        forceRefresh: true,
+      });
+      setReceiptPreview(response);
+    } catch (error) {
+      setReceiptPreview(null);
+      setReceiptPreviewError(error.message || 'Failed to load receipt preview.');
+    } finally {
+      setReceiptPreviewLoading(false);
+    }
+  };
 
   const syncEditorWithRequest = (request) => {
     if (!request) {
@@ -167,6 +209,47 @@ function ApprovalPage() {
     syncEditorWithRequest(selectedRequest);
   }, [selectedRequest]);
 
+  useEffect(() => {
+    let isActive = true;
+
+    const loadReceiptPreview = async () => {
+      if (!selectedRequest?.receipt_storage_key) {
+        if (isActive) {
+          setReceiptPreview(null);
+          setReceiptPreviewError('');
+          setReceiptPreviewLoading(false);
+        }
+        return;
+      }
+
+      try {
+        if (isActive) {
+          setReceiptPreviewLoading(true);
+          setReceiptPreviewError('');
+        }
+        const response = await getAdminInputReceiptUrl(selectedRequest.request_id, {
+          cacheToken: selectedRequest.receipt_storage_key || '',
+        });
+        if (!isActive) return;
+        setReceiptPreview(response);
+      } catch (error) {
+        if (!isActive) return;
+        setReceiptPreview(null);
+        setReceiptPreviewError(error.message || 'Failed to load receipt preview.');
+      } finally {
+        if (isActive) {
+          setReceiptPreviewLoading(false);
+        }
+      }
+    };
+
+    loadReceiptPreview();
+
+    return () => {
+      isActive = false;
+    };
+  }, [selectedRequest?.request_id, selectedRequest?.receipt_storage_key]);
+
   const handleEditorChange = (field) => (event) => {
     setEditor((current) => ({ ...current, [field]: event.target.value }));
     setActionError('');
@@ -198,6 +281,7 @@ function ApprovalPage() {
         amount: Number(editor.amount),
       });
       replaceRequest(updated);
+      await refreshReceiptPreview(updated);
       setFlashMessage('บันทึกการแก้ไขเรียบร้อย');
     } catch (error) {
       setActionError(error.message || 'Failed to save review changes.');
@@ -218,6 +302,7 @@ function ApprovalPage() {
       });
       if (matchesFilters(approved, filters)) {
         replaceRequest(approved);
+        await refreshReceiptPreview(approved);
       } else {
         await loadData({ keepSelection: false });
       }
@@ -244,6 +329,7 @@ function ApprovalPage() {
       });
       if (matchesFilters(rejected, filters)) {
         replaceRequest(rejected);
+        await refreshReceiptPreview(rejected);
       } else {
         await loadData({ keepSelection: false });
       }
@@ -267,6 +353,7 @@ function ApprovalPage() {
       });
       if (matchesFilters(paid, filters)) {
         replaceRequest(paid);
+        await refreshReceiptPreview(paid);
       } else {
         await loadData({ keepSelection: false });
       }
@@ -293,6 +380,9 @@ function ApprovalPage() {
   const canApprove = canEdit;
   const canReject = canEdit;
   const canMarkPaid = selectedRequest?.status === 'APPROVED';
+  const canPreviewReceipt = Boolean(receiptPreview?.signed_url);
+  const isPreviewImage = (receiptPreview?.content_type || '').startsWith('image/');
+  const isPreviewPdf = (receiptPreview?.content_type || '') === 'application/pdf';
 
   return (
     <>
@@ -442,6 +532,127 @@ function ApprovalPage() {
                     <strong style={{ display: 'block', marginBottom: '4px' }}>Duplicate Red Flag</strong>
                     <span>{selectedRequest.duplicate_reason || 'พบรายการซ้ำตามกฎ Receipt No. + Date + Amount'}</span>
                   </div>
+                </div>
+              ) : null}
+
+              {selectedRequest.ocr_low_confidence_fields?.length ? (
+                <div style={{ color: '#8b5a00', backgroundColor: '#fff4de', border: '1px solid #c98c1c', borderRadius: '12px', padding: '12px 14px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <TriangleAlert size={18} style={{ flexShrink: 0, marginTop: '1px' }} />
+                  <div>
+                    <strong style={{ display: 'block', marginBottom: '4px' }}>OCR Low Confidence</strong>
+                    <span>{selectedRequest.ocr_low_confidence_fields.map(formatOcrFieldLabel).join(', ')}</span>
+                  </div>
+                </div>
+              ) : null}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
+                  <div>
+                    <strong style={{ display: 'block', marginBottom: '4px' }}>Receipt Preview</strong>
+                    <span style={{ color: '#666', fontSize: '13px' }}>
+                      {selectedRequest.receipt_file_name || 'ไม่มีชื่อไฟล์แนบ'}
+                    </span>
+                  </div>
+                  {canPreviewReceipt ? (
+                    <a
+                      href={receiptPreview.signed_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        textDecoration: 'none',
+                        color: '#1a1a1a',
+                        backgroundColor: '#f3eadb',
+                        border: '1px solid #d8cfbf',
+                        borderRadius: '12px',
+                        padding: '10px 12px',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                      }}
+                    >
+                      <ExternalLink size={16} />
+                      <span>Open Receipt</span>
+                    </a>
+                  ) : null}
+                </div>
+
+                {receiptPreviewLoading ? (
+                  <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                    กำลังโหลดลิงก์ไฟล์จาก GCS...
+                  </div>
+                ) : null}
+
+                {receiptPreviewError ? (
+                  <div style={{ color: '#912018', backgroundColor: '#fde8e8', border: '1px solid #de5b52', borderRadius: '12px', padding: '12px 14px' }}>
+                    {receiptPreviewError}
+                  </div>
+                ) : null}
+
+                {!selectedRequest.receipt_storage_key && !receiptPreviewLoading ? (
+                  <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                    รายการนี้ยังไม่มีไฟล์ receipt ที่เก็บไว้
+                  </div>
+                ) : null}
+
+                {canPreviewReceipt && isPreviewImage ? (
+                  <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                    <img
+                      src={receiptPreview.signed_url}
+                      alt={receiptPreview.file_name || 'Receipt preview'}
+                      style={{
+                        width: '100%',
+                        maxHeight: '360px',
+                        objectFit: 'contain',
+                        borderRadius: '12px',
+                        display: 'block',
+                        backgroundColor: 'white',
+                      }}
+                    />
+                  </div>
+                ) : null}
+
+                {canPreviewReceipt && isPreviewPdf ? (
+                  <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                    <iframe
+                      src={receiptPreview.signed_url}
+                      title={receiptPreview.file_name || 'Receipt PDF preview'}
+                      style={{
+                        width: '100%',
+                        height: '520px',
+                        border: 'none',
+                        borderRadius: '12px',
+                        backgroundColor: 'white',
+                      }}
+                    />
+                  </div>
+                ) : null}
+
+                {canPreviewReceipt && !isPreviewImage && !isPreviewPdf ? (
+                  <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                    ไฟล์นี้ไม่ใช่รูปภาพ ใช้ปุ่ม Open Receipt เพื่อเปิดไฟล์ต้นฉบับ
+                  </div>
+                ) : null}
+              </div>
+
+              {selectedRequest.ocr_raw_json ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <strong style={{ display: 'block' }}>OCR Debug JSON</strong>
+                  <pre
+                    style={{
+                      margin: 0,
+                      padding: '14px 16px',
+                      borderRadius: '14px',
+                      backgroundColor: '#1f1f1f',
+                      color: '#f5f5f5',
+                      overflowX: 'auto',
+                      fontSize: '12px',
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {JSON.stringify(selectedRequest.ocr_raw_json, null, 2)}
+                  </pre>
                 </div>
               ) : null}
 

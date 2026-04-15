@@ -7,7 +7,7 @@ general income/expense requests without forcing them into the approval model.
 
 import uuid
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, JSON, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -44,6 +44,8 @@ class InputRequest(Base):
     receipt_file_name = Column(String, nullable=True)
     receipt_content_type = Column(String, nullable=True)
     receipt_storage_key = Column(String, nullable=True)
+    ocr_raw_json = Column(JSON, nullable=True)
+    ocr_low_confidence_fields = Column(JSON, nullable=True)
     is_duplicate_flag = Column(Boolean, nullable=False, default=False)
     duplicate_reason = Column(Text, nullable=True)
     duplicate_of_request_id = Column(UUID(as_uuid=True), nullable=True)

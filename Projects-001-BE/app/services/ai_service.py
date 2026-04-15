@@ -3,6 +3,7 @@ AI Service — Gemini Integration via google-genai on Vertex AI.
 
 Implements:
   - BOQ Sheet parsing via Gemini  (LLD §3.1, BRD §4.1)
+  - Receipt OCR extraction via Gemini
   - Vector embedding generation   (BRD §5.1)
   - Strategic RAG chat             (LLD §3.2)
 
@@ -12,6 +13,7 @@ Uses google-genai SDK in Vertex AI mode.
 import json
 import logging
 import os
+from datetime import datetime
 from time import perf_counter
 
 from google import genai
@@ -24,10 +26,30 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _GCP_PROJECT = os.getenv("GCP_PROJECT_ID")
 _GCP_LOCATION = os.getenv("GCP_LOCATION", "asia-southeast1")
-_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 _EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
 
 _client: genai.Client | None = None
+
+
+def _normalize_receipt_date(value: object) -> str | None:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(cleaned, fmt).date().isoformat()
+        except ValueError:
+            continue
+
+    if "T" in cleaned:
+        try:
+            return datetime.fromisoformat(cleaned.replace("Z", "+00:00")).date().isoformat()
+        except ValueError:
+            return None
+
+    return None
 
 
 def _get_client() -> genai.Client:
@@ -40,6 +62,70 @@ def _get_client() -> genai.Client:
             location=_GCP_LOCATION,
         )
     return _client
+
+
+RECEIPT_OCR_PROMPT = """\
+You are an OCR and invoice understanding assistant for construction finance workflows.
+Read the uploaded receipt, invoice, tax invoice, bank bill image, or PDF and extract only the
+fields requested below.
+
+The uploaded document may be in Thai, English, or mixed Thai-English.
+
+Return data for the following JSON object:
+- suggested_entry_type: "EXPENSE" or "INCOME"
+- vendor_name: merchant, vendor, company, store, or payee/payer name if visible
+- receipt_no: receipt number, invoice number, tax invoice number, document number, or reference number
+- document_date: document date in YYYY-MM-DD if a reliable date is visible, otherwise null
+- suggested_request_type: one of ["ค่าวัสดุ", "ค่าแรง", "ค่าเบิกล่วงหน้า", "ค่าใช้จ่ายทั่วไป"] or null
+- total_amount: final payable/received amount as number if visible, otherwise 0
+- items: up to 10 line items with description, qty, price
+- low_confidence_fields: list of field names that are visible but uncertain. Use only these names:
+  ["suggested_entry_type", "vendor_name", "receipt_no", "document_date", "suggested_request_type", "total_amount", "items"]
+- message: short Thai message summarising whether the extraction is complete or partial
+
+Rules:
+- Prefer accuracy over guessing. If a field is unclear, return null.
+- For suggested_request_type:
+  - construction materials / hardware / store purchases => "ค่าวัสดุ"
+  - labor / wages / manpower / subcontract labor => "ค่าแรง"
+  - deposit / advance / prepayment / mobilization => "ค่าเบิกล่วงหน้า"
+  - utilities / transport / food / admin / other overhead => "ค่าใช้จ่ายทั่วไป"
+- If the document looks like a purchase or expense receipt, set suggested_entry_type to "EXPENSE".
+- If it clearly shows money received by the user/company, set suggested_entry_type to "INCOME".
+- total_amount must be numeric only, with no currency symbols.
+- items[].qty and items[].price must be numeric when available; otherwise use 0.
+- If a field is missing entirely, keep it null/0 and do not include it in low_confidence_fields.
+- Return only valid JSON. No markdown.
+"""
+
+RECEIPT_OCR_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "suggested_entry_type": {"type": "STRING", "nullable": True},
+        "vendor_name": {"type": "STRING", "nullable": True},
+        "receipt_no": {"type": "STRING", "nullable": True},
+        "document_date": {"type": "STRING", "nullable": True},
+        "suggested_request_type": {"type": "STRING", "nullable": True},
+        "total_amount": {"type": "NUMBER", "nullable": True},
+        "items": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "description": {"type": "STRING"},
+                    "qty": {"type": "NUMBER", "nullable": True},
+                    "price": {"type": "NUMBER", "nullable": True},
+                },
+                "required": ["description"],
+            },
+        },
+        "low_confidence_fields": {
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+        },
+        "message": {"type": "STRING", "nullable": True},
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +245,119 @@ async def parse_boq_sheet_with_gemini(
 
     except Exception as exc:
         logger.exception("GenAI call failed for sheet '%s'", sheet_name)
+        raise
+
+
+async def extract_receipt_data_with_gemini(
+    *,
+    file_bytes: bytes,
+    mime_type: str,
+    file_name: str | None = None,
+) -> dict:
+    """
+    Run OCR + field extraction on a receipt-like image or PDF using Gemini 2.5 Flash.
+
+    Returns a dict matching the Input page receipt extract contract.
+    """
+    try:
+        client = _get_client()
+        started_at = perf_counter()
+
+        response = await client.aio.models.generate_content(
+            model=_GEMINI_MODEL,
+            contents=[
+                RECEIPT_OCR_PROMPT,
+                genai_types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+            ],
+            config=genai_types.GenerateContentConfig(
+                temperature=0,
+                response_mime_type="application/json",
+                response_schema=RECEIPT_OCR_RESPONSE_SCHEMA,
+            ),
+        )
+
+        response_text = (response.text or "").strip()
+        extracted = json.loads(response_text) if response_text else {}
+        if not isinstance(extracted, dict):
+            raise ValueError("Gemini did not return a JSON object for receipt OCR.")
+
+        normalized_items = []
+        for item in extracted.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            description = str(item.get("description") or "").strip()
+            if not description:
+                continue
+            qty = item.get("qty")
+            price = item.get("price")
+            normalized_items.append(
+                {
+                    "description": description,
+                    "qty": float(qty) if qty is not None else 0,
+                    "price": float(price) if price is not None else 0,
+                }
+            )
+
+        low_confidence_fields: list[str] = []
+        for field_name in extracted.get("low_confidence_fields") or []:
+            cleaned = str(field_name or "").strip()
+            if cleaned and cleaned not in low_confidence_fields:
+                low_confidence_fields.append(cleaned)
+
+        normalized_document_date = _normalize_receipt_date(extracted.get("document_date"))
+        result = {
+            "file_name": file_name or "uploaded-receipt",
+            "content_type": mime_type,
+            "suggested_entry_type": str(
+                extracted.get("suggested_entry_type") or "EXPENSE"
+            ).strip()
+            or "EXPENSE",
+            "vendor_name": (
+                str(extracted.get("vendor_name")).strip()
+                if extracted.get("vendor_name") is not None
+                else None
+            ),
+            "receipt_no": (
+                str(extracted.get("receipt_no")).strip()
+                if extracted.get("receipt_no") is not None
+                else None
+            ),
+            "document_date": normalized_document_date,
+            "suggested_request_type": (
+                str(extracted.get("suggested_request_type")).strip()
+                if extracted.get("suggested_request_type") is not None
+                else None
+            ),
+            "total_amount": float(extracted.get("total_amount") or 0),
+            "items": normalized_items[:10],
+            "ocr_raw_json": extracted,
+            "low_confidence_fields": low_confidence_fields,
+            "message": (
+                str(extracted.get("message")).strip()
+                if extracted.get("message") is not None
+                else "OCR completed."
+            ),
+        }
+
+        if extracted.get("document_date") and not normalized_document_date:
+            result["low_confidence_fields"] = list(
+                dict.fromkeys([*result["low_confidence_fields"], "document_date"])
+            )
+
+        logger.info(
+            "Receipt OCR completed file=%s mime_type=%s items=%d elapsed_ms=%.1f",
+            file_name or "uploaded-receipt",
+            mime_type,
+            len(result["items"]),
+            (perf_counter() - started_at) * 1000,
+        )
+        return result
+
+    except json.JSONDecodeError as exc:
+        logger.error("Gemini returned invalid JSON for receipt OCR: %s", exc)
+        raise ValueError("AI returned invalid JSON for receipt OCR.") from exc
+    except Exception:
+        logger.exception("Receipt OCR extraction failed for file '%s'", file_name)
         raise
 
 

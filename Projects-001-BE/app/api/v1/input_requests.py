@@ -3,7 +3,7 @@ Router for the Input page submission flow.
 
 Provides:
   - project options for dropdowns
-  - receipt extraction mock for upload/autofill
+  - receipt extraction for upload/autofill
   - request submission to Postgres
   - request listing for review/debugging
 """
@@ -29,9 +29,19 @@ from app.schemas.input_schema import (
     InputRequestMarkPaidAction,
     InputRequestRejectAction,
     ProjectOptionItem,
+    ReceiptAccessResponse,
     ReceiptExtractResponse,
+    ReceiptUploadResponse,
+    TempReceiptCleanupResponse,
 )
 from app.schemas.responses import StandardResponse
+from app.services.gcs_storage_service import (
+    generate_signed_url_for_storage_key,
+    move_input_receipt_to_perm_storage,
+    upload_input_receipt_to_temp_storage,
+)
+from app.services.ai_service import extract_receipt_data_with_gemini
+from app.services.input_receipt_cleanup_service import cleanup_orphan_temp_receipts
 
 router = APIRouter(prefix="/input", tags=["Input Requests"])
 
@@ -49,6 +59,14 @@ def _duplicate_flag_value(value: object) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def _validate_request_business_rules(*, entry_type: str, request_type: str | None) -> None:
+    if request_type == "ค่าเบิกล่วงหน้า" and entry_type != "EXPENSE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ค่าเบิกล่วงหน้า ใช้ได้เฉพาะรายการรายจ่ายเท่านั้น.",
+        )
 
 
 def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequestItem:
@@ -76,6 +94,8 @@ def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequ
         receipt_file_name=item.receipt_file_name,
         receipt_content_type=item.receipt_content_type,
         receipt_storage_key=item.receipt_storage_key,
+        ocr_raw_json=item.ocr_raw_json,
+        ocr_low_confidence_fields=item.ocr_low_confidence_fields or [],
         is_duplicate_flag=_duplicate_flag_value(item.is_duplicate_flag),
         duplicate_reason=item.duplicate_reason,
         duplicate_of_request_id=item.duplicate_of_request_id,
@@ -156,6 +176,33 @@ async def _get_input_request_with_project(
     return row
 
 
+async def _build_receipt_access_response(
+    *,
+    input_request: InputRequest,
+    expires_in_minutes: int,
+) -> ReceiptAccessResponse:
+    if not input_request.receipt_storage_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Input request {input_request.id} does not have a stored receipt file.",
+        )
+
+    signed_url = await generate_signed_url_for_storage_key(
+        storage_key=input_request.receipt_storage_key,
+        expires_in_minutes=expires_in_minutes,
+    )
+
+    return ReceiptAccessResponse(
+        request_id=input_request.id,
+        file_name=input_request.receipt_file_name,
+        content_type=input_request.receipt_content_type,
+        storage_key=input_request.receipt_storage_key,
+        signed_url=signed_url,
+        expires_in_minutes=expires_in_minutes,
+        message="Signed URL generated successfully.",
+    )
+
+
 @router.get("/projects", response_model=StandardResponse[list[ProjectOptionItem]])
 async def list_input_projects(db: AsyncSession = Depends(get_db)):
     """Return project options for the Input page dropdown."""
@@ -183,36 +230,189 @@ async def list_input_projects(db: AsyncSession = Depends(get_db)):
 @router.post("/receipt-extract", response_model=StandardResponse[ReceiptExtractResponse])
 async def extract_input_receipt(file: UploadFile = File(...)):
     """
-    Temporary receipt extraction endpoint for the Input page.
-
-    The response is intentionally deterministic so the frontend can wire up the
-    upload/autofill flow before OCR integration is implemented.
+    Receipt extraction endpoint for the Input page using Gemini OCR.
     """
     try:
         file_bytes = await file.read()
         file_size_bytes = len(file_bytes)
+        if not file_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded receipt file is empty.",
+            )
+        content_type = file.content_type or "application/octet-stream"
+        is_supported_image = content_type.startswith("image/")
+        is_supported_pdf = content_type == "application/pdf"
+        if not (is_supported_image or is_supported_pdf):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Receipt OCR currently supports image files and PDF only.",
+            )
+
+        extracted = await extract_receipt_data_with_gemini(
+            file_bytes=file_bytes,
+            mime_type=content_type,
+            file_name=file.filename,
+        )
 
         response = ReceiptExtractResponse(
-            file_name=file.filename or "uploaded-receipt",
-            content_type=file.content_type,
+            file_name=extracted["file_name"],
+            content_type=extracted["content_type"],
             file_size_bytes=file_size_bytes,
-            suggested_entry_type="EXPENSE",
-            vendor_name="Temporary OCR Vendor",
-            receipt_no="INV-2026-001",
-            document_date="2026-04-12",
-            suggested_request_type="วัสดุ",
-            total_amount=15500.00,
-            items=[
-                {"description": "Cement", "qty": 100, "price": 155.00},
-            ],
-            message="Receipt extracted with mock OCR response.",
+            suggested_entry_type=extracted["suggested_entry_type"],
+            vendor_name=extracted["vendor_name"],
+            receipt_no=extracted["receipt_no"],
+            document_date=extracted["document_date"],
+            suggested_request_type=extracted["suggested_request_type"],
+            total_amount=extracted["total_amount"],
+            items=extracted["items"],
+            ocr_raw_json=extracted["ocr_raw_json"],
+            low_confidence_fields=extracted["low_confidence_fields"],
+            message=extracted["message"],
         )
         return StandardResponse(data=response)
 
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to extract receipt: {exc}",
+        ) from exc
+
+
+@router.post("/receipt-upload", response_model=StandardResponse[ReceiptUploadResponse])
+async def upload_input_receipt(file: UploadFile = File(...)):
+    """Upload a receipt file to the temporary GCS bucket before submission."""
+    try:
+        file_bytes = await file.read()
+        if not file_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded receipt file is empty.",
+            )
+
+        storage_key = await upload_input_receipt_to_temp_storage(
+            file_bytes=file_bytes,
+            file_name=file.filename,
+            content_type=file.content_type,
+        )
+
+        return StandardResponse(
+            data=ReceiptUploadResponse(
+                file_name=file.filename or "uploaded-receipt",
+                content_type=file.content_type,
+                file_size_bytes=len(file_bytes),
+                storage_key=storage_key,
+                message="Receipt uploaded to temporary storage.",
+            )
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload receipt to storage: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/requests/{request_id}/receipt-url",
+    response_model=StandardResponse[ReceiptAccessResponse],
+)
+async def get_input_request_receipt_url(
+    request_id: UUID,
+    expires_in_minutes: int = Query(default=15, ge=1, le=60),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a short-lived signed URL for an input request receipt."""
+    try:
+        input_request, _project_name = await _get_input_request_with_project(db, request_id)
+        return StandardResponse(
+            data=await _build_receipt_access_response(
+                input_request=input_request,
+                expires_in_minutes=expires_in_minutes,
+            )
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate receipt signed URL: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/admin/requests/{request_id}/receipt-url",
+    response_model=StandardResponse[ReceiptAccessResponse],
+)
+async def get_admin_input_request_receipt_url(
+    request_id: UUID,
+    expires_in_minutes: int = Query(default=15, ge=1, le=60),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a short-lived signed URL for the selected input request receipt."""
+    try:
+        input_request, _project_name = await _get_input_request_with_project(db, request_id)
+        return StandardResponse(
+            data=await _build_receipt_access_response(
+                input_request=input_request,
+                expires_in_minutes=expires_in_minutes,
+            )
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate receipt signed URL: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/admin/cleanup-temp-receipts",
+    response_model=StandardResponse[TempReceiptCleanupResponse],
+)
+async def cleanup_admin_temp_receipts(
+    older_than_hours: int = Query(default=24, ge=1, le=168),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete old temp receipt objects that are no longer referenced in the database."""
+    try:
+        result = await cleanup_orphan_temp_receipts(
+            db=db,
+            older_than_hours=older_than_hours,
+        )
+        return StandardResponse(data=result)
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cleanup temp receipts: {exc}",
         ) from exc
 
 
@@ -234,6 +434,11 @@ async def create_input_request(
                 detail=f"Project {request.project_id} not found.",
             )
 
+        _validate_request_business_rules(
+            entry_type=request.entry_type,
+            request_type=request.request_type,
+        )
+
         record = InputRequest(
             project_id=request.project_id,
             entry_type=request.entry_type,
@@ -253,6 +458,8 @@ async def create_input_request(
             receipt_file_name=_clean_optional_text(request.receipt_file_name),
             receipt_content_type=_clean_optional_text(request.receipt_content_type),
             receipt_storage_key=_clean_optional_text(request.receipt_storage_key),
+            ocr_raw_json=request.ocr_raw_json,
+            ocr_low_confidence_fields=request.ocr_low_confidence_fields,
             status="PENDING_ADMIN",
         )
         db.add(record)
@@ -384,6 +591,10 @@ async def update_admin_input_request(
             else:
                 setattr(input_request, field, value)
 
+        _validate_request_business_rules(
+            entry_type=input_request.entry_type,
+            request_type=input_request.request_type,
+        )
         input_request.reviewed_at = datetime.now(timezone.utc)
         await _apply_duplicate_detection(db, input_request, exclude_request_id=input_request.id)
         await db.commit()
@@ -428,6 +639,10 @@ async def approve_admin_input_request(
         now = datetime.now(timezone.utc)
         input_request.approved_amount = Decimal(str(approved_amount))
         input_request.review_note = (request.review_note or "").strip() or None
+        input_request.receipt_storage_key = await move_input_receipt_to_perm_storage(
+            storage_key=input_request.receipt_storage_key,
+            request_id=input_request.id,
+        )
         input_request.status = "APPROVED"
         input_request.reviewed_at = now
         input_request.approved_at = now

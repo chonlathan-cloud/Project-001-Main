@@ -127,8 +127,14 @@ async function apiRequest(path, options = {}) {
   }
 
   if (!response.ok) {
-    const detail =
-      payload?.detail || payload?.message || `Request failed with status ${response.status}`;
+    const detail = Array.isArray(payload?.detail)
+      ? payload.detail
+          .map((item) => {
+            const location = Array.isArray(item?.loc) ? item.loc.join('.') : 'request';
+            return `${location}: ${item?.msg || 'Validation error'}`;
+          })
+          .join(' | ')
+      : payload?.detail || payload?.message || `Request failed with status ${response.status}`;
     throw new Error(detail);
   }
 
@@ -137,6 +143,54 @@ async function apiRequest(path, options = {}) {
   }
 
   return payload?.data ?? payload;
+}
+
+const receiptPreviewCache = new Map();
+
+function getReceiptPreviewCache(cacheKey) {
+  const cached = receiptPreviewCache.get(cacheKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    receiptPreviewCache.delete(cacheKey);
+    return null;
+  }
+  return cached.data;
+}
+
+function setReceiptPreviewCache(cacheKey, data, expiresInMinutes) {
+  const ttlMs = Math.max(1, Number(expiresInMinutes) || 15) * 60 * 1000;
+  receiptPreviewCache.set(cacheKey, {
+    data,
+    expiresAt: Date.now() + ttlMs - 10 * 1000,
+  });
+}
+
+function buildReceiptPreviewCacheKey(prefix, requestId, cacheToken, expiresInMinutes) {
+  return `${prefix}:${requestId}:${cacheToken || 'default'}:${expiresInMinutes}`;
+}
+
+async function getReceiptPreview(path, {
+  requestId,
+  expiresInMinutes = 15,
+  cacheToken = '',
+  forceRefresh = false,
+  cachePrefix,
+}) {
+  const cacheKey = buildReceiptPreviewCacheKey(
+    cachePrefix,
+    requestId,
+    cacheToken,
+    expiresInMinutes
+  );
+
+  if (!forceRefresh) {
+    const cached = getReceiptPreviewCache(cacheKey);
+    if (cached) return cached;
+  }
+
+  const data = await apiRequest(path);
+  setReceiptPreviewCache(cacheKey, data, expiresInMinutes);
+  return data;
 }
 
 export async function getDashboardData() {
@@ -336,7 +390,11 @@ export async function getProjectDetailData(projectId) {
 
 export async function getInputProjectOptions() {
   const data = await apiRequest('/api/v1/input/projects');
-  return Array.isArray(data) ? data : [];
+  if (!Array.isArray(data)) return [];
+  return data.map((item) => ({
+    ...item,
+    project_id: item.project_id || item.id || '',
+  }));
 }
 
 export async function extractInputReceipt(file) {
@@ -348,6 +406,18 @@ export async function extractInputReceipt(file) {
     headers: {},
     body: formData,
     timeoutMs: 45000,
+  });
+}
+
+export async function uploadInputReceipt(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return apiRequest('/api/v1/input/receipt-upload', {
+    method: 'POST',
+    headers: {},
+    body: formData,
+    timeoutMs: 90000,
   });
 }
 
@@ -369,6 +439,38 @@ export async function getAdminInputRequests(filters = {}) {
   const path = query ? `/api/v1/input/admin/requests?${query}` : '/api/v1/input/admin/requests';
   const data = await apiRequest(path);
   return Array.isArray(data) ? data : [];
+}
+
+export async function getAdminInputReceiptUrl(
+  requestId,
+  { expiresInMinutes = 15, cacheToken = '', forceRefresh = false } = {}
+) {
+  return getReceiptPreview(
+    `/api/v1/input/admin/requests/${requestId}/receipt-url?expires_in_minutes=${expiresInMinutes}`,
+    {
+      requestId,
+      expiresInMinutes,
+      cacheToken,
+      forceRefresh,
+      cachePrefix: 'admin-input-receipt',
+    }
+  );
+}
+
+export async function getInputRequestReceiptUrl(
+  requestId,
+  { expiresInMinutes = 15, cacheToken = '', forceRefresh = false } = {}
+) {
+  return getReceiptPreview(
+    `/api/v1/input/requests/${requestId}/receipt-url?expires_in_minutes=${expiresInMinutes}`,
+    {
+      requestId,
+      expiresInMinutes,
+      cacheToken,
+      forceRefresh,
+      cachePrefix: 'input-receipt',
+    }
+  );
 }
 
 export async function updateAdminInputRequest(requestId, payload) {

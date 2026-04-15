@@ -38,6 +38,8 @@ async def main() -> None:
                 ADD COLUMN IF NOT EXISTS vendor_name VARCHAR,
                 ADD COLUMN IF NOT EXISTS receipt_no VARCHAR,
                 ADD COLUMN IF NOT EXISTS document_date DATE,
+                ADD COLUMN IF NOT EXISTS ocr_raw_json JSONB,
+                ADD COLUMN IF NOT EXISTS ocr_low_confidence_fields JSONB,
                 ADD COLUMN IF NOT EXISTS is_duplicate_flag BOOLEAN DEFAULT FALSE,
                 ADD COLUMN IF NOT EXISTS duplicate_reason TEXT,
                 ADD COLUMN IF NOT EXISTS duplicate_of_request_id UUID,
