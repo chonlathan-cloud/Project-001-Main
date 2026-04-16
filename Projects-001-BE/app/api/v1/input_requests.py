@@ -74,6 +74,7 @@ def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequ
         request_id=item.id,
         project_id=item.project_id,
         project_name=project_name,
+        subcontractor_id=item.subcontractor_id,
         entry_type=item.entry_type,
         requester_name=item.requester_name,
         phone=item.phone,
@@ -441,6 +442,7 @@ async def create_input_request(
 
         record = InputRequest(
             project_id=request.project_id,
+            subcontractor_id=_clean_optional_text(request.subcontractor_id),
             entry_type=request.entry_type,
             requester_name=request.requester_name.strip(),
             phone=_clean_optional_text(request.phone),
@@ -582,6 +584,8 @@ async def update_admin_input_request(
                 input_request.bank_name = _clean_optional_text(value.get("bank_name"))
                 input_request.account_no = _clean_optional_text(value.get("account_no"))
                 input_request.account_name = _clean_optional_text(value.get("account_name"))
+            elif field == "subcontractor_id":
+                input_request.subcontractor_id = _clean_optional_text(value)
             elif field == "amount":
                 input_request.amount = Decimal(str(value))
             elif field == "receipt_no":

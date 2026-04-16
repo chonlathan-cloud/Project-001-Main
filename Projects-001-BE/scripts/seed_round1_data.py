@@ -33,6 +33,7 @@ load_dotenv(BACKEND_ROOT / ".env")
 
 from app.core.database import AsyncSessionLocal, Base  # <--- ตรวจสอบว่ามี Base อยู่ตรงนี้!
 from app.models.boq import BOQItem, Project
+from app.models.chat_history import ChatHistory  # noqa: F401
 from app.models.finance import Installment, Transaction
 from app.models.input_request import InputRequest  # noqa: F401
 from app.services.finance_service import calculate_net_payable
@@ -59,8 +60,50 @@ class InstallmentSpec:
     amount: str
     status: str
     due_date: str
+    subcontractor_id: str | None = None
     is_overdue: bool = False
     approved_at: str | None = None
+
+
+@dataclass(frozen=True)
+class InputRequestSeedSpec:
+    key: str
+    project_key: str
+    subcontractor_id: str | None
+    requester_name: str
+    entry_type: str
+    request_date: str
+    amount: str
+    status: str
+    work_type: str | None = None
+    request_type: str | None = None
+    note: str | None = None
+    vendor_name: str | None = None
+    receipt_no: str | None = None
+    document_date: str | None = None
+    approved_amount: str | None = None
+    review_note: str | None = None
+    created_at: str | None = None
+    reviewed_at: str | None = None
+    approved_at: str | None = None
+    paid_at: str | None = None
+    payment_reference: str | None = None
+    is_duplicate_flag: bool = False
+    duplicate_of_key: str | None = None
+
+
+DEFAULT_PROJECT_SUBCONTRACTORS: dict[str, str] = {
+    "bangna-warehouse-fitout": "sub_001",
+    "chiangmai-hotel-renovation": "sub_002",
+    "rayong-factory-mep-upgrade": "sub_001",
+    "phuket-sales-gallery": "sub_003",
+}
+
+SUBCONTRACTOR_NAME_BY_ID: dict[str, str] = {
+    "sub_001": "ABC Construction Co., Ltd.",
+    "sub_002": "Thai Electrical Services",
+    "sub_003": "Southern Interior Studio",
+}
 
 
 def seeded_uuid(*parts: str) -> uuid.UUID:
@@ -558,6 +601,165 @@ PROJECT_BLUEPRINTS: list[dict[str, Any]] = [
     },
 ]
 
+INPUT_REQUEST_SPECS: list[InputRequestSeedSpec] = [
+    InputRequestSeedSpec(
+        key="ir-bw-jan-approved",
+        project_key="bangna-warehouse-fitout",
+        subcontractor_id="sub_001",
+        requester_name=SUBCONTRACTOR_NAME_BY_ID["sub_001"],
+        entry_type="EXPENSE",
+        request_date="2026-01-19",
+        amount="125000.00",
+        approved_amount="125000.00",
+        status="PAID",
+        work_type="งานโครงสร้าง",
+        request_type="ค่าวัสดุ",
+        vendor_name="Bangna Steel Supply",
+        receipt_no="BWS-1001",
+        document_date="2026-01-18",
+        note="Steel accessories for footing work",
+        created_at="2026-01-19T03:20:00+00:00",
+        reviewed_at="2026-01-20T08:00:00+00:00",
+        approved_at="2026-01-20T08:00:00+00:00",
+        paid_at="2026-01-24T10:30:00+00:00",
+        payment_reference="TRX-BW-001",
+    ),
+    InputRequestSeedSpec(
+        key="ir-cm-feb-approved",
+        project_key="chiangmai-hotel-renovation",
+        subcontractor_id="sub_002",
+        requester_name=SUBCONTRACTOR_NAME_BY_ID["sub_002"],
+        entry_type="EXPENSE",
+        request_date="2026-02-12",
+        amount="214000.00",
+        approved_amount="214000.00",
+        status="APPROVED",
+        work_type="งานระบบ",
+        request_type="ค่าแรง",
+        vendor_name="Thai Electrical Services",
+        receipt_no="TES-2204",
+        document_date="2026-02-11",
+        note="Labor draw for MEP upgrade",
+        created_at="2026-02-12T02:10:00+00:00",
+        reviewed_at="2026-02-13T09:40:00+00:00",
+        approved_at="2026-02-13T09:40:00+00:00",
+    ),
+    InputRequestSeedSpec(
+        key="ir-ry-mar-approved",
+        project_key="rayong-factory-mep-upgrade",
+        subcontractor_id="sub_001",
+        requester_name=SUBCONTRACTOR_NAME_BY_ID["sub_001"],
+        entry_type="EXPENSE",
+        request_date="2026-03-06",
+        amount="98000.00",
+        approved_amount="98000.00",
+        status="PAID",
+        work_type="งานระบบ",
+        request_type="ค่าวัสดุ",
+        vendor_name="Rayong Panel Works",
+        receipt_no="RMW-3301",
+        document_date="2026-03-05",
+        note="Panel accessories and cabling",
+        created_at="2026-03-06T01:15:00+00:00",
+        reviewed_at="2026-03-07T07:30:00+00:00",
+        approved_at="2026-03-07T07:30:00+00:00",
+        paid_at="2026-03-09T09:00:00+00:00",
+        payment_reference="TRX-RY-014",
+    ),
+    InputRequestSeedSpec(
+        key="ir-ry-mar-rejected",
+        project_key="rayong-factory-mep-upgrade",
+        subcontractor_id="sub_001",
+        requester_name=SUBCONTRACTOR_NAME_BY_ID["sub_001"],
+        entry_type="EXPENSE",
+        request_date="2026-03-19",
+        amount="145000.00",
+        status="REJECTED",
+        work_type="งานระบบ",
+        request_type="ค่าแรง",
+        vendor_name="Rayong Panel Works",
+        receipt_no="RMW-3359",
+        document_date="2026-03-18",
+        note="Labor request missing backup",
+        review_note="Missing signed timesheet.",
+        created_at="2026-03-19T04:00:00+00:00",
+        reviewed_at="2026-03-20T06:45:00+00:00",
+    ),
+    InputRequestSeedSpec(
+        key="ir-pk-apr-pending",
+        project_key="phuket-sales-gallery",
+        subcontractor_id="sub_003",
+        requester_name=SUBCONTRACTOR_NAME_BY_ID["sub_003"],
+        entry_type="EXPENSE",
+        request_date="2026-04-02",
+        amount="168000.00",
+        status="PENDING_ADMIN",
+        work_type="งานสถาปัตย์",
+        request_type="ค่าวัสดุ",
+        vendor_name="Phuket Joinery House",
+        receipt_no="PKJ-4401",
+        document_date="2026-04-01",
+        note="Joinery balance claim",
+        created_at="2026-04-02T05:00:00+00:00",
+    ),
+    InputRequestSeedSpec(
+        key="ir-bw-apr-income",
+        project_key="bangna-warehouse-fitout",
+        subcontractor_id=None,
+        requester_name="Admin Collections",
+        entry_type="INCOME",
+        request_date="2026-04-03",
+        amount="420000.00",
+        approved_amount="420000.00",
+        status="APPROVED",
+        work_type="งานบริหารโครงการ",
+        request_type="ค่าใช้จ่ายทั่วไป",
+        vendor_name="Customer Progress Billing",
+        receipt_no="AR-BW-APR",
+        document_date="2026-04-03",
+        note="Customer collection posted for BW project",
+        created_at="2026-04-03T03:30:00+00:00",
+        reviewed_at="2026-04-03T04:00:00+00:00",
+        approved_at="2026-04-03T04:00:00+00:00",
+    ),
+    InputRequestSeedSpec(
+        key="ir-cm-apr-duplicate-anchor",
+        project_key="chiangmai-hotel-renovation",
+        subcontractor_id="sub_002",
+        requester_name=SUBCONTRACTOR_NAME_BY_ID["sub_002"],
+        entry_type="EXPENSE",
+        request_date="2026-04-08",
+        amount="86000.00",
+        status="PENDING_ADMIN",
+        work_type="งานระบบ",
+        request_type="ค่าวัสดุ",
+        vendor_name="Northern HVAC Trade",
+        receipt_no="NHT-8890",
+        document_date="2026-04-07",
+        note="HVAC consumables batch A",
+        created_at="2026-04-08T02:45:00+00:00",
+    ),
+    InputRequestSeedSpec(
+        key="ir-cm-apr-duplicate-flag",
+        project_key="chiangmai-hotel-renovation",
+        subcontractor_id="sub_002",
+        requester_name=SUBCONTRACTOR_NAME_BY_ID["sub_002"],
+        entry_type="EXPENSE",
+        request_date="2026-04-09",
+        amount="86000.00",
+        status="PENDING_ADMIN",
+        work_type="งานระบบ",
+        request_type="ค่าวัสดุ",
+        vendor_name="Northern HVAC Trade",
+        receipt_no="NHT-8890",
+        document_date="2026-04-07",
+        note="Possible duplicate of HVAC consumables batch A",
+        created_at="2026-04-09T01:20:00+00:00",
+        is_duplicate_flag=True,
+        duplicate_of_key="ir-cm-apr-duplicate-anchor",
+    ),
+]
+
 
 def parse_approved_at(value: str | None) -> datetime | None:
     if not value:
@@ -566,6 +768,12 @@ def parse_approved_at(value: str | None) -> datetime | None:
 
 
 def parse_due_date(value: str) -> date:
+    return date.fromisoformat(value)
+
+
+def parse_optional_date(value: str | None) -> date | None:
+    if not value:
+        return None
     return date.fromisoformat(value)
 
 
@@ -672,10 +880,13 @@ async def create_boq_tree(
 
 async def seed_data() -> dict[str, int]:
     counts = defaultdict(int)
+    project_id_lookup: dict[str, uuid.UUID] = {}
+    input_request_id_lookup: dict[str, uuid.UUID] = {}
 
     async with AsyncSessionLocal() as session:
         for blueprint in PROJECT_BLUEPRINTS:
             project_id = seeded_uuid(blueprint["key"], "project")
+            project_id_lookup[blueprint["key"]] = project_id
             project = Project(
                 id=project_id,
                 name=blueprint["name"],
@@ -704,6 +915,7 @@ async def seed_data() -> dict[str, int]:
                 installment = Installment(
                     id=installment_id,
                     boq_item_id=boq_lookup[spec.boq_key].id,
+                    subcontractor_id=spec.subcontractor_id or DEFAULT_PROJECT_SUBCONTRACTORS.get(blueprint["key"]),
                     expense_category=spec.expense_category,
                     expense_type=spec.expense_type,
                     cost_type=spec.cost_type,
@@ -722,6 +934,7 @@ async def seed_data() -> dict[str, int]:
                     transaction = Transaction(
                         id=seeded_uuid(blueprint["key"], "transaction", spec.installment_no),
                         installment_id=installment_id,
+                        subcontractor_id=installment.subcontractor_id,
                         base_amount=decimal_of(breakdown["base_amount"]),
                         vat_amount=decimal_of(breakdown["vat_amount"]),
                         wht_amount=decimal_of(breakdown["wht_amount"]),
@@ -732,6 +945,53 @@ async def seed_data() -> dict[str, int]:
                     )
                     session.add(transaction)
                     counts["transactions"] += 1
+
+        for spec in INPUT_REQUEST_SPECS:
+            request_id = seeded_uuid(spec.project_key, "input-request", spec.key)
+            input_request_id_lookup[spec.key] = request_id
+            record = InputRequest(
+                id=request_id,
+                project_id=project_id_lookup[spec.project_key],
+                subcontractor_id=spec.subcontractor_id,
+                entry_type=spec.entry_type,
+                requester_name=spec.requester_name,
+                request_date=parse_due_date(spec.request_date),
+                work_type=spec.work_type,
+                request_type=spec.request_type,
+                note=spec.note,
+                vendor_name=spec.vendor_name,
+                receipt_no=spec.receipt_no,
+                document_date=parse_optional_date(spec.document_date),
+                amount=decimal_of(spec.amount),
+                approved_amount=decimal_of(spec.approved_amount) if spec.approved_amount else None,
+                status=spec.status,
+                review_note=spec.review_note,
+                created_at=parse_approved_at(spec.created_at) or datetime.now(timezone.utc),
+                reviewed_at=parse_approved_at(spec.reviewed_at),
+                approved_at=parse_approved_at(spec.approved_at),
+                paid_at=parse_approved_at(spec.paid_at),
+                payment_reference=spec.payment_reference,
+                is_duplicate_flag=spec.is_duplicate_flag,
+            )
+            session.add(record)
+            counts["input_requests"] += 1
+
+        await session.flush()
+
+        for spec in INPUT_REQUEST_SPECS:
+            if not spec.duplicate_of_key:
+                continue
+            request_id = input_request_id_lookup[spec.key]
+            duplicate_of_id = input_request_id_lookup[spec.duplicate_of_key]
+            record = await session.get(InputRequest, request_id)
+            if record is None:
+                continue
+            record.duplicate_of_request_id = duplicate_of_id
+            if not record.duplicate_reason:
+                record.duplicate_reason = (
+                    "Seeded duplicate candidate detected from Receipt No. + Date + Amount "
+                    f"against request {duplicate_of_id}."
+                )
 
         await session.commit()
 
@@ -747,6 +1007,9 @@ async def print_summary() -> None:
         ).scalar() or 0
         transactions = (
             await session.execute(text("select count(*) from transactions"))
+        ).scalar() or 0
+        input_requests = (
+            await session.execute(text("select count(*) from input_requests"))
         ).scalar() or 0
         pending = (
             await session.execute(
@@ -768,6 +1031,7 @@ async def print_summary() -> None:
     print(f"boq_items={boq_items}")
     print(f"installments={installments}")
     print(f"transactions={transactions}")
+    print(f"input_requests={input_requests}")
     print(f"pending_installments={pending}")
     print(f"overdue_amount={overdue}")
 

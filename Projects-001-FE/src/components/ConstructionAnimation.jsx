@@ -1,11 +1,13 @@
 import React, { useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { motion as Motion } from 'framer-motion';
 import { Hammer, Wrench, HardHat, Pickaxe, Ruler, Drill } from 'lucide-react';
 import logoImage from '../assets/logo.png';
 
-const ToolIcon = ({ IconComponent, radius, duration, delay, color }) => {
+const ToolIcon = ({ icon, radius, duration, delay, color }) => {
+  const IconComponent = icon;
+
   return (
-    <motion.div
+    <Motion.div
       style={{
         position: 'absolute',
         top: '50%',
@@ -46,18 +48,18 @@ const ToolIcon = ({ IconComponent, radius, duration, delay, color }) => {
       }}
     >
       <IconComponent size={28} />
-    </motion.div>
+    </Motion.div>
   );
 };
 
 const ConstructionAnimation = () => {
   const tools = useMemo(() => [
-    { IconComponent: Hammer, radius: 160, duration: 25, delay: 0, color: '#c9a15c' },
-    { IconComponent: Wrench, radius: 220, duration: 35, delay: 5, color: '#bba684' },
-    { IconComponent: HardHat, radius: 180, duration: 45, delay: 10, color: '#8c6e3d' },
-    { IconComponent: Pickaxe, radius: 240, duration: 55, delay: 15, color: '#c9a15c' },
-    { IconComponent: Ruler, radius: 200, duration: 40, delay: 20, color: '#e6decb' },
-    { IconComponent: Drill, radius: 260, duration: 65, delay: 25, color: '#bba684' },
+    { icon: Hammer, radius: 160, duration: 25, delay: 0, color: '#c9a15c' },
+    { icon: Wrench, radius: 220, duration: 35, delay: 5, color: '#bba684' },
+    { icon: HardHat, radius: 180, duration: 45, delay: 10, color: '#8c6e3d' },
+    { icon: Pickaxe, radius: 240, duration: 55, delay: 15, color: '#c9a15c' },
+    { icon: Ruler, radius: 200, duration: 40, delay: 20, color: '#e6decb' },
+    { icon: Drill, radius: 260, duration: 65, delay: 25, color: '#bba684' },
   ], []);
 
   const particles = useMemo(() => {
@@ -94,7 +96,7 @@ const ConstructionAnimation = () => {
       ))}
 
       {/* Central Logo */}
-      <motion.div
+      <Motion.div
         animate={{
           y: [-10, 10, -10],
           scale: [1, 1.05, 1]
@@ -115,13 +117,13 @@ const ConstructionAnimation = () => {
         }}
       >
         <img src={logoImage} alt="DOUBLEBO" style={{ width: '100%', height: 'auto' }} />
-      </motion.div>
+      </Motion.div>
 
       {/* Rotating Tools */}
       {tools.map((tool, index) => (
         <ToolIcon 
           key={index}
-          IconComponent={tool.IconComponent}
+          icon={tool.icon}
           radius={tool.radius}
           duration={tool.duration}
           delay={tool.delay}
@@ -131,7 +133,7 @@ const ConstructionAnimation = () => {
 
       {/* Floating Particles */}
       {particles.map((p, i) => (
-        <motion.div
+        <Motion.div
           key={i}
           style={{
             position: 'absolute',

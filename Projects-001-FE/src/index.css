@@ -121,3 +121,51 @@ h3 {
 .gap-4 {
   gap: 16px;
 }
+
+.chat-ai-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) 320px;
+  gap: 24px;
+  align-items: start;
+}
+
+.chat-ai-message {
+  width: min(100%, 760px);
+  padding: 18px 20px;
+  border-radius: 22px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1080px) {
+  .chat-ai-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .main-content {
+    padding: 24px 20px;
+  }
+
+  .dashboard-grid,
+  .chart-section,
+  .bottom-section {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-ai-message {
+    width: 100%;
+  }
+}

@@ -35,6 +35,7 @@ class Installment(Base):
         UUID(as_uuid=True), ForeignKey("boq_items.id"), nullable=False
     )
 
+    subcontractor_id = Column(String, nullable=True)
     expense_category = Column(String, nullable=True)    # Concrete, Steel, Paint …
     expense_type = Column(String, nullable=True)        # Installment, Labor, Material
     cost_type = Column(String, nullable=True)           # MATERIAL, LABOR, BOTH
@@ -64,6 +65,7 @@ class Transaction(Base):
         UUID(as_uuid=True), ForeignKey("installments.id"), nullable=False
     )
 
+    subcontractor_id = Column(String, nullable=True)
     base_amount = Column(Numeric(15, 2), default=0)
     vat_amount = Column(Numeric(15, 2), default=0)
     wht_amount = Column(Numeric(15, 2), default=0)

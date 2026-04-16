@@ -196,6 +196,16 @@ async def record_approved_transaction(
     Calculates the net payable and persists the full deduction breakdown.
     """
     try:
+        installment_result = await session.execute(
+            select(Installment).filter_by(id=installment_id)
+        )
+        installment = installment_result.scalar_one_or_none()
+        if installment is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Installment {installment_id} not found.",
+            )
+
         breakdown = await calculate_net_payable(
             base_amount=base_amount,
             vat_rate=vat_rate,
@@ -207,6 +217,7 @@ async def record_approved_transaction(
         transaction = Transaction(
             id=uuid.uuid4(),
             installment_id=installment_id,
+            subcontractor_id=installment.subcontractor_id,
             base_amount=Decimal(str(breakdown["base_amount"])),
             vat_amount=Decimal(str(breakdown["vat_amount"])),
             wht_amount=Decimal(str(breakdown["wht_amount"])),

@@ -21,7 +21,7 @@ if str(BACKEND_ROOT) not in sys.path:
 load_dotenv(BACKEND_ROOT / ".env")
 
 from app.core.database import engine, Base
-from app.models import BOQItem, InputRequest, Installment, Project, Transaction  # noqa: F401
+from app.models import BOQItem, ChatHistory, InputRequest, Installment, Project, Transaction  # noqa: F401
 
 
 async def main() -> None:
@@ -31,6 +31,7 @@ async def main() -> None:
             text(
                 """
                 ALTER TABLE IF EXISTS input_requests
+                ADD COLUMN IF NOT EXISTS subcontractor_id VARCHAR,
                 ADD COLUMN IF NOT EXISTS approved_amount NUMERIC(15, 2),
                 ADD COLUMN IF NOT EXISTS review_note TEXT,
                 ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ,
@@ -45,6 +46,22 @@ async def main() -> None:
                 ADD COLUMN IF NOT EXISTS duplicate_of_request_id UUID,
                 ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ,
                 ADD COLUMN IF NOT EXISTS payment_reference VARCHAR
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS installments
+                ADD COLUMN IF NOT EXISTS subcontractor_id VARCHAR
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS transactions
+                ADD COLUMN IF NOT EXISTS subcontractor_id VARCHAR
                 """
             )
         )

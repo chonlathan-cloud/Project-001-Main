@@ -43,6 +43,7 @@ class BankAccountInfo(BaseModel):
 
 class SubmitBillRequest(BaseModel):
     """Request body when a subcontractor submits a bill."""
+    subcontractor_id: str | None = None
     expense_category: str
     expense_type: str
     amount: float = Field(..., gt=0)

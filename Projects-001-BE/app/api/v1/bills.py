@@ -60,6 +60,7 @@ async def submit_bill(request: SubmitBillRequest):
     return StandardResponse(
         data={
             "message": "Bill submitted successfully.",
+            "subcontractor_id": request.subcontractor_id,
             "expense_category": request.expense_category,
             "expense_type": request.expense_type,
             "amount": request.amount,
@@ -90,6 +91,7 @@ async def list_pending_bills(
             {
                 "id": str(b.id),
                 "boq_item_id": str(b.boq_item_id),
+                "subcontractor_id": b.subcontractor_id,
                 "expense_category": b.expense_category,
                 "expense_type": b.expense_type,
                 "installment_no": b.installment_no,
@@ -137,6 +139,7 @@ async def edit_bill(
         return StandardResponse(
             data={
                 "id": str(installment.id),
+                "subcontractor_id": installment.subcontractor_id,
                 "amount": float(installment.amount),
                 "message": "Bill updated successfully.",
             }
@@ -196,6 +199,7 @@ async def approve_bill(
         return StandardResponse(
             data={
                 "bill_id": str(bill_id),
+                "subcontractor_id": installment.subcontractor_id,
                 "status": "APPROVED",
                 "net_payable": float(transaction.net_payable),
                 "message": "Bill approved and transaction recorded.",

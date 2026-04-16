@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronDown, TrendingUp, Filter as FilterIcon, CheckCircle, Download, MoreHorizontal, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronDown, Filter as FilterIcon, CheckCircle, Search } from 'lucide-react';
 import { fetchData } from './api';
 import Loading from './components/Loading';
 
@@ -27,7 +27,9 @@ const InsightsDropdown = ({ label }) => {
   );
 };
 
-const SummaryCard = ({ title, count, amount, icon: Icon, variant }) => {
+const SummaryCard = ({ title, count, amount, icon, variant }) => {
+  const IconComponent = icon;
+
   const getStyles = () => {
     switch (variant) {
       case 'new':
@@ -65,7 +67,7 @@ const SummaryCard = ({ title, count, amount, icon: Icon, variant }) => {
           alignItems: 'center',
           justifyContent: 'center'
         }}>
-          <Icon size={20} color={styles.iconColor} />
+          <IconComponent size={20} color={styles.iconColor} />
         </div>
         <span style={{ fontSize: '15px', fontWeight: '600', color: variant === 'approved' ? 'white' : '#4b5563' }}>{title}</span>
       </div>

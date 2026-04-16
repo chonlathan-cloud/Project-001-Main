@@ -104,6 +104,7 @@ class ProjectOptionItem(BaseModel):
 
 class InputRequestCreate(BaseModel):
     project_id: UUID
+    subcontractor_id: str | None = None
     entry_type: str = Field(..., pattern="^(EXPENSE|INCOME)$")
     requester_name: str = Field(..., min_length=1)
     phone: str | None = None
@@ -140,6 +141,7 @@ class InputRequestCreate(BaseModel):
 
     @field_validator(
         "phone",
+        "subcontractor_id",
         "note",
         "vendor_name",
         "receipt_no",
@@ -211,6 +213,7 @@ class InputRequestItem(BaseModel):
     request_id: UUID
     project_id: UUID
     project_name: str
+    subcontractor_id: str | None = None
     entry_type: str
     requester_name: str
     phone: str | None = None
@@ -243,6 +246,7 @@ class InputRequestItem(BaseModel):
 
 
 class InputRequestAdminUpdate(BaseModel):
+    subcontractor_id: str | None = None
     requester_name: str | None = Field(default=None, min_length=1)
     phone: str | None = None
     request_date: date | None = None
@@ -265,7 +269,7 @@ class InputRequestAdminUpdate(BaseModel):
             raise ValueError("requester_name is required.")
         return cleaned
 
-    @field_validator("phone", "note", "vendor_name", "receipt_no", mode="before")
+    @field_validator("subcontractor_id", "phone", "note", "vendor_name", "receipt_no", mode="before")
     @classmethod
     def clean_optional_text_fields(cls, value: str | None) -> str | None:
         return _clean_optional_text(value)

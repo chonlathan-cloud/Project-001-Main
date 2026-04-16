@@ -22,6 +22,7 @@ class InputRequest(Base):
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
     )
 
+    subcontractor_id = Column(String, nullable=True)
     entry_type = Column(String, nullable=False)  # EXPENSE | INCOME
     requester_name = Column(String, nullable=False)
     phone = Column(String, nullable=True)

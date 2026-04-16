@@ -397,6 +397,136 @@ export async function getInputProjectOptions() {
   }));
 }
 
+function normalizeChatSource(source, index) {
+  if (typeof source === 'string') {
+    const label = source.trim();
+    return {
+      id: `source-${index}`,
+      label: label || `Source ${index + 1}`,
+      sheetName: '',
+      description: label,
+      projectId: '',
+    };
+  }
+
+  if (source && typeof source === 'object') {
+    const description = String(source.description || source.label || '').trim();
+    const sheetName = String(source.sheet_name || source.sheetName || '').trim();
+    return {
+      id: String(source.id || `source-${index}`),
+      label: description || sheetName || `Source ${index + 1}`,
+      sheetName,
+      description,
+      projectId: String(source.project_id || source.projectId || '').trim(),
+    };
+  }
+
+  return {
+    id: `source-${index}`,
+    label: `Source ${index + 1}`,
+    sheetName: '',
+    description: '',
+    projectId: '',
+  };
+}
+
+function normalizeChatMetric(metric, index) {
+  if (!metric || typeof metric !== 'object') {
+    return {
+      id: `metric-${index}`,
+      label: `Metric ${index + 1}`,
+      value: '-',
+    };
+  }
+
+  return {
+    id: String(metric.id || `metric-${index}`),
+    label: String(metric.label || `Metric ${index + 1}`).trim(),
+    value: String(metric.value ?? '-').trim() || '-',
+  };
+}
+
+function normalizeChatAction(action, index) {
+  const label = typeof action === 'string' ? action.trim() : '';
+  return {
+    id: `action-${index}`,
+    label: label || `Action ${index + 1}`,
+  };
+}
+
+function normalizeChatTimeScope(timeScope) {
+  if (!timeScope || typeof timeScope !== 'object') return null;
+
+  const label = String(timeScope.label || '').trim();
+  const startDate = String(timeScope.start_date || timeScope.startDate || '').trim();
+  const endDate = String(timeScope.end_date || timeScope.endDate || '').trim();
+
+  if (!label && !startDate && !endDate) return null;
+
+  return {
+    key: String(timeScope.key || '').trim(),
+    label: label || 'Custom Range',
+    startDate,
+    endDate,
+  };
+}
+
+function normalizeChatPayload(data, fallbackProjectId = '') {
+  const rawSources = Array.isArray(data?.sources) ? data.sources : [];
+
+  return {
+    intent: String(data?.intent || '').trim(),
+    summary: String(data?.summary || '').trim(),
+    reply: String(data?.reply || '').trim() || 'AI did not return a response.',
+    sources: rawSources.map(normalizeChatSource),
+    metrics: Array.isArray(data?.metrics) ? data.metrics.map(normalizeChatMetric) : [],
+    nextActions: Array.isArray(data?.next_actions)
+      ? data.next_actions.map(normalizeChatAction)
+      : [],
+    timeScope: normalizeChatTimeScope(data?.time_scope),
+    projectId: String(data?.project_id || fallbackProjectId || '').trim(),
+    projectName: String(data?.project_name || '').trim(),
+    contextItemCount: toNumber(data?.context_item_count),
+  };
+}
+
+export async function askChatQuestion({ message, projectId }) {
+  const cleanedMessage = String(message || '').trim();
+  const payload = {
+    message: cleanedMessage,
+  };
+
+  if (projectId) {
+    payload.project_id = projectId;
+  }
+
+  const data = await apiRequest('/api/v1/chat/ask', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    timeoutMs: 60000,
+  });
+
+  return normalizeChatPayload(data, projectId);
+}
+
+export async function getChatHistory() {
+  const data = await apiRequest('/api/v1/chat/history');
+  if (!Array.isArray(data)) return [];
+
+  return data.map((item, index) => ({
+    id: String(item?.id || `history-${index}`),
+    createdAt: String(item?.created_at || '').trim(),
+    question: String(item?.question || '').trim(),
+    ...normalizeChatPayload(item, String(item?.project_id || '').trim()),
+  }));
+}
+
+export async function clearChatHistory() {
+  return apiRequest('/api/v1/chat/history', {
+    method: 'DELETE',
+  });
+}
+
 export async function extractInputReceipt(file) {
   const formData = new FormData();
   formData.append('file', file);

@@ -6,15 +6,20 @@ POST /api/v1/chat/ask
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.models.boq import BOQItem, Project
 from app.schemas.responses import StandardResponse
-from app.services.ai_service import ask_strategic_question, generate_embedding
+from app.services.ai_service import ask_strategic_question
+from app.services.chat_analytics_service import analyze_chat_question
+from app.services.chat_history_service import (
+    CHAT_HISTORY_RETENTION_LIMIT,
+    clear_chat_history,
+    list_recent_chat_history,
+    save_chat_history_exchange,
+)
 
 router = APIRouter(prefix="/chat", tags=["AI Strategic Chat"])
 
@@ -29,6 +34,41 @@ class ChatRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/v1/chat/history
+# ---------------------------------------------------------------------------
+@router.get("/history", response_model=StandardResponse[list[dict]])
+async def chat_history(
+    limit: int = Query(default=CHAT_HISTORY_RETENTION_LIMIT, ge=1, le=CHAT_HISTORY_RETENTION_LIMIT),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        history = await list_recent_chat_history(db, limit=limit)
+        return StandardResponse(data=history)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load chat history: {exc}",
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/chat/history
+# ---------------------------------------------------------------------------
+@router.delete("/history", response_model=StandardResponse[dict])
+async def chat_history_clear(
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        deleted_count = await clear_chat_history(db)
+        return StandardResponse(data={"deleted_count": deleted_count})
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear chat history: {exc}",
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
 # POST /api/v1/chat/ask
 # ---------------------------------------------------------------------------
 @router.post("/ask", response_model=StandardResponse[dict])
@@ -38,65 +78,44 @@ async def chat_ask(
 ):
     """
     Executive asks a strategic question.
-    Flow (LLD §3.2):
-      1. Generate embedding from the question.
-      2. Vector search in boq_items (pgvector cosine similarity).
-      3. Aggregate financial context from results.
-      4. Send context + question to Gemini 2.0 Flash.
-      5. Return AI reply + cited sources.
+    Flow:
+      1. Detect the user's analytics intent.
+      2. Aggregate grounded metrics from the database.
+      3. Optionally ask Gemini to polish the grounded answer.
+      4. Return structured summary + sources + next actions.
     """
     try:
-        # 1. Generate embedding from the question
-        question_vector = await generate_embedding(request.message)
-
-        # 2. Vector search — find the 10 most similar BOQ items
-        query = (
-            select(BOQItem)
-            .filter(BOQItem.embedding.isnot(None))
-            .order_by(BOQItem.embedding.cosine_distance(question_vector))
-            .limit(10)
-        )
-
-        # Scope to a specific project if provided
-        if request.project_id is not None:
-            query = query.filter(BOQItem.project_id == request.project_id)
-
-        result = await db.execute(query)
-        similar_items = result.scalars().all()
-
-        # 3. Aggregate financial context
-        context_data = [
-            {
-                "description": item.description,
-                "sheet_name": item.sheet_name,
-                "wbs_level": item.wbs_level,
-                "material_unit_price": float(item.material_unit_price or 0),
-                "labor_unit_price": float(item.labor_unit_price or 0),
-                "total_material": float(item.total_material or 0),
-                "total_labor": float(item.total_labor or 0),
-                "grand_total": float(item.grand_total or 0),
-            }
-            for item in similar_items
-        ]
-
-        # 4. Determine project name for scope
-        project_name = None
-        if request.project_id is not None:
-            proj_result = await db.execute(
-                select(Project).filter_by(id=request.project_id)
-            )
-            project = proj_result.scalar_one_or_none()
-            if project:
-                project_name = project.name
-
-        # 5. Send to Gemini for analysis
-        ai_response = await ask_strategic_question(
+        analysis = await analyze_chat_question(
+            db,
             question=request.message,
-            context_data=context_data,
-            project_name=project_name,
+            project_id=request.project_id,
         )
 
-        return StandardResponse(data=ai_response)
+        # Use LLM polishing as a best-effort step. If it fails, keep the grounded reply.
+        try:
+            ai_response = await ask_strategic_question(
+                question=request.message,
+                context_data=analysis["llm_context"],
+                project_name=analysis.get("project_name"),
+            )
+            polished_reply = (ai_response.get("reply") or "").strip()
+            if polished_reply:
+                analysis["reply"] = polished_reply
+        except Exception:
+            pass
+
+        analysis.pop("llm_context", None)
+
+        try:
+            await save_chat_history_exchange(
+                db,
+                question=request.message,
+                analysis=analysis,
+            )
+        except Exception:
+            await db.rollback()
+
+        return StandardResponse(data=analysis)
 
     except Exception as exc:
         raise HTTPException(
