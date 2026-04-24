@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { CheckCheck, CircleDollarSign, ExternalLink, Filter, LoaderCircle, OctagonX, Save, TriangleAlert } from 'lucide-react';
 import Loading from './components/Loading';
 import {
@@ -12,6 +13,7 @@ import {
 } from './api';
 
 const STATUS_OPTIONS = [
+  { value: '', label: 'All Statuses' },
   { value: 'PENDING_ADMIN', label: 'Pending Admin' },
   { value: 'APPROVED', label: 'Approved' },
   { value: 'PAID', label: 'Paid' },
@@ -85,6 +87,10 @@ const matchesFilters = (item, filters) =>
   (!filters.projectId || item.project_id === filters.projectId);
 
 function ApprovalPage() {
+  const location = useLocation();
+  const deepLinkParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const deepLinkRequestId = deepLinkParams.get('request_id') || '';
+  const deepLinkProjectId = deepLinkParams.get('project_id') || '';
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [requests, setRequests] = useState([]);
@@ -92,9 +98,9 @@ function ApprovalPage() {
   const [selectedRequestId, setSelectedRequestId] = useState('');
   const [editor, setEditor] = useState(emptyEditor);
   const [filters, setFilters] = useState({
-    status: 'PENDING_ADMIN',
+    status: deepLinkRequestId ? '' : 'PENDING_ADMIN',
     entryType: '',
-    projectId: '',
+    projectId: deepLinkProjectId,
   });
   const [pageError, setPageError] = useState('');
   const [actionError, setActionError] = useState('');
@@ -184,7 +190,9 @@ function ApprovalPage() {
       const nextSelectedId =
         keepSelection && reviewQueue.some((item) => item.request_id === selectedRequestId)
           ? selectedRequestId
-          : reviewQueue[0].request_id;
+          : deepLinkRequestId && reviewQueue.some((item) => item.request_id === deepLinkRequestId)
+            ? deepLinkRequestId
+            : reviewQueue[0].request_id;
       setSelectedRequestId(nextSelectedId);
       syncEditorWithRequest(reviewQueue.find((item) => item.request_id === nextSelectedId));
     } catch (error) {
@@ -199,6 +207,18 @@ function ApprovalPage() {
     loadData({ keepSelection: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!deepLinkRequestId && !deepLinkProjectId) return;
+    setFilters((current) => ({
+      ...current,
+      status: deepLinkRequestId ? '' : current.status,
+      projectId: deepLinkProjectId || current.projectId,
+    }));
+    if (deepLinkRequestId) {
+      setSelectedRequestId(deepLinkRequestId);
+    }
+  }, [deepLinkProjectId, deepLinkRequestId]);
 
   useEffect(() => {
     loadData();
@@ -383,6 +403,7 @@ function ApprovalPage() {
   const canPreviewReceipt = Boolean(receiptPreview?.signed_url);
   const isPreviewImage = (receiptPreview?.content_type || '').startsWith('image/');
   const isPreviewPdf = (receiptPreview?.content_type || '') === 'application/pdf';
+  const isDeepLinkedRequest = Boolean(deepLinkRequestId) && selectedRequest?.request_id === deepLinkRequestId;
 
   return (
     <>
@@ -392,6 +413,11 @@ function ApprovalPage() {
           <p style={{ color: '#666', fontWeight: '500' }}>
             ตรวจสอบ แก้ไข และอนุมัติคำขอจากหน้า Input ตาม admin review flow
           </p>
+          {isDeepLinkedRequest ? (
+            <div style={{ marginTop: '10px', color: '#166534', backgroundColor: '#ecfdf5', border: '1px solid #86efac', borderRadius: '12px', padding: '10px 12px', fontSize: '13px', fontWeight: '600' }}>
+              Focused from Insight Warehouse: request {deepLinkRequestId}
+            </div>
+          ) : null}
         </div>
         {refreshing ? (
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', color: '#666' }}>

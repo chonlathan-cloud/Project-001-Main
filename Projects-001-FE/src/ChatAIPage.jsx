@@ -102,11 +102,14 @@ function ChatAIPage() {
   const location = useLocation();
   const routeProjectId = String(location.state?.projectId || '').trim();
   const routeProjectName = String(location.state?.projectName || '').trim();
+  const routeInitialPrompt = String(location.state?.initialPrompt || '').trim();
+  const routeContextLabel = String(location.state?.contextLabel || '').trim();
+  const routeAutoSubmit = Boolean(location.state?.autoSubmit);
 
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(routeProjectId);
-  const [draftMessage, setDraftMessage] = useState('');
+  const [draftMessage, setDraftMessage] = useState(routeInitialPrompt);
   const [messages, setMessages] = useState([]);
   const [pageError, setPageError] = useState('');
   const [composerError, setComposerError] = useState('');
@@ -114,6 +117,7 @@ function ChatAIPage() {
   const [isClearingHistory, setIsClearingHistory] = useState(false);
 
   const messagesEndRef = useRef(null);
+  const hasConsumedInitialPromptRef = useRef(false);
 
   const selectedProject =
     projects.find((item) => item.project_id === projectId) ||
@@ -257,6 +261,25 @@ function ChatAIPage() {
     }
   };
 
+  useEffect(() => {
+    if (!routeInitialPrompt) return;
+    setDraftMessage(routeInitialPrompt);
+  }, [routeInitialPrompt]);
+
+  useEffect(() => {
+    hasConsumedInitialPromptRef.current = false;
+    setProjectId(routeProjectId);
+  }, [routeInitialPrompt, routeProjectId]);
+
+  useEffect(() => {
+    if (!routeAutoSubmit || !routeInitialPrompt || loading || isSubmitting || hasConsumedInitialPromptRef.current) {
+      return;
+    }
+
+    hasConsumedInitialPromptRef.current = true;
+    submitQuestion(routeInitialPrompt);
+  }, [isSubmitting, loading, routeAutoSubmit, routeInitialPrompt]);
+
   if (loading) return <Loading />;
 
   return (
@@ -302,6 +325,21 @@ function ChatAIPage() {
           }}
         >
           {pageError}
+        </div>
+      ) : null}
+
+      {routeContextLabel ? (
+        <div
+          className="card"
+          style={{
+            borderColor: '#eadfce',
+            backgroundColor: '#faf7f1',
+            color: '#5f4b27',
+            padding: '14px 18px',
+          }}
+        >
+          {routeContextLabel}
+          {routeInitialPrompt ? ' พร้อม context ที่ส่งมาจากหน้าก่อนหน้า' : ''}
         </div>
       ) : null}
 

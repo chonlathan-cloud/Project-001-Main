@@ -11,21 +11,6 @@ const compactNumber = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 1,
 });
 
-const INSIGHTS_MOCK_DATA = {
-  filters: {
-    users: ['ผู้ทำรายการทั้งหมด', 'Admin', 'Site Engineer'],
-    months: ['ม.ค.', 'ก.พ.', 'มี.ค.'],
-    years: ['2026', '2025'],
-  },
-  summary: {
-    new: { count: 0, amount: '0' },
-    pending: { count: 0, amount: '0' },
-    approved: { count: 0, amount: '0' },
-  },
-  tableName: 'รายการทั้งหมด',
-  tableData: [],
-};
-
 const toNumber = (value, fallback = 0) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -48,6 +33,97 @@ const shortLabel = (value, fallback) => {
   const label = (value || fallback || '-').trim();
   return label.length > 18 ? `${label.slice(0, 18)}...` : label;
 };
+
+const appendArrayParams = (searchParams, key, values) => {
+  if (!Array.isArray(values)) return;
+  values
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .forEach((item) => searchParams.append(key, item));
+};
+
+const normalizeInsightFlag = (flag, index) => ({
+  key: String(flag?.key || `flag-${index}`),
+  label: String(flag?.label || 'Flag').trim(),
+  tone: String(flag?.tone || 'neutral').trim(),
+});
+
+const normalizeInsightRow = (row, index) => ({
+  id: String(row?.id || `row-${index}`),
+  sourceType: String(row?.source_type || '').trim(),
+  sourceId: String(row?.source_id || '').trim(),
+  projectId: String(row?.project_id || '').trim(),
+  projectName: String(row?.project_name || '').trim(),
+  actorId: String(row?.actor_id || '').trim(),
+  actorName: String(row?.actor_name || '').trim(),
+  referenceNo: String(row?.reference_no || '').trim(),
+  title: String(row?.title || '').trim(),
+  description: String(row?.description || '').trim(),
+  entryType: String(row?.entry_type || '').trim(),
+  flowDirection: String(row?.flow_direction || '').trim(),
+  requestType: String(row?.request_type || '').trim(),
+  status: String(row?.status || '').trim(),
+  amount: row?.amount == null ? null : toNumber(row.amount),
+  currency: String(row?.currency || 'THB').trim(),
+  eventDate: String(row?.event_date || '').trim(),
+  dueDate: String(row?.due_date || '').trim(),
+  approvedAt: String(row?.approved_at || '').trim(),
+  paidAt: String(row?.paid_at || '').trim(),
+  createdAt: String(row?.created_at || '').trim(),
+  updatedAt: String(row?.updated_at || '').trim(),
+  isDuplicateFlag: Boolean(row?.is_duplicate_flag),
+  isOverdue: Boolean(row?.is_overdue),
+  tags: Array.isArray(row?.tags) ? row.tags.filter(Boolean) : [],
+  flags: Array.isArray(row?.flags) ? row.flags.map(normalizeInsightFlag) : [],
+  navigationTarget: row?.navigation_target
+    ? {
+        label: String(row.navigation_target.label || 'Open').trim(),
+        path: String(row.navigation_target.path || '').trim(),
+      }
+    : null,
+});
+
+const normalizeInsightSummaryCard = (card, index) => ({
+  key: String(card?.key || `card-${index}`),
+  label: String(card?.label || `Card ${index + 1}`).trim(),
+  count: card?.count == null ? null : toNumber(card.count),
+  amount: card?.amount == null ? null : toNumber(card.amount),
+  tone: String(card?.tone || 'neutral').trim(),
+  description: String(card?.description || '').trim(),
+});
+
+const normalizeInsightFilterOption = (item, index, fallbackPrefix = 'option') => ({
+  value: String(item?.value || `${fallbackPrefix}-${index}`).trim(),
+  label: String(item?.label || item?.value || `${fallbackPrefix}-${index}`).trim(),
+  count: item?.count == null ? null : toNumber(item.count),
+});
+
+function buildInsightWarehouseQuery(filters = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (filters.q) searchParams.set('q', String(filters.q).trim());
+  if (filters.quickView) searchParams.set('quick_view', String(filters.quickView).trim());
+  if (filters.projectId) searchParams.set('project_id', String(filters.projectId).trim());
+  if (filters.dateField) searchParams.set('date_field', String(filters.dateField).trim());
+  if (filters.dateFrom) searchParams.set('date_from', String(filters.dateFrom).trim());
+  if (filters.dateTo) searchParams.set('date_to', String(filters.dateTo).trim());
+  if (filters.amountMin != null && filters.amountMin !== '') searchParams.set('amount_min', String(filters.amountMin));
+  if (filters.amountMax != null && filters.amountMax !== '') searchParams.set('amount_max', String(filters.amountMax));
+  if (filters.sortBy) searchParams.set('sort_by', String(filters.sortBy).trim());
+  if (filters.sortOrder) searchParams.set('sort_order', String(filters.sortOrder).trim());
+  if (filters.format) searchParams.set('format', String(filters.format).trim());
+  if (filters.page) searchParams.set('page', String(filters.page));
+  if (filters.pageSize) searchParams.set('page_size', String(filters.pageSize));
+  if (filters.duplicateOnly) searchParams.set('duplicate_only', 'true');
+  if (filters.overdueOnly) searchParams.set('overdue_only', 'true');
+
+  appendArrayParams(searchParams, 'source_types', filters.sourceTypes);
+  appendArrayParams(searchParams, 'statuses', filters.statuses);
+  appendArrayParams(searchParams, 'entry_types', filters.entryTypes);
+  appendArrayParams(searchParams, 'flow_directions', filters.flowDirections);
+
+  return searchParams.toString();
+}
 
 const withColor = (items) =>
   items.map((item, index) => ({
@@ -631,6 +707,98 @@ export async function markPaidAdminInputRequest(requestId, payload = {}) {
   });
 }
 
+export async function getInsightWarehouseFilters() {
+  const data = await apiRequest('/api/v1/insights/filters');
+
+  return {
+    projects: Array.isArray(data?.projects)
+      ? data.projects.map((item, index) => normalizeInsightFilterOption(item, index, 'project'))
+      : [],
+    sourceTypes: Array.isArray(data?.source_types)
+      ? data.source_types.map((item, index) => normalizeInsightFilterOption(item, index, 'source'))
+      : [],
+    statuses: Array.isArray(data?.statuses)
+      ? data.statuses.map((item, index) => normalizeInsightFilterOption(item, index, 'status'))
+      : [],
+    entryTypes: Array.isArray(data?.entry_types)
+      ? data.entry_types.map((item, index) => normalizeInsightFilterOption(item, index, 'entry'))
+      : [],
+    flowDirections: Array.isArray(data?.flow_directions)
+      ? data.flow_directions.map((item, index) => normalizeInsightFilterOption(item, index, 'flow'))
+      : [],
+    quickViews: Array.isArray(data?.quick_views)
+      ? data.quick_views.map((item, index) => ({
+          key: String(item?.key || `view-${index}`),
+          label: String(item?.label || `View ${index + 1}`).trim(),
+          description: String(item?.description || '').trim(),
+        }))
+      : [],
+    columns: Array.isArray(data?.columns)
+      ? data.columns.map((item, index) => ({
+          key: String(item?.key || `column-${index}`),
+          label: String(item?.label || `Column ${index + 1}`).trim(),
+          dataType: String(item?.data_type || 'text').trim(),
+          sortable: item?.sortable !== false,
+          defaultVisible: item?.default_visible !== false,
+        }))
+      : [],
+    dateFields: Array.isArray(data?.date_fields)
+      ? data.date_fields.map((item, index) => normalizeInsightFilterOption(item, index, 'date'))
+      : [],
+    sortFields: Array.isArray(data?.sort_fields)
+      ? data.sort_fields.map((item, index) => normalizeInsightFilterOption(item, index, 'sort'))
+      : [],
+    exportFormats: Array.isArray(data?.export_formats)
+      ? data.export_formats.map((item, index) => normalizeInsightFilterOption(item, index, 'export'))
+      : [],
+    lastUpdatedAt: String(data?.last_updated_at || '').trim(),
+  };
+}
+
+export async function getInsightWarehouseSummary(filters = {}) {
+  const query = buildInsightWarehouseQuery(filters);
+  const path = query ? `/api/v1/insights/summary?${query}` : '/api/v1/insights/summary';
+  const data = await apiRequest(path);
+
+  return {
+    cards: Array.isArray(data?.cards)
+      ? data.cards.map(normalizeInsightSummaryCard)
+      : [],
+    appliedFilters: data?.applied_filters || null,
+    lastUpdatedAt: String(data?.last_updated_at || '').trim(),
+  };
+}
+
+export async function getInsightWarehouseRows(filters = {}) {
+  const query = buildInsightWarehouseQuery(filters);
+  const path = query ? `/api/v1/insights/rows?${query}` : '/api/v1/insights/rows';
+  const data = await apiRequest(path);
+
+  const pageInfo = data?.page_info || {};
+
+  return {
+    items: Array.isArray(data?.items) ? data.items.map(normalizeInsightRow) : [],
+    pageInfo: {
+      page: toNumber(pageInfo.page, 1),
+      pageSize: toNumber(pageInfo.page_size, 25),
+      totalItems: toNumber(pageInfo.total_items, 0),
+      totalPages: toNumber(pageInfo.total_pages, 0),
+      hasNext: Boolean(pageInfo.has_next),
+      hasPrevious: Boolean(pageInfo.has_previous),
+    },
+    appliedFilters: data?.applied_filters || null,
+    lastUpdatedAt: String(data?.last_updated_at || '').trim(),
+    emptyStateMessage: String(data?.empty_state_message || '').trim(),
+  };
+}
+
+export function getInsightWarehouseExportUrl(filters = {}) {
+  const query = buildInsightWarehouseQuery(filters);
+  return query
+    ? `${API_BASE_URL}/api/v1/insights/export?${query}`
+    : `${API_BASE_URL}/api/v1/insights/export`;
+}
+
 export async function fetchData(type, param = null) {
   switch (type) {
     case 'dashboard':
@@ -639,8 +807,6 @@ export async function fetchData(type, param = null) {
       return getProjectsData();
     case 'project_detail':
       return getProjectDetailData(param);
-    case 'insights':
-      return INSIGHTS_MOCK_DATA;
     case 'settings': {
       const data = await apiRequest('/api/v1/settings/subcontractors').catch(() => []);
       return Array.isArray(data) ? data : [];
@@ -650,4 +816,4 @@ export async function fetchData(type, param = null) {
   }
 }
 
-export { API_BASE_URL, compactNumber };
+export { API_BASE_URL, compactNumber, buildInsightWarehouseQuery };
