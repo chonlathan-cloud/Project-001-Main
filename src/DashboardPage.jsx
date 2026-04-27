@@ -28,21 +28,22 @@ const DashboardPage = () => {
       <h1 style={{ fontSize: '32px', marginBottom: '8px' }}>Dashboard</h1>
       
       <div className="dashboard-grid">
-        {data.stats.map((stat, index) => (
+        {data?.stats?.map((stat, index) => (
           <StatCard key={index} index={index} title={stat.title} value={stat.value} />
         ))}
       </div>
 
       <div className="chart-section">
-        <ShipmentChart data={data.shipmentData} />
-        <BudgetChart data={data.budgetData} />
+        <ShipmentChart data={data?.shipmentData || []} />
+        <BudgetChart data={data?.budgetData || []} />
       </div>
 
       <div className="bottom-section">
-        <WagesChart data={data.wagesData} />
-        <ValueChart data={data.valueData} />
-        <WorkPeriodChart data={data.workPeriodData} />
+        <WagesChart data={data?.wagesData || []} />
+        <ValueChart data={data?.valueData || []} />
+        <WorkPeriodChart data={data?.workPeriodData || []} />
       </div>
+
     </>
   );
 };
