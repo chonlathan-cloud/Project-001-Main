@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -28,6 +27,7 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.boq import BOQItem, Project
 from app.services.ai_service import parse_boq_sheet_with_gemini
 
@@ -42,7 +42,7 @@ PERSIST_TIMEOUT_SECONDS = 30
 TOTAL_SYNC_TIMEOUT_SECONDS = 180
 BATCH_SYNC_PER_TAB_TIMEOUT_SECONDS = 195
 NON_SYNCABLE_TAB_NAMES = {"summary", "work detail"}
-MAX_BATCH_SYNC_TABS = int(os.getenv("BOQ_BATCH_SYNC_MAX_TABS", "3"))
+MAX_BATCH_SYNC_TABS = get_settings().boq_batch_sync_max_tabs
 HEADER_ROW_KEYWORDS = {
     "item",
     "item no",
@@ -58,14 +58,39 @@ HEADER_ROW_KEYWORDS = {
 }
 
 
+def _resolve_project_identity(
+    project: Project | None = None,
+    project_id: Any | None = None,
+    project_name: str | None = None,
+) -> tuple[Any, str | None]:
+    if project_id is None and project is not None:
+        project_id = project.id
+    if project_name is None and project is not None:
+        project_name = project.name
+    if project_id is None:
+        raise ValueError("project_id is required for BOQ sync.")
+    return project_id, project_name
+
+
 def _sync_context(
     project: Project | None = None,
+    project_id: Any | None = None,
+    project_name: str | None = None,
     boq_type: str | None = None,
     sheet_name: str | None = None,
 ) -> dict[str, Any]:
+    resolved_project_id = None
+    resolved_project_name = None
+    if project is not None or project_id is not None:
+        resolved_project_id, resolved_project_name = _resolve_project_identity(
+            project=project,
+            project_id=project_id,
+            project_name=project_name,
+        )
+
     return {
-        "project_id": str(project.id) if project else None,
-        "project_name": project.name if project else None,
+        "project_id": str(resolved_project_id) if resolved_project_id else None,
+        "project_name": resolved_project_name,
         "boq_type": boq_type,
         "sheet_name": sheet_name,
     }
@@ -331,7 +356,9 @@ def _normalize_parsed_items(parsed_items: list[dict]) -> list[dict]:
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid wbs_level at parsed row {source_index}.") from exc
         if wbs_level < 1:
-            raise ValueError(f"wbs_level must be >= 1 at parsed row {source_index}.")
+            # Gemini can occasionally emit 0 for section/header-like rows.
+            # Treat those as root rows instead of failing the whole sheet.
+            wbs_level = 1
 
         parent_index_raw = item.get("parent_index")
         if parent_index_raw in (None, ""):
@@ -436,12 +463,24 @@ async def persist_boq_version(
 
 async def sync_boq_sheet(
     session: AsyncSession,
-    project: Project,
+    project: Project | None,
     boq_type: str,
     sheet_url: str,
     sheet_name: str,
+    project_id: Any | None = None,
+    project_name: str | None = None,
 ) -> dict[str, Any]:
-    context = _sync_context(project=project, boq_type=boq_type, sheet_name=sheet_name)
+    resolved_project_id, resolved_project_name = _resolve_project_identity(
+        project=project,
+        project_id=project_id,
+        project_name=project_name,
+    )
+    context = _sync_context(
+        project_id=resolved_project_id,
+        project_name=resolved_project_name,
+        boq_type=boq_type,
+        sheet_name=sheet_name,
+    )
     logger.info("boq_sync.start", extra=context)
     total_started_at = perf_counter()
 
@@ -518,7 +557,7 @@ async def sync_boq_sheet(
                 async with asyncio.timeout(PERSIST_TIMEOUT_SECONDS):
                     persistence_result = await persist_boq_version(
                         session=session,
-                        project_id=project.id,
+                        project_id=resolved_project_id,
                         boq_type=boq_type,
                         sheet_name=sheet_name,
                         parsed_items=parsed_items,
@@ -575,8 +614,8 @@ async def sync_boq_sheet(
     total_elapsed_ms = round((perf_counter() - total_started_at) * 1000, 1)
     logger.info("boq_sync.completed elapsed_ms=%s", total_elapsed_ms, extra=context)
     return {
-        "project_id": project.id,
-        "project_name": project.name,
+        "project_id": resolved_project_id,
+        "project_name": resolved_project_name,
         "boq_type": boq_type,
         "sheet_url": sheet_url,
         "sheet_name": sheet_name,
@@ -619,7 +658,13 @@ async def sync_boq_sheet_batch(
             ),
         )
 
-    batch_context = _sync_context(project=project, boq_type=boq_type, sheet_name=None)
+    resolved_project_id, resolved_project_name = _resolve_project_identity(project=project)
+    batch_context = _sync_context(
+        project_id=resolved_project_id,
+        project_name=resolved_project_name,
+        boq_type=boq_type,
+        sheet_name=None,
+    )
     batch_started_at = perf_counter()
     logger.info(
         "boq_sync.batch.start requested_tabs=%s",
@@ -636,7 +681,9 @@ async def sync_boq_sheet_batch(
             async with asyncio.timeout(BATCH_SYNC_PER_TAB_TIMEOUT_SECONDS):
                 result = await sync_boq_sheet(
                     session=session,
-                    project=project,
+                    project=None,
+                    project_id=resolved_project_id,
+                    project_name=resolved_project_name,
                     boq_type=boq_type,
                     sheet_url=sheet_url,
                     sheet_name=sheet_name,

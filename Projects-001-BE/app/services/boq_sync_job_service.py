@@ -182,6 +182,9 @@ async def run_boq_sync_job(job_id: str) -> None:
             logger.warning("boq_sync.job.project_missing job_id=%s", job_id)
             return
 
+        project_id = project.id
+        project_name = project.name
+
         for sheet_name in job["sheet_names"]:
             await _update_job(job_id, current_sheet_name=sheet_name)
             await _update_result_item(
@@ -194,7 +197,9 @@ async def run_boq_sync_job(job_id: str) -> None:
             try:
                 result_data = await sync_boq_sheet(
                     session=session,
-                    project=project,
+                    project=None,
+                    project_id=project_id,
+                    project_name=project_name,
                     boq_type=job["boq_type"],
                     sheet_url=job["sheet_url"],
                     sheet_name=sheet_name,
