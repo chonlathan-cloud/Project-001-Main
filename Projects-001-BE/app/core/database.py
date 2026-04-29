@@ -1,20 +1,13 @@
 """
-Async SQLAlchemy Database Configuration.
+Async SQLAlchemy database configuration.
 """
 
-import os
-from pathlib import Path
-
-from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+from app.core.config import get_settings
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/project-001",
-)
+DATABASE_URL = get_settings().database_url
 
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 

@@ -14,7 +14,9 @@ pydantic-settings>=2.0.0
 pgvector>=0.3.0
 google-genai>=1.70.0
 google-auth>=2.0.0
+google-cloud-firestore>=2.19.0
 google-cloud-storage>=2.19.0
+firebase-admin>=6.6.0
 
 # Utilities
 python-dotenv>=1.0.0

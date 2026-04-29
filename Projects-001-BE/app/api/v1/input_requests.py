@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
+from app.api.deps.auth import AuthenticatedUser, get_current_user, require_admin_user
 from app.core.database import get_db
 from app.models.boq import Project
 from app.models.input_request import InputRequest
@@ -115,6 +116,33 @@ def _reviewable_status(status_value: str) -> bool:
     return status_value in {"DRAFT", "PENDING_ADMIN", "REJECTED"}
 
 
+def _resolve_subcontractor_id_for_create(
+    request: InputRequestCreate,
+    user: AuthenticatedUser,
+) -> str | None:
+    if user.role == "subcontractor":
+        if not user.subcontractor_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Subcontractor session does not include subcontractor_id.",
+            )
+        return user.subcontractor_id
+
+    return _clean_optional_text(request.subcontractor_id)
+
+
+def _filter_input_requests_for_user(query, user: AuthenticatedUser):
+    if user.role == "subcontractor":
+        if not user.subcontractor_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Subcontractor session does not include subcontractor_id.",
+            )
+        return query.filter(InputRequest.subcontractor_id == user.subcontractor_id)
+
+    return query
+
+
 async def _apply_duplicate_detection(
     db: AsyncSession,
     input_request: InputRequest,
@@ -205,7 +233,10 @@ async def _build_receipt_access_response(
 
 
 @router.get("/projects", response_model=StandardResponse[list[ProjectOptionItem]])
-async def list_input_projects(db: AsyncSession = Depends(get_db)):
+async def list_input_projects(
+    _user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Return project options for the Input page dropdown."""
     try:
         result = await db.execute(select(Project).options(noload("*")).order_by(Project.name))
@@ -229,7 +260,10 @@ async def list_input_projects(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/receipt-extract", response_model=StandardResponse[ReceiptExtractResponse])
-async def extract_input_receipt(file: UploadFile = File(...)):
+async def extract_input_receipt(
+    file: UploadFile = File(...),
+    _user: AuthenticatedUser = Depends(get_current_user),
+):
     """
     Receipt extraction endpoint for the Input page using Gemini OCR.
     """
@@ -288,7 +322,10 @@ async def extract_input_receipt(file: UploadFile = File(...)):
 
 
 @router.post("/receipt-upload", response_model=StandardResponse[ReceiptUploadResponse])
-async def upload_input_receipt(file: UploadFile = File(...)):
+async def upload_input_receipt(
+    file: UploadFile = File(...),
+    _user: AuthenticatedUser = Depends(get_current_user),
+):
     """Upload a receipt file to the temporary GCS bucket before submission."""
     try:
         file_bytes = await file.read()
@@ -335,11 +372,18 @@ async def upload_input_receipt(file: UploadFile = File(...)):
 async def get_input_request_receipt_url(
     request_id: UUID,
     expires_in_minutes: int = Query(default=15, ge=1, le=60),
+    user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a short-lived signed URL for an input request receipt."""
     try:
         input_request, _project_name = await _get_input_request_with_project(db, request_id)
+        if user.role == "subcontractor" and input_request.subcontractor_id != user.subcontractor_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This input request does not belong to the current subcontractor.",
+            )
+
         return StandardResponse(
             data=await _build_receipt_access_response(
                 input_request=input_request,
@@ -368,6 +412,7 @@ async def get_input_request_receipt_url(
 async def get_admin_input_request_receipt_url(
     request_id: UUID,
     expires_in_minutes: int = Query(default=15, ge=1, le=60),
+    _user: AuthenticatedUser = Depends(require_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a short-lived signed URL for the selected input request receipt."""
@@ -400,6 +445,7 @@ async def get_admin_input_request_receipt_url(
 )
 async def cleanup_admin_temp_receipts(
     older_than_hours: int = Query(default=24, ge=1, le=168),
+    _user: AuthenticatedUser = Depends(require_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete old temp receipt objects that are no longer referenced in the database."""
@@ -420,6 +466,7 @@ async def cleanup_admin_temp_receipts(
 @router.post("/requests", response_model=StandardResponse[InputRequestItem])
 async def create_input_request(
     request: InputRequestCreate,
+    user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create an input request from the frontend form and persist it to Postgres."""
@@ -442,7 +489,7 @@ async def create_input_request(
 
         record = InputRequest(
             project_id=request.project_id,
-            subcontractor_id=_clean_optional_text(request.subcontractor_id),
+            subcontractor_id=_resolve_subcontractor_id_for_create(request, user),
             entry_type=request.entry_type,
             requester_name=request.requester_name.strip(),
             phone=_clean_optional_text(request.phone),
@@ -488,6 +535,7 @@ async def list_input_requests(
     entry_type: str | None = Query(default=None, pattern="^(EXPENSE|INCOME)$"),
     status_filter: str | None = Query(default=None, alias="status"),
     project_id: UUID | None = None,
+    user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List submitted input requests for review or debugging."""
@@ -498,6 +546,7 @@ async def list_input_requests(
             .options(noload("*"))
             .order_by(InputRequest.created_at.desc())
         )
+        query = _filter_input_requests_for_user(query, user)
 
         if entry_type:
             query = query.filter(InputRequest.entry_type == entry_type)
@@ -525,6 +574,7 @@ async def list_admin_input_requests(
     status_filter: str | None = Query(default="PENDING_ADMIN", alias="status"),
     entry_type: str | None = Query(default=None, pattern="^(EXPENSE|INCOME)$"),
     project_id: UUID | None = None,
+    _user: AuthenticatedUser = Depends(require_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Admin review queue for input requests."""
@@ -560,6 +610,7 @@ async def list_admin_input_requests(
 async def update_admin_input_request(
     request_id: UUID,
     request: InputRequestAdminUpdate,
+    _user: AuthenticatedUser = Depends(require_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Admin direct edit before approval, matching the project docs review flow."""
@@ -621,6 +672,7 @@ async def update_admin_input_request(
 async def approve_admin_input_request(
     request_id: UUID,
     request: InputRequestApproveAction,
+    _user: AuthenticatedUser = Depends(require_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Approve an input request after review."""
@@ -671,6 +723,7 @@ async def approve_admin_input_request(
 async def reject_admin_input_request(
     request_id: UUID,
     request: InputRequestRejectAction,
+    _user: AuthenticatedUser = Depends(require_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Reject an input request and record the review note."""
@@ -709,6 +762,7 @@ async def reject_admin_input_request(
 async def mark_paid_admin_input_request(
     request_id: UUID,
     request: InputRequestMarkPaidAction,
+    _user: AuthenticatedUser = Depends(require_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Move an approved input request into paid state after transfer is completed."""

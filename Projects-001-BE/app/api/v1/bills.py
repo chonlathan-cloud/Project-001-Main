@@ -13,6 +13,7 @@ from sqlalchemy.orm import noload
 from app.core.database import get_db
 from app.models.boq import BOQItem  # noqa: F401
 from app.models.finance import Installment
+from app.api.deps.auth import AuthenticatedUser, require_admin_user
 from app.schemas.bill_schema import (
     ApproveBillRequest,
     ExtractBillResponse,
@@ -20,6 +21,7 @@ from app.schemas.bill_schema import (
 )
 from app.schemas.responses import StandardResponse
 from app.services.finance_service import record_approved_transaction
+from app.services.identity_service import get_subcontractor_financial_rates
 
 router = APIRouter(prefix="/bills", tags=["Bills & Approval"])
 
@@ -76,6 +78,7 @@ async def submit_bill(request: SubmitBillRequest):
 async def list_pending_bills(
     bill_status: str = Query("PENDING", alias="status"),
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
 ):
     """Return bills filtered by status for Admin review."""
     try:
@@ -119,6 +122,7 @@ async def edit_bill(
     bill_id: UUID,
     request: ApproveBillRequest,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
 ):
     """Admin can directly edit bill amount before approving."""
     try:
@@ -162,6 +166,7 @@ async def edit_bill(
 async def approve_bill(
     bill_id: UUID,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
 ):
     """
     Admin approves a bill:
@@ -182,12 +187,23 @@ async def approve_bill(
                 detail=f"Bill {bill_id} not found.",
             )
 
-        # Record transaction with net payable calculation
-        # TODO: Pull vat_rate, wht_rate, retention_rate from subcontractor profile in Firestore
+        rates = (
+            get_subcontractor_financial_rates(installment.subcontractor_id)
+            if installment.subcontractor_id
+            else {
+                "vat_rate": Decimal("0.07"),
+                "wht_rate": Decimal("0.03"),
+                "retention_rate": Decimal("0.05"),
+            }
+        )
+
         transaction = await record_approved_transaction(
             session=db,
             installment_id=bill_id,
             base_amount=installment.amount,
+            vat_rate=rates["vat_rate"],
+            wht_rate=rates["wht_rate"],
+            retention_rate=rates["retention_rate"],
         )
 
         # Update installment status

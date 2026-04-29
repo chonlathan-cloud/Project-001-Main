@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps.auth import AuthenticatedUser, require_subcontractor_user
 from app.core.database import get_db
 from app.models.finance import Installment
 from app.schemas.bill_schema import AdvanceRequest
@@ -23,29 +24,43 @@ router = APIRouter(prefix="/subcontractor", tags=["Subcontractor Portal"])
 # Router 5: GET /api/v1/subcontractor/my-bills
 # ---------------------------------------------------------------------------
 @router.get("/my-bills", response_model=StandardResponse[list[dict]])
-async def get_my_bills(db: AsyncSession = Depends(get_db)):
+async def get_my_bills(
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_subcontractor_user),
+):
     """
     Return the subcontractor's bill history with deduction breakdown.
     Currently returns LLD mock data; will filter by authenticated user.
     """
-    # TODO: Filter by authenticated subcontractor ID from Firebase token
-    mock_data = [
-        {
-            "bill_id": "uuid-bill-1",
-            "date": "2026-03-15",
-            "expense_category": "Concrete Work",
-            "requested_amount": 50000.00,
-            "status": "APPROVED",
-            "net_payable": 45000.00,
-            "deductions": {
-                "vat": 0.00,
-                "wht": 1500.00,
-                "retention": 2500.00,
-                "advance_repayment": 1000.00,
-            },
-        }
-    ]
-    return StandardResponse(data=mock_data)
+    subcontractor_id = user.subcontractor_id
+    if not subcontractor_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated subcontractor context is missing.",
+        )
+
+    result = await db.execute(
+        select(Installment).filter_by(subcontractor_id=subcontractor_id).order_by(Installment.due_date.desc())
+    )
+    items = []
+    for installment in result.scalars().all():
+        items.append(
+            {
+                "bill_id": str(installment.id),
+                "date": str(installment.due_date) if installment.due_date else "",
+                "expense_category": installment.expense_category or "-",
+                "requested_amount": float(installment.amount or 0),
+                "status": installment.status,
+                "net_payable": float(installment.amount or 0),
+                "deductions": {
+                    "vat": 0.0,
+                    "wht": 0.0,
+                    "retention": 0.0,
+                    "advance_repayment": 0.0,
+                },
+            }
+        )
+    return StandardResponse(data=items)
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +74,7 @@ async def request_advance(
     installment_id: UUID,
     request: AdvanceRequest,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_subcontractor_user),
 ):
     """
     Subcontractor requests an advance payment (up to 50%).

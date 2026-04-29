@@ -1,3 +1,5 @@
+import { getStoredAuthUser, getStoredSessionToken } from './auth';
+
 const DEFAULT_API_BASE_URL = 'http://localhost:8000';
 
 const API_BASE_URL = (
@@ -131,6 +133,100 @@ const withColor = (items) =>
     color: item.color || CHART_COLORS[index % CHART_COLORS.length],
   }));
 
+function buildMockProfileData() { // This is only used for subcontractor profile preview when the subcontractor list API does not return detailed info. It will be removed once the API is ready.
+  const authUser = getStoredAuthUser() || {};
+  const displayName = authUser.display_name || authUser.email || authUser.subcontractor_id || 'Manee Son User';
+  const role = authUser.role === 'subcontractor' ? 'Subcontractor' : 'Admin / Project Manager';
+  const company = authUser.role === 'subcontractor' ? 'Subcontractor Portal' : 'Manee Son Construction';
+
+  return {
+    user: {
+      name: displayName,
+      company,
+      role,
+      time: 'Asia/Bangkok',
+    },
+    stats: [
+      {
+        id: 'active_projects',
+        value: '8',
+        label: 'Active Projects',
+        subtext: 'Projects currently visible to this account',
+      },
+      {
+        id: 'pending_approvals',
+        value: '12',
+        label: 'Pending Approvals',
+        subtext: 'Bills and input requests waiting for review',
+      },
+      {
+        id: 'completed_tasks',
+        value: '47',
+        label: 'Completed Tasks',
+        subtext: 'Approved or completed workflow actions',
+      },
+      {
+        id: 'team_members',
+        value: '24',
+        label: 'Team Members',
+        subtext: 'Users and subcontractors in the working directory',
+      },
+      {
+        id: 'reports_generated',
+        value: '18',
+        label: 'Reports Generated',
+        subtext: 'Dashboard, insights, and AI summaries generated locally',
+      },
+      {
+        id: 'budget_managed',
+        value: '15.8M',
+        label: 'Budget Managed',
+        subtext: 'Mock financial coverage for profile preview',
+      },
+    ],
+    chartData: [
+      { name: 'Jan', Activity: 42, Expenses: 28 },
+      { name: 'Feb', Activity: 55, Expenses: 41 },
+      { name: 'Mar', Activity: 48, Expenses: 36 },
+      { name: 'Apr', Activity: 71, Expenses: 52 },
+      { name: 'May', Activity: 64, Expenses: 47 },
+      { name: 'Jun', Activity: 78, Expenses: 59 },
+    ],
+  };
+}
+
+async function getProfileData() {
+  const authUser = getStoredAuthUser() || {};
+  const liveProfile = await apiRequest('/api/v1/profile/me').catch(() => null);
+
+  if (liveProfile?.user) {
+    return {
+      user: liveProfile.user,
+      stats: Array.isArray(liveProfile.stats) ? liveProfile.stats : [],
+      chartData: Array.isArray(liveProfile.chartData) ? liveProfile.chartData : [],
+    };
+  }
+
+  if (authUser.role === 'subcontractor' && authUser.subcontractor_id) {
+    const subcontractors = await getSettingSubcontractors().catch(() => []);
+    const profile = subcontractors.find((item) => item.id === authUser.subcontractor_id);
+    if (profile) {
+      const mock = buildMockProfileData();
+      return {
+        ...mock,
+        user: {
+          ...mock.user,
+          name: profile.name || mock.user.name,
+          company: profile.tax_id ? `Tax ID: ${profile.tax_id}` : mock.user.company,
+          role: 'Subcontractor',
+        },
+      };
+    }
+  }
+
+  return buildMockProfileData();
+}
+
 const flattenBoqTree = (nodes = []) =>
   nodes.flatMap((node) => [node, ...flattenBoqTree(node.children || [])]);
 
@@ -175,12 +271,15 @@ async function apiRequest(path, options = {}) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
+  const sessionToken = getStoredSessionToken();
+  const authHeaders = sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {};
 
   let response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       headers: {
         ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+        ...authHeaders,
         ...(headers || {}),
       },
       signal: controller.signal,
@@ -799,6 +898,88 @@ export function getInsightWarehouseExportUrl(filters = {}) {
     : `${API_BASE_URL}/api/v1/insights/export`;
 }
 
+export async function adminLogin(payload) {
+  return apiRequest('/api/v1/auth/admin-login', {
+    method: 'POST',
+    body: JSON.stringify({
+      firebase_id_token: payload.firebaseIdToken,
+      email: payload.email,
+      display_name: payload.displayName,
+    }),
+  });
+}
+
+export async function lineLogin(payload) {
+  return apiRequest('/api/v1/auth/line-login', {
+    method: 'POST',
+    body: JSON.stringify({
+      line_access_token: payload.lineAccessToken,
+    }),
+  });
+}
+
+export async function signUpSubcontractor(payload) {
+  const formData = new FormData();
+  formData.append('line_uid', payload.lineUid);
+  formData.append('name', payload.name);
+  formData.append('tax_id', payload.taxId);
+  if (payload.kycImage) {
+    formData.append('kyc_image', payload.kycImage);
+  }
+
+  return apiRequest('/api/v1/auth/sign-up', {
+    method: 'POST',
+    headers: {},
+    body: formData,
+    timeoutMs: 90000,
+  });
+}
+
+export async function getCurrentSessionUser() {
+  return apiRequest('/api/v1/auth/me');
+}
+
+export async function getSettingSubcontractors() {
+  const data = await apiRequest('/api/v1/settings/subcontractors');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function updateSettingSubcontractor(subcontractorId, payload) {
+  return apiRequest(`/api/v1/settings/subcontractors/${subcontractorId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function resetSettingSubcontractorLine(subcontractorId) {
+  return apiRequest(`/api/v1/settings/subcontractors/${subcontractorId}/reset-line`, {
+    method: 'POST',
+  });
+}
+
+export async function getSettingSubcontractorKycUrl(subcontractorId) {
+  return apiRequest(`/api/v1/settings/users/${subcontractorId}/kyc-image`);
+}
+
+export async function getSettingAdmins() {
+  const data = await apiRequest('/api/v1/settings/admins');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createSettingAdmin(payload) {
+  return apiRequest('/api/v1/settings/admins', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSettingAdmin(adminId, payload) {
+  return apiRequest(`/api/v1/settings/admins/${adminId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchData(type, param = null) {
   switch (type) {
     case 'dashboard':
@@ -808,9 +989,10 @@ export async function fetchData(type, param = null) {
     case 'project_detail':
       return getProjectDetailData(param);
     case 'settings': {
-      const data = await apiRequest('/api/v1/settings/subcontractors').catch(() => []);
-      return Array.isArray(data) ? data : [];
+      return getSettingSubcontractors().catch(() => []);
     }
+    case 'profile':
+      return getProfileData();
     default:
       return null;
   }

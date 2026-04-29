@@ -4,7 +4,6 @@ Cleanup helpers for abandoned temporary input receipts in GCS.
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -12,9 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.input_request import InputRequest
 from app.schemas.input_schema import TempReceiptCleanupResponse
-from app.services.gcs_storage_service import delete_storage_key, list_temp_receipt_objects
-
-_TEMP_BILLS_BUCKET = os.getenv("GCS_BUCKET_NAME2", "")
+from app.services.gcs_storage_service import (
+    delete_storage_key,
+    get_default_bucket_name,
+    list_temp_receipt_objects,
+    temp_receipt_storage_prefix,
+)
 
 
 async def cleanup_orphan_temp_receipts(
@@ -35,7 +37,9 @@ async def cleanup_orphan_temp_receipts(
     referenced_temp_keys = {
         str(value)
         for value in referenced_rows
-        if value and str(value).startswith(f"gs://{_TEMP_BILLS_BUCKET}/")
+        if value and str(value).startswith(
+            f"gs://{get_default_bucket_name()}/{temp_receipt_storage_prefix()}/"
+        )
     }
 
     temp_objects = await list_temp_receipt_objects()
@@ -64,7 +68,7 @@ async def cleanup_orphan_temp_receipts(
         deleted_storage_keys.append(storage_key)
 
     return TempReceiptCleanupResponse(
-        bucket_name=_TEMP_BILLS_BUCKET,
+        bucket_name=get_default_bucket_name(),
         checked_object_count=len(temp_objects),
         deleted_object_count=len(deleted_storage_keys),
         kept_referenced_count=len(kept_referenced_storage_keys),

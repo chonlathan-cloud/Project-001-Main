@@ -83,7 +83,6 @@ const CalendarWidget = () => {
           <div key={index} style={{ 
             fontSize: '13px', 
             padding: '8px 0',
-            color: date ? 'var(--text-main)' : 'transparent',
             backgroundColor: date === 27 ? 'var(--accent-gold)' : 'transparent',
             borderRadius: '50%',
             color: date === 27 ? 'white' : 'var(--text-main)',
