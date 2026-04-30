@@ -5,11 +5,14 @@ import Loading from './components/Loading';
 import ConstructionAnimation from './components/ConstructionAnimation';
 import {
   extractInputReceipt,
+  getInputDefaults,
   getInputRequestReceiptUrl,
   getInputProjectOptions,
   submitInputRequest,
   uploadInputReceipt,
 } from './api';
+
+const MotionDiv = motion.div;
 
 const ENTRY_TYPE_OPTIONS = [
   { value: 'EXPENSE', label: 'รายจ่าย' },
@@ -94,6 +97,16 @@ const initialFormState = {
   accountName: '',
   amount: '',
 };
+
+const buildDefaultedFormState = (defaults = {}, overrides = {}) => ({
+  ...initialFormState,
+  requesterName: defaults.requesterName || initialFormState.requesterName,
+  phone: defaults.phone || initialFormState.phone,
+  bankName: defaults.bankName || initialFormState.bankName,
+  accountNo: defaults.accountNo || initialFormState.accountNo,
+  accountName: defaults.accountName || initialFormState.accountName,
+  ...overrides,
+});
 
 const fieldBaseStyle = {
   width: '100%',
@@ -236,6 +249,7 @@ const formatOcrFieldLabel = (fieldName) => {
 const InputPage = () => {
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
+  const [inputDefaults, setInputDefaults] = useState(() => buildDefaultedFormState());
   const [form, setForm] = useState(initialFormState);
   const [selectedFile, setSelectedFile] = useState(null);
   const [localReceiptPreviewUrl, setLocalReceiptPreviewUrl] = useState('');
@@ -258,8 +272,25 @@ const InputPage = () => {
       try {
         setLoading(true);
         setPageError('');
-        const items = await getInputProjectOptions();
+        const [items, defaults] = await Promise.all([
+          getInputProjectOptions(),
+          getInputDefaults(),
+        ]);
         setProjects(items);
+        setInputDefaults(buildDefaultedFormState(defaults));
+        setForm((current) => {
+          const nextProjectId =
+            current.projectId || (items.length === 1 ? String(items[0].project_id || '') : '');
+          return buildDefaultedFormState(defaults, {
+            ...current,
+            projectId: nextProjectId,
+            requesterName: current.requesterName || defaults.requesterName || '',
+            phone: current.phone || defaults.phone || '',
+            bankName: current.bankName || defaults.bankName || '',
+            accountNo: current.accountNo || defaults.accountNo || '',
+            accountName: current.accountName || defaults.accountName || '',
+          });
+        });
       } catch (error) {
         setPageError(error.message || 'Failed to load projects for the input form.');
       } finally {
@@ -489,10 +520,15 @@ const InputPage = () => {
 
       setSubmitResult(response);
       setFlashMessage('ส่งคำขอเรียบร้อยแล้ว');
-      setForm({
-        ...initialFormState,
-        entryType: form.entryType,
-      });
+      setForm(
+        buildDefaultedFormState(inputDefaults, {
+          entryType: form.entryType,
+          projectId:
+            projects.length === 1
+              ? String(projects[0]?.project_id || '')
+              : '',
+        })
+      );
       setSelectedFile(null);
       setExtractData(null);
       setUploadedReceipt(null);
@@ -534,7 +570,7 @@ const InputPage = () => {
         Input
       </h1>
 
-      <motion.div
+      <MotionDiv
         layout
         style={{
           display: 'flex',
@@ -543,7 +579,7 @@ const InputPage = () => {
           alignItems: 'start',
         }}
       >
-        <motion.div layout style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <MotionDiv layout style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <form onSubmit={handleSubmit}>
             <div
               className="card"
@@ -559,14 +595,14 @@ const InputPage = () => {
             >
               <AnimatePresence mode="popLayout">
                 {flashMessage ? (
-                  <motion.div
+                  <MotionDiv
                     key="flash-message"
                     initial={{ opacity: 0, y: -8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -8 }}
                   >
                     <StatusBanner tone="success" text={flashMessage} />
-                  </motion.div>
+                  </MotionDiv>
                 ) : null}
               </AnimatePresence>
 
@@ -647,8 +683,16 @@ const InputPage = () => {
                 options={projectOptions}
                 value={form.projectId}
                 onChange={handleFieldChange('projectId')}
+                disabled={projectOptions.length === 0}
                 style={{ width: '60%' }}
               />
+
+              {projectOptions.length === 0 ? (
+                <StatusBanner
+                  tone="warning"
+                  text="ยังไม่มีโครงการที่ assign ให้บัญชีนี้ กรุณาให้ admin ตั้งค่า Assigned Projects ในหน้า Settings ก่อน"
+                />
+              ) : null}
 
               <InputField
                 label="ชื่อ - นามสกุล"
@@ -775,9 +819,9 @@ const InputPage = () => {
               </div>
             </div>
           </form>
-        </motion.div>
+        </MotionDiv>
 
-        <motion.div
+        <MotionDiv
           layout
           style={{
             flex: 1,
@@ -795,7 +839,7 @@ const InputPage = () => {
           <div style={{ width: '100%', padding: '28px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <AnimatePresence mode="wait">
               {submitResult ? (
-                <motion.div
+                <MotionDiv
                   key="submit-result"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -922,9 +966,9 @@ const InputPage = () => {
                       </div>
                     ) : null}
                   </div>
-                </motion.div>
+                </MotionDiv>
               ) : extractData ? (
-                <motion.div
+                <MotionDiv
                   key="extract-result"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1012,9 +1056,9 @@ const InputPage = () => {
                       ))}
                     </div>
                   </div>
-                </motion.div>
+                </MotionDiv>
               ) : (
-                <motion.div
+                <MotionDiv
                   key="empty-state"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -1031,12 +1075,12 @@ const InputPage = () => {
                     </p>
                   </div>
                   <ConstructionAnimation />
-                </motion.div>
+                </MotionDiv>
               )}
             </AnimatePresence>
           </div>
-        </motion.div>
-      </motion.div>
+        </MotionDiv>
+      </MotionDiv>
     </div>
   );
 };

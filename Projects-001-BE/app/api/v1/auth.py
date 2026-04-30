@@ -26,6 +26,7 @@ from app.services.identity_service import (
     ensure_bootstrap_admin,
     get_subcontractor_by_line_uid,
     is_email_authorized_admin,
+    update_subcontractor_profile,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -106,6 +107,7 @@ async def line_login(request: LineLoginRequest):
         line_profile = await _fetch_line_profile(request.line_access_token)
         line_uid = str(line_profile.get("userId") or "").strip()
         display_name = str(line_profile.get("displayName") or "Subcontractor").strip()
+        line_picture_url = str(line_profile.get("pictureUrl") or "").strip() or None
         profile = get_subcontractor_by_line_uid(line_uid)
 
         if profile is None:
@@ -114,8 +116,15 @@ async def line_login(request: LineLoginRequest):
                     "status": "REQUIRE_SIGNUP",
                     "line_uid": line_uid,
                     "display_name": display_name,
+                    "line_picture_url": line_picture_url,
                     "message": "User not found. Please complete registration.",
                 }
+            )
+
+        if line_picture_url and profile.line_picture_url != line_picture_url:
+            profile = update_subcontractor_profile(
+                profile.id,
+                updates={"line_picture_url": line_picture_url},
             )
 
         return StandardResponse(
@@ -138,8 +147,14 @@ async def line_login(request: LineLoginRequest):
 @router.post("/sign-up", response_model=StandardResponse[AuthSessionResponse])
 async def sign_up(
     line_uid: str = Form(..., description="LINE UID from the login step"),
+    line_picture_url: str | None = Form(default=None, description="LINE avatar URL"),
     name: str = Form(..., description="Company or subcontractor name"),
+    contact_name: str | None = Form(default=None, description="Default requester/contact name"),
+    phone: str | None = Form(default=None, description="Default contact phone number"),
     tax_id: str = Form(..., description="Tax Identification Number"),
+    bank_name: str | None = Form(default=None, description="Default bank name"),
+    account_no: str | None = Form(default=None, description="Default bank account number"),
+    account_name: str | None = Form(default=None, description="Default bank account name"),
     kyc_image: UploadFile | None = None,
 ):
     try:
@@ -164,9 +179,17 @@ async def sign_up(
         profile = create_subcontractor_profile(
             subcontractor_id=subcontractor_id,
             line_uid=line_uid.strip(),
+            line_picture_url=(line_picture_url or "").strip() or None,
             name=name.strip(),
+            contact_name=(contact_name or "").strip() or None,
+            phone=(phone or "").strip() or None,
             tax_id=tax_id.strip(),
             kyc_gcs_path=gcs_path,
+            bank_account={
+                "bank_name": (bank_name or "").strip() or None,
+                "account_no": (account_no or "").strip() or None,
+                "account_name": (account_name or "").strip() or None,
+            },
         )
 
         return StandardResponse(

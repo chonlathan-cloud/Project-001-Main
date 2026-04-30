@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Search, Bell, ChevronDown, User, Calendar as CalendarIcon, 
+  Search, Bell, ChevronDown, User,
   Briefcase, Clock, CheckCircle, TrendingUp, DollarSign, Users, 
   ChevronLeft, ChevronRight 
 } from 'lucide-react';
@@ -11,14 +11,16 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
 } from 'recharts';
-import { fetchData } from './api';
+import { fetchData, resetProfileAvatar, uploadProfileAvatar } from './api';
 import Loading from './components/Loading';
 
-const StatCard = ({ value, label, subtext, icon: Icon }) => (
-  <div style={{
+const StatCard = ({ value, label, subtext, icon }) => {
+  const IconComponent = icon;
+
+  return (
+    <div style={{
     backgroundColor: 'var(--card-bg)',
     borderRadius: 'var(--radius-lg)',
     padding: '24px',
@@ -44,12 +46,13 @@ const StatCard = ({ value, label, subtext, icon: Icon }) => (
         justifyContent: 'center',
         color: 'white'
       }}>
-        <Icon size={24} />
+        {IconComponent ? <IconComponent size={24} /> : null}
       </div>
     </div>
     <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '16px' }}>{subtext}</div>
   </div>
-);
+  );
+};
 
 const CalendarWidget = () => {
   // Simple static calendar visual for UI demonstration
@@ -106,10 +109,48 @@ const iconMap = {
   'budget_managed': DollarSign
 };
 
+const buildInitials = (value) => {
+  const words = String(value || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return 'U';
+  return words.slice(0, 2).map((word) => word.charAt(0).toUpperCase()).join('');
+};
+
+const AvatarCircle = ({ name, imageUrl, size = 140 }) => (
+  <div style={{
+    width: `${size}px`,
+    height: `${size}px`,
+    borderRadius: '50%',
+    backgroundColor: 'var(--accent-gold-light)',
+    margin: '0 auto',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--accent-gold)',
+    border: '4px solid var(--card-bg)',
+    boxShadow: '0 0 0 2px var(--accent-gold-light)',
+    overflow: 'hidden',
+  }}>
+    {imageUrl ? (
+      <img
+        src={imageUrl}
+        alt={name || 'Profile avatar'}
+        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+      />
+    ) : (
+      <span style={{ fontSize: `${Math.round(size * 0.28)}px`, fontWeight: '700' }}>
+        {buildInitials(name)}
+      </span>
+    )}
+  </div>
+);
+
 
 const ProfilePage = () => {
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -124,6 +165,64 @@ const ProfilePage = () => {
     };
     loadData();
   }, []);
+
+  const handlePickAvatar = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAvatarChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setAvatarSaving(true);
+      setAvatarError('');
+      const response = await uploadProfileAvatar(file);
+      setProfileData((current) => {
+        if (!current?.user) return current;
+        return {
+          ...current,
+          user: {
+            ...current.user,
+            profile_image_url: response?.profile_image_url || '',
+            line_picture_url: response?.line_picture_url || current.user.line_picture_url || '',
+            avatar_url: response?.avatar_url || '',
+          },
+        };
+      });
+    } catch (error) {
+      setAvatarError(error.message || 'Failed to upload profile avatar.');
+    } finally {
+      setAvatarSaving(false);
+      if (event.target) {
+        event.target.value = '';
+      }
+    }
+  };
+
+  const handleResetAvatar = async () => {
+    try {
+      setAvatarSaving(true);
+      setAvatarError('');
+      const response = await resetProfileAvatar();
+      setProfileData((current) => {
+        if (!current?.user) return current;
+        return {
+          ...current,
+          user: {
+            ...current.user,
+            profile_image_url: '',
+            line_picture_url: response?.line_picture_url || current.user.line_picture_url || '',
+            avatar_url: response?.avatar_url || response?.line_picture_url || '',
+          },
+        };
+      });
+    } catch (error) {
+      setAvatarError(error.message || 'Failed to reset profile avatar.');
+    } finally {
+      setAvatarSaving(false);
+    }
+  };
 
   if (loading) return <Loading />;
 
@@ -209,24 +308,65 @@ const ProfilePage = () => {
           <div style={{ position: 'relative', marginBottom: '24px' }}>
             <button style={{ position: 'absolute', left: '-40px', top: '50%', transform: 'translateY(-50%)', background: 'var(--bg-primary)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-muted)' }}><ChevronLeft size={16}/></button>
             
-            <div style={{ 
-              width: '140px', height: '140px', 
-              borderRadius: '50%', 
-              backgroundColor: 'var(--accent-gold-light)', 
-              margin: '0 auto',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: 'var(--accent-gold)',
-              border: '4px solid var(--card-bg)',
-              boxShadow: '0 0 0 2px var(--accent-gold-light)'
-            }}>
-              <User size={64} />
-            </div>
+            <AvatarCircle
+              name={profileData?.user?.contact_name || profileData?.user?.name}
+              imageUrl={profileData?.user?.profile_image_url || profileData?.user?.line_picture_url}
+              size={140}
+            />
             
             <button style={{ position: 'absolute', right: '-40px', top: '50%', transform: 'translateY(-50%)', background: 'var(--bg-primary)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-muted)' }}><ChevronRight size={16}/></button>
           </div>
           
           <div style={{ fontSize: '22px', fontWeight: '700', marginBottom: '8px' }}>{profileData?.user?.name || 'Unknown'}</div>
           <div style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>{profileData?.user?.role || 'N/A'} <span style={{ margin: '0 8px' }}>|</span> {profileData?.user?.time || 'N/A'}</div>
+          {profileData?.user?.role === 'Subcontractor' ? (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleAvatarChange}
+              />
+              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '10px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  onClick={handlePickAvatar}
+                  disabled={avatarSaving}
+                  style={{
+                    padding: '10px 14px',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    backgroundColor: '#fff',
+                    cursor: avatarSaving ? 'wait' : 'pointer',
+                    fontWeight: '600',
+                  }}
+                >
+                  {avatarSaving ? 'Uploading...' : 'Change Photo'}
+                </button>
+                {profileData?.user?.profile_image_url ? (
+                  <button
+                    type="button"
+                    onClick={handleResetAvatar}
+                    disabled={avatarSaving}
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: '12px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: '#f8f2e6',
+                      cursor: avatarSaving ? 'wait' : 'pointer',
+                      fontWeight: '600',
+                    }}
+                  >
+                    Use LINE Avatar
+                  </button>
+                ) : null}
+              </div>
+              {avatarError ? (
+                <div style={{ marginTop: '12px', fontSize: '13px', color: '#b42318' }}>{avatarError}</div>
+              ) : null}
+            </>
+          ) : null}
         </div>
 
         {/* Right Side: Grid Stats */}

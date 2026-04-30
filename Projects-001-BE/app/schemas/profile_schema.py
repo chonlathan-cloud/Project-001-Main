@@ -18,8 +18,13 @@ class BankAccountInfo(BaseModel):
 class SubcontractorProfileItem(BaseModel):
     id: str
     line_uid: str | None = None
+    line_picture_url: str | None = None
+    profile_image_url: str | None = None
     name: str
+    contact_name: str | None = None
+    phone: str | None = None
     tax_id: str | None = None
+    assigned_project_ids: list[str] = Field(default_factory=list)
     vat_rate: float = 0.0
     wht_rate: float = 0.0
     retention_rate: float = 0.0
@@ -32,7 +37,10 @@ class SubcontractorProfileItem(BaseModel):
 
 class UpdateSubcontractorProfileRequest(BaseModel):
     name: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
     tax_id: str | None = None
+    assigned_project_ids: list[str] | None = None
     vat_rate: float | None = None
     wht_rate: float | None = None
     retention_rate: float | None = None

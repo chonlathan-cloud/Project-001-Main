@@ -32,8 +32,16 @@ from app.services.identity_service import (
 router = APIRouter(prefix="/settings", tags=["Admin Settings"])
 
 
-def _profile_item(profile) -> SubcontractorProfileItem:
-    return SubcontractorProfileItem(**asdict(profile))
+async def _profile_item(profile) -> SubcontractorProfileItem:
+    payload = asdict(profile)
+    if profile.profile_image_storage_key:
+        payload["profile_image_url"] = await generate_signed_url_for_storage_key(
+            storage_key=profile.profile_image_storage_key,
+            expires_in_minutes=get_settings().signed_url_expires_minutes,
+        )
+    else:
+        payload["profile_image_url"] = None
+    return SubcontractorProfileItem(**payload)
 
 
 def _admin_item(entry) -> AdminDirectoryItem:
@@ -42,8 +50,9 @@ def _admin_item(entry) -> AdminDirectoryItem:
 
 @router.get("/subcontractors", response_model=StandardResponse[list[SubcontractorProfileItem]])
 async def list_subcontractors(_user: AuthenticatedUser = Depends(require_admin_user)):
+    profiles = list_subcontractor_profiles()
     return StandardResponse(
-        data=[_profile_item(profile) for profile in list_subcontractor_profiles()]
+        data=[await _profile_item(profile) for profile in profiles]
     )
 
 
@@ -57,7 +66,7 @@ async def update_subcontractor(
         sub_id,
         updates=request.model_dump(exclude_none=True),
     )
-    return StandardResponse(data=_profile_item(profile))
+    return StandardResponse(data=await _profile_item(profile))
 
 
 @router.post("/subcontractors/{sub_id}/reset-line", response_model=StandardResponse[SubcontractorProfileItem])
@@ -66,7 +75,7 @@ async def reset_line_binding(
     _user: AuthenticatedUser = Depends(require_admin_user),
 ):
     profile = reset_subcontractor_line_binding(sub_id)
-    return StandardResponse(data=_profile_item(profile))
+    return StandardResponse(data=await _profile_item(profile))
 
 
 @router.get("/users/{user_id}/kyc-image", response_model=StandardResponse[dict])

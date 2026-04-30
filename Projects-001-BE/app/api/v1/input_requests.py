@@ -23,6 +23,7 @@ from app.models.boq import Project
 from app.models.input_request import InputRequest
 from app.schemas.input_schema import (
     BankAccountPayload,
+    InputDefaultValuesResponse,
     InputRequestAdminUpdate,
     InputRequestApproveAction,
     InputRequestCreate,
@@ -42,6 +43,7 @@ from app.services.gcs_storage_service import (
     upload_input_receipt_to_temp_storage,
 )
 from app.services.ai_service import extract_receipt_data_with_gemini
+from app.services.identity_service import get_subcontractor
 from app.services.input_receipt_cleanup_service import cleanup_orphan_temp_receipts
 
 router = APIRouter(prefix="/input", tags=["Input Requests"])
@@ -129,6 +131,25 @@ def _resolve_subcontractor_id_for_create(
         return user.subcontractor_id
 
     return _clean_optional_text(request.subcontractor_id)
+
+
+def _assigned_project_ids_for_subcontractor(user: AuthenticatedUser) -> set[UUID]:
+    if user.role != "subcontractor":
+        return set()
+    if not user.subcontractor_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Subcontractor session does not include subcontractor_id.",
+        )
+
+    profile = get_subcontractor(user.subcontractor_id)
+    assigned_project_ids: set[UUID] = set()
+    for raw_value in profile.assigned_project_ids:
+        try:
+            assigned_project_ids.add(UUID(str(raw_value)))
+        except (TypeError, ValueError):
+            continue
+    return assigned_project_ids
 
 
 def _filter_input_requests_for_user(query, user: AuthenticatedUser):
@@ -234,12 +255,19 @@ async def _build_receipt_access_response(
 
 @router.get("/projects", response_model=StandardResponse[list[ProjectOptionItem]])
 async def list_input_projects(
-    _user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Return project options for the Input page dropdown."""
     try:
-        result = await db.execute(select(Project).options(noload("*")).order_by(Project.name))
+        query = select(Project).options(noload("*")).order_by(Project.name)
+        if user.role == "subcontractor":
+            assigned_project_ids = _assigned_project_ids_for_subcontractor(user)
+            if not assigned_project_ids:
+                return StandardResponse(data=[])
+            query = query.filter(Project.id.in_(assigned_project_ids))
+
+        result = await db.execute(query)
         projects = result.scalars().all()
         items = [
             ProjectOptionItem(
@@ -256,6 +284,43 @@ async def list_input_projects(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load input projects: {exc}",
+        ) from exc
+
+
+@router.get("/defaults", response_model=StandardResponse[InputDefaultValuesResponse])
+async def get_input_defaults(
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Return default subcontractor values used to prefill the Input page."""
+    try:
+        if user.role != "subcontractor":
+            return StandardResponse(data=InputDefaultValuesResponse())
+
+        if not user.subcontractor_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Subcontractor session does not include subcontractor_id.",
+            )
+
+        profile = get_subcontractor(user.subcontractor_id)
+        return StandardResponse(
+            data=InputDefaultValuesResponse(
+                requester_name=profile.contact_name or profile.name,
+                phone=profile.phone,
+                bank_account=BankAccountPayload(
+                    bank_name=profile.bank_account.get("bank_name"),
+                    account_no=profile.bank_account.get("account_no"),
+                    account_name=profile.bank_account.get("account_name"),
+                ),
+            )
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load input defaults: {exc}",
         ) from exc
 
 
@@ -481,6 +546,14 @@ async def create_input_request(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Project {request.project_id} not found.",
             )
+
+        if user.role == "subcontractor":
+            assigned_project_ids = _assigned_project_ids_for_subcontractor(user)
+            if request.project_id not in assigned_project_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This subcontractor is not assigned to the selected project.",
+                )
 
         _validate_request_business_rules(
             entry_type=request.entry_type,

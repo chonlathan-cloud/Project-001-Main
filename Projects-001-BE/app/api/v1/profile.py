@@ -8,16 +8,21 @@ from collections import OrderedDict
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps.auth import AuthenticatedUser, get_current_user
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.boq import Project
 from app.models.input_request import InputRequest
 from app.schemas.responses import StandardResponse
-from app.services.identity_service import get_subcontractor
+from app.services.gcs_storage_service import (
+    generate_signed_url_for_storage_key,
+    upload_profile_image_to_storage,
+)
+from app.services.identity_service import get_subcontractor, update_subcontractor_profile
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
@@ -141,16 +146,29 @@ async def _build_subcontractor_profile(
     completed_count = await _count_input_requests(db, user, statuses={"APPROVED", "PAID"})
     all_count = await _count_input_requests(db, user)
     approved_total = await _sum_input_amounts(db, user, statuses={"APPROVED", "PAID"})
+    profile_image_url = None
+    if profile.profile_image_storage_key:
+        profile_image_url = await generate_signed_url_for_storage_key(
+            storage_key=profile.profile_image_storage_key,
+            expires_in_minutes=get_settings().signed_url_expires_minutes,
+        )
 
     return {
         "user": {
             "id": profile.id,
             "name": profile.name,
+            "contact_name": profile.contact_name,
+            "phone": profile.phone,
             "company": f"Tax ID: {profile.tax_id}" if profile.tax_id else "Subcontractor Portal",
             "role": "Subcontractor",
             "time": "Asia/Bangkok",
             "email": user.email,
             "line_uid": profile.line_uid,
+            "line_picture_url": profile.line_picture_url,
+            "profile_image_url": profile_image_url,
+            "avatar_url": profile_image_url or profile.line_picture_url,
+            "assigned_project_ids": profile.assigned_project_ids,
+            "bank_account": profile.bank_account,
         },
         "stats": [
             {
@@ -260,3 +278,96 @@ async def get_my_profile(
         return StandardResponse(data=await _build_subcontractor_profile(db, user))
 
     return StandardResponse(data=await _build_admin_profile(db, user))
+
+
+@router.post("/me/avatar", response_model=StandardResponse[dict])
+async def upload_my_avatar(
+    file: UploadFile = File(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Upload a custom profile avatar for the authenticated subcontractor."""
+    try:
+        if user.role != "subcontractor" or not user.subcontractor_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Subcontractor access is required.",
+            )
+
+        file_bytes = await file.read()
+        if not file_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded avatar file is empty.",
+            )
+
+        content_type = file.content_type or "application/octet-stream"
+        if not content_type.startswith("image/"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Avatar upload supports image files only.",
+            )
+
+        storage_key = await upload_profile_image_to_storage(
+            file_bytes=file_bytes,
+            file_name=file.filename,
+            content_type=content_type,
+            entity_key=user.subcontractor_id,
+        )
+        profile = update_subcontractor_profile(
+            user.subcontractor_id,
+            updates={"profile_image_storage_key": storage_key},
+        )
+        signed_url = await generate_signed_url_for_storage_key(
+            storage_key=storage_key,
+            expires_in_minutes=get_settings().signed_url_expires_minutes,
+        )
+        return StandardResponse(
+            data={
+                "profile_image_url": signed_url,
+                "line_picture_url": profile.line_picture_url,
+                "avatar_url": signed_url or profile.line_picture_url,
+                "message": "Profile avatar uploaded successfully.",
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload profile avatar: {exc}",
+        ) from exc
+
+
+@router.delete("/me/avatar", response_model=StandardResponse[dict])
+async def reset_my_avatar(
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Remove the custom avatar and fall back to the LINE avatar/default initials."""
+    try:
+        if user.role != "subcontractor" or not user.subcontractor_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Subcontractor access is required.",
+            )
+
+        profile = update_subcontractor_profile(
+            user.subcontractor_id,
+            updates={"profile_image_storage_key": None},
+        )
+        return StandardResponse(
+            data={
+                "profile_image_url": None,
+                "line_picture_url": profile.line_picture_url,
+                "avatar_url": profile.line_picture_url,
+                "message": "Profile avatar reset to LINE avatar/default initials.",
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reset profile avatar: {exc}",
+        ) from exc

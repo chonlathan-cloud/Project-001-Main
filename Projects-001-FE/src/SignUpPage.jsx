@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, FileBadge2, IdCard, User } from 'lucide-react';
+import { ArrowLeft, ArrowRight, FileBadge2, IdCard, Landmark, Phone, User } from 'lucide-react';
 
 import {
   clearPendingLineAuth,
@@ -36,7 +36,12 @@ const SignUpPage = () => {
   const [lineInfo, setLineInfo] = useState(pendingLineAuth);
   const [formData, setFormData] = useState({
     name: pendingLineAuth?.display_name || '',
+    contactName: pendingLineAuth?.display_name || '',
+    phone: '',
     taxId: '',
+    bankName: '',
+    accountNo: '',
+    accountName: pendingLineAuth?.display_name || '',
     kycImage: null,
   });
   const [loading, setLoading] = useState(false);
@@ -51,11 +56,14 @@ const SignUpPage = () => {
         setLineInfo({
           line_uid: profile.userId,
           display_name: profile.displayName || '',
+          line_picture_url: profile.pictureUrl || '',
           status: 'REQUIRE_SIGNUP',
         });
         setFormData((current) => ({
           ...current,
           name: current.name || profile.displayName || '',
+          contactName: current.contactName || profile.displayName || '',
+          accountName: current.accountName || profile.displayName || '',
         }));
       } catch {
         // Keep the form usable for explicit retry from LoginPage.
@@ -88,8 +96,14 @@ const SignUpPage = () => {
 
       const response = await signUpSubcontractor({
         lineUid: lineInfo.line_uid,
+        linePictureUrl: lineInfo.line_picture_url,
         name: formData.name,
+        contactName: formData.contactName,
+        phone: formData.phone,
         taxId: formData.taxId,
+        bankName: formData.bankName,
+        accountNo: formData.accountNo,
+        accountName: formData.accountName,
         kycImage: formData.kycImage,
       });
 
@@ -187,6 +201,39 @@ const SignUpPage = () => {
 
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
+                Default Contact Name
+              </label>
+              <div style={fieldBoxStyle}>
+                <User size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+                <input
+                  type="text"
+                  value={formData.contactName}
+                  onChange={(event) => handleChange('contactName', event.target.value)}
+                  placeholder="Pao"
+                  style={inputStyle}
+                  required
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
+                Default Phone Number
+              </label>
+              <div style={fieldBoxStyle}>
+                <Phone size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+                <input
+                  type="tel"
+                  value={formData.phone}
+                  onChange={(event) => handleChange('phone', event.target.value)}
+                  placeholder="0812345678"
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
                 Tax Identification Number
               </label>
               <div style={fieldBoxStyle}>
@@ -198,6 +245,54 @@ const SignUpPage = () => {
                   placeholder="1234567890123"
                   style={inputStyle}
                   required
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
+                Default Bank Name
+              </label>
+              <div style={fieldBoxStyle}>
+                <Landmark size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+                <input
+                  type="text"
+                  value={formData.bankName}
+                  onChange={(event) => handleChange('bankName', event.target.value)}
+                  placeholder="Bangkok Bank"
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
+                Default Account Number
+              </label>
+              <div style={fieldBoxStyle}>
+                <Landmark size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+                <input
+                  type="text"
+                  value={formData.accountNo}
+                  onChange={(event) => handleChange('accountNo', event.target.value)}
+                  placeholder="123-4-56789-0"
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
+                Default Account Name
+              </label>
+              <div style={fieldBoxStyle}>
+                <User size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+                <input
+                  type="text"
+                  value={formData.accountName}
+                  onChange={(event) => handleChange('accountName', event.target.value)}
+                  placeholder="Pao"
+                  style={inputStyle}
                 />
               </div>
             </div>

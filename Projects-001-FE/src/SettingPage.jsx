@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   createSettingAdmin,
+  getInputProjectOptions,
   getSettingAdmins,
   getSettingSubcontractorKycUrl,
   getSettingSubcontractors,
@@ -53,9 +54,46 @@ const emptyBank = {
   account_name: '',
 };
 
+const buildInitials = (value) => {
+  const words = String(value || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return 'U';
+  return words.slice(0, 2).map((word) => word.charAt(0).toUpperCase()).join('');
+};
+
+const AvatarCircle = ({ name, imageUrl, size = 44 }) => (
+  <div
+    style={{
+      width: `${size}px`,
+      height: `${size}px`,
+      borderRadius: '50%',
+      backgroundColor: '#f8f2e6',
+      color: 'var(--accent-gold)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontWeight: '700',
+      fontSize: `${Math.round(size * 0.34)}px`,
+      overflow: 'hidden',
+      border: '1px solid var(--border-color)',
+      flexShrink: 0,
+    }}
+  >
+    {imageUrl ? (
+      <img
+        src={imageUrl}
+        alt={name || 'Avatar'}
+        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+      />
+    ) : (
+      <span>{buildInitials(name)}</span>
+    )}
+  </div>
+);
+
 function SettingPage() {
   const [subcontractors, setSubcontractors] = useState([]);
   const [admins, setAdmins] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -64,7 +102,10 @@ function SettingPage() {
   const [selectedAdminId, setSelectedAdminId] = useState('');
   const [subForm, setSubForm] = useState({
     name: '',
+    contact_name: '',
+    phone: '',
     tax_id: '',
+    assigned_project_ids: [],
     vat_rate: 0,
     wht_rate: 0,
     retention_rate: 0,
@@ -81,20 +122,25 @@ function SettingPage() {
     setLoading(true);
     setError('');
     try {
-      const [subItems, adminItems] = await Promise.all([
+      const [subItems, adminItems, projectItems] = await Promise.all([
         getSettingSubcontractors(),
         getSettingAdmins().catch(() => []),
+        getInputProjectOptions().catch(() => []),
       ]);
 
       setSubcontractors(subItems);
       setAdmins(adminItems);
+      setProjects(projectItems);
 
       if (subItems.length > 0) {
         const selected = subItems[0];
         setSelectedSubId(selected.id);
         setSubForm({
           name: selected.name || '',
+          contact_name: selected.contact_name || '',
+          phone: selected.phone || '',
           tax_id: selected.tax_id || '',
+          assigned_project_ids: Array.isArray(selected.assigned_project_ids) ? selected.assigned_project_ids : [],
           vat_rate: selected.vat_rate ?? 0,
           wht_rate: selected.wht_rate ?? 0,
           retention_rate: selected.retention_rate ?? 0,
@@ -132,7 +178,10 @@ function SettingPage() {
     if (!selected) return;
     setSubForm({
       name: selected.name || '',
+      contact_name: selected.contact_name || '',
+      phone: selected.phone || '',
       tax_id: selected.tax_id || '',
+      assigned_project_ids: Array.isArray(selected.assigned_project_ids) ? selected.assigned_project_ids : [],
       vat_rate: selected.vat_rate ?? 0,
       wht_rate: selected.wht_rate ?? 0,
       retention_rate: selected.retention_rate ?? 0,
@@ -162,6 +211,18 @@ function SettingPage() {
 
   const updateSubField = (field, value) => {
     setSubForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const toggleAssignedProject = (projectId) => {
+    setSubForm((current) => {
+      const currentIds = Array.isArray(current.assigned_project_ids) ? current.assigned_project_ids : [];
+      return {
+        ...current,
+        assigned_project_ids: currentIds.includes(projectId)
+          ? currentIds.filter((item) => item !== projectId)
+          : [...currentIds, projectId],
+      };
+    });
   };
 
   const updateBankField = (field, value) => {
@@ -302,6 +363,24 @@ function SettingPage() {
 
           {selectedSubcontractor ? (
             <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '18px' }}>
+                <AvatarCircle
+                  name={selectedSubcontractor.contact_name || selectedSubcontractor.name}
+                  imageUrl={selectedSubcontractor.profile_image_url || selectedSubcontractor.line_picture_url}
+                  size={58}
+                />
+                <div>
+                  <div style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text-main)' }}>
+                    {selectedSubcontractor.contact_name || selectedSubcontractor.name}
+                  </div>
+                  <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                    {selectedSubcontractor.profile_image_url
+                      ? 'Custom profile avatar'
+                      : 'LINE avatar default with initials fallback'}
+                  </div>
+                </div>
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '16px', marginBottom: '18px' }}>
                 <div>
                   <span style={labelStyle}>Subcontractor ID</span>
@@ -314,6 +393,14 @@ function SettingPage() {
                 <div>
                   <span style={labelStyle}>Company / Name</span>
                   <input value={subForm.name} onChange={(event) => updateSubField('name', event.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <span style={labelStyle}>Default Contact Name</span>
+                  <input value={subForm.contact_name} onChange={(event) => updateSubField('contact_name', event.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <span style={labelStyle}>Default Phone</span>
+                  <input value={subForm.phone} onChange={(event) => updateSubField('phone', event.target.value)} style={inputStyle} />
                 </div>
                 <div>
                   <span style={labelStyle}>Tax ID</span>
@@ -338,6 +425,47 @@ function SettingPage() {
                     <option value="inactive">Inactive</option>
                   </select>
                 </div>
+              </div>
+
+              <div style={{ ...sectionCardStyle, padding: '18px', marginBottom: '18px', backgroundColor: '#fcfcfd' }}>
+                <h3 style={{ marginTop: 0, marginBottom: '14px', fontSize: '18px' }}>Assigned Projects</h3>
+                <p style={{ marginTop: 0, marginBottom: '14px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                  โครงการที่เลือกไว้ที่นี่เท่านั้นจะปรากฏใน dropdown ของหน้า Input สำหรับ subcontractor คนนี้
+                </p>
+                {projects.length === 0 ? (
+                  <div style={{ ...inputStyle, backgroundColor: '#f8fafc' }}>No projects available.</div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '12px' }}>
+                    {projects.map((project) => {
+                      const projectId = String(project.project_id || '');
+                      const checked = subForm.assigned_project_ids.includes(projectId);
+                      return (
+                        <label
+                          key={projectId}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '12px 14px',
+                            borderRadius: '12px',
+                            border: '1px solid var(--border-color)',
+                            backgroundColor: checked ? '#f8f2e6' : '#fff',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleAssignedProject(projectId)}
+                          />
+                          <span style={{ fontSize: '14px', color: 'var(--text-main)', fontWeight: checked ? '700' : '500' }}>
+                            {project.name}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div style={{ ...sectionCardStyle, padding: '18px', marginBottom: '18px', backgroundColor: '#fcfcfd' }}>

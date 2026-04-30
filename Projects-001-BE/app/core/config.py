@@ -56,6 +56,7 @@ class Settings(BaseSettings):
 
     gcs_bucket_name: str | None = Field(default=None, alias="GCS_BUCKET_NAME")
     gcs_kyc_prefix: str = Field(default="kyc_id_cards", alias="GCS_KYC_PREFIX")
+    gcs_profile_prefix: str = Field(default="profile_images", alias="GCS_PROFILE_PREFIX")
     gcs_temp_bills_prefix: str = Field(default="temp_bills", alias="GCS_TEMP_BILLS_PREFIX")
     gcs_perm_bills_prefix: str = Field(default="perm_bills", alias="GCS_PERM_BILLS_PREFIX")
     signed_url_expires_minutes: int = Field(default=15, alias="SIGNED_URL_EXPIRES_MINUTES")

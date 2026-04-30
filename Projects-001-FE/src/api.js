@@ -126,6 +126,8 @@ function buildMockProfileData() { // This is only used for subcontractor profile
       company,
       role,
       time: 'Asia/Bangkok',
+      line_picture_url: '',
+      profile_image_url: '',
     },
     stats: [
       {
@@ -200,6 +202,8 @@ async function getProfileData() {
           name: profile.name || mock.user.name,
           company: profile.tax_id ? `Tax ID: ${profile.tax_id}` : mock.user.company,
           role: 'Subcontractor',
+          line_picture_url: profile.line_picture_url || '',
+          profile_image_url: profile.profile_image_url || '',
         },
       };
     }
@@ -672,6 +676,19 @@ export async function getInputProjectOptions() {
   }));
 }
 
+export async function getInputDefaults() {
+  const data = await apiRequest('/api/v1/input/defaults').catch(() => null);
+  const bankAccount = data?.bank_account || {};
+
+  return {
+    requesterName: String(data?.requester_name || '').trim(),
+    phone: String(data?.phone || '').trim(),
+    bankName: String(bankAccount?.bank_name || '').trim(),
+    accountNo: String(bankAccount?.account_no || '').trim(),
+    accountName: String(bankAccount?.account_name || '').trim(),
+  };
+}
+
 function normalizeChatSource(source, index) {
   if (typeof source === 'string') {
     const label = source.trim();
@@ -1021,8 +1038,14 @@ export async function lineLogin(payload) {
 export async function signUpSubcontractor(payload) {
   const formData = new FormData();
   formData.append('line_uid', payload.lineUid);
+  formData.append('line_picture_url', payload.linePictureUrl || '');
   formData.append('name', payload.name);
+  formData.append('contact_name', payload.contactName);
+  formData.append('phone', payload.phone);
   formData.append('tax_id', payload.taxId);
+  formData.append('bank_name', payload.bankName);
+  formData.append('account_no', payload.accountNo);
+  formData.append('account_name', payload.accountName);
   if (payload.kycImage) {
     formData.append('kyc_image', payload.kycImage);
   }
@@ -1037,6 +1060,23 @@ export async function signUpSubcontractor(payload) {
 
 export async function getCurrentSessionUser() {
   return apiRequest('/api/v1/auth/me');
+}
+
+export async function uploadProfileAvatar(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiRequest('/api/v1/profile/me/avatar', {
+    method: 'POST',
+    headers: {},
+    body: formData,
+    timeoutMs: 90000,
+  });
+}
+
+export async function resetProfileAvatar() {
+  return apiRequest('/api/v1/profile/me/avatar', {
+    method: 'DELETE',
+  });
 }
 
 export async function getSettingSubcontractors() {

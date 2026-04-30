@@ -102,6 +102,12 @@ class ProjectOptionItem(BaseModel):
     status: str
 
 
+class InputDefaultValuesResponse(BaseModel):
+    requester_name: str | None = None
+    phone: str | None = None
+    bank_account: BankAccountPayload = Field(default_factory=BankAccountPayload)
+
+
 class InputRequestCreate(BaseModel):
     project_id: UUID
     subcontractor_id: str | None = None

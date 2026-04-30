@@ -25,6 +25,7 @@ from app.core.config import get_settings
 _settings = get_settings()
 _DEFAULT_BUCKET = _settings.gcs_bucket_name
 _KYC_PREFIX = _settings.gcs_kyc_prefix.strip().strip("/")
+_PROFILE_PREFIX = _settings.gcs_profile_prefix.strip().strip("/")
 _TEMP_BILLS_PREFIX = _settings.gcs_temp_bills_prefix.strip().strip("/")
 _PERM_BILLS_PREFIX = _settings.gcs_perm_bills_prefix.strip().strip("/")
 
@@ -96,6 +97,11 @@ def _build_kyc_object_name(file_name: str | None, entity_key: str) -> str:
     return f"{_KYC_PREFIX}/{entity_key}/{uuid4()}-{safe_name}"
 
 
+def _build_profile_object_name(file_name: str | None, entity_key: str) -> str:
+    safe_name = _sanitize_filename(file_name or f"{entity_key}.jpg")
+    return f"{_PROFILE_PREFIX}/{entity_key}/{uuid4()}-{safe_name}"
+
+
 def _upload_bytes_to_bucket_sync(
     *,
     bucket_name: str,
@@ -139,6 +145,24 @@ async def upload_kyc_image_to_storage(
 ) -> str:
     bucket_name = get_default_bucket_name()
     object_name = _build_kyc_object_name(file_name, entity_key)
+    return await asyncio.to_thread(
+        _upload_bytes_to_bucket_sync,
+        bucket_name=bucket_name,
+        object_name=object_name,
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+
+
+async def upload_profile_image_to_storage(
+    *,
+    file_bytes: bytes,
+    file_name: str | None,
+    content_type: str | None,
+    entity_key: str,
+) -> str:
+    bucket_name = get_default_bucket_name()
+    object_name = _build_profile_object_name(file_name, entity_key)
     return await asyncio.to_thread(
         _upload_bytes_to_bucket_sync,
         bucket_name=bucket_name,
