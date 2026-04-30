@@ -18,22 +18,9 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
-const formatCurrency = (value) =>
-  `$${toNumber(value).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-
-const formatPercent = (value) => `${toNumber(value).toFixed(1)}%`;
-
 const normalizeStatusLabel = (status) => {
   if (!status) return '-';
   return String(status).replace(/_/g, ' ').trim();
-};
-
-const shortLabel = (value, fallback) => {
-  const label = (value || fallback || '-').trim();
-  return label.length > 18 ? `${label.slice(0, 18)}...` : label;
 };
 
 const appendArrayParams = (searchParams, key, values) => {
@@ -126,12 +113,6 @@ function buildInsightWarehouseQuery(filters = {}) {
 
   return searchParams.toString();
 }
-
-const withColor = (items) =>
-  items.map((item, index) => ({
-    ...item,
-    color: item.color || CHART_COLORS[index % CHART_COLORS.length],
-  }));
 
 function buildMockProfileData() { // This is only used for subcontractor profile preview when the subcontractor list API does not return detailed info. It will be removed once the API is ready.
   const authUser = getStoredAuthUser() || {};
@@ -227,23 +208,75 @@ async function getProfileData() {
   return buildMockProfileData();
 }
 
-const flattenBoqTree = (nodes = []) =>
-  nodes.flatMap((node) => [node, ...flattenBoqTree(node.children || [])]);
+const sanitizeBoqTreeNode = (node, prefix = 'boq-node', index = 0) => ({
+  key: String(node?.key || `${prefix}-${index}`),
+  sheetName: String(node?.sheet_name || '').trim(),
+  boqType: String(node?.boq_type || '').trim(),
+  wbsLevel: toNumber(node?.wbs_level, 1),
+  description: String(node?.description || '').trim(),
+  itemNo: String(node?.item_no || '').trim(),
+  qty: node?.qty == null ? null : toNumber(node.qty),
+  unit: String(node?.unit || '').trim(),
+  totalBudget: toNumber(node?.total_budget),
+  actualSpent: node?.actual_spent == null ? null : toNumber(node.actual_spent),
+  variance: node?.variance == null ? null : String(node.variance).trim(),
+  materialBudget: toNumber(node?.material_budget),
+  laborBudget: toNumber(node?.labor_budget),
+  customerPrice: node?.customer_price == null ? null : toNumber(node.customer_price),
+  subcontractorPrice: node?.subcontractor_price == null ? null : toNumber(node.subcontractor_price),
+  marginPerUnit: node?.margin_per_unit == null ? null : toNumber(node.margin_per_unit),
+  children: Array.isArray(node?.children)
+    ? node.children.map((child, childIndex) =>
+        sanitizeBoqTreeNode(child, `${prefix}-${index}`, childIndex))
+    : [],
+});
 
-const toBoqChartNodes = (nodes = []) => {
-  const rootNodes = Array.isArray(nodes) ? nodes : [];
-  const summaryNodes = rootNodes.filter((node) => toNumber(node.total_budget) > 0);
+const sanitizeCompareBoqNode = (node, prefix = 'compare-node', index = 0) => ({
+  key: String(node?.key || `${prefix}-${index}`),
+  sheetName: String(node?.sheet_name || '').trim(),
+  wbsLevel: toNumber(node?.wbs_level, 1),
+  description: String(node?.description || '').trim(),
+  itemNo: String(node?.item_no || '').trim(),
+  unit: String(node?.unit || '').trim(),
+  customerQty: node?.customer_qty == null ? null : toNumber(node.customer_qty),
+  subcontractorQty: node?.subcontractor_qty == null ? null : toNumber(node.subcontractor_qty),
+  customerTotalBudget: toNumber(node?.customer_total_budget),
+  subcontractorTotalBudget: toNumber(node?.subcontractor_total_budget),
+  customerMaterialBudget: toNumber(node?.customer_material_budget),
+  subcontractorMaterialBudget: toNumber(node?.subcontractor_material_budget),
+  customerLaborBudget: toNumber(node?.customer_labor_budget),
+  subcontractorLaborBudget: toNumber(node?.subcontractor_labor_budget),
+  variance: toNumber(node?.variance),
+  marginPercent: node?.margin_percent == null ? null : toNumber(node.margin_percent),
+  matchStatus: String(node?.match_status || 'MATCHED').trim(),
+  children: Array.isArray(node?.children)
+    ? node.children.map((child, childIndex) =>
+        sanitizeCompareBoqNode(child, `${prefix}-${index}`, childIndex))
+    : [],
+});
 
-  if (summaryNodes.length > 0) {
-    return summaryNodes;
-  }
+const sanitizeWbsSummaryItem = (item, index = 0) => ({
+  key: String(item?.key || `wbs-summary-${index}`),
+  label: String(item?.label || `WBS ${index + 1}`).trim(),
+  sheetName: String(item?.sheet_name || '').trim(),
+  customerTotalBudget: toNumber(item?.customer_total_budget),
+  subcontractorTotalBudget: toNumber(item?.subcontractor_total_budget),
+  variance: toNumber(item?.variance),
+  marginPercent: item?.margin_percent == null ? null : toNumber(item.margin_percent),
+  customerMaterialBudget: toNumber(item?.customer_material_budget),
+  subcontractorMaterialBudget: toNumber(item?.subcontractor_material_budget),
+  customerLaborBudget: toNumber(item?.customer_labor_budget),
+  subcontractorLaborBudget: toNumber(item?.subcontractor_labor_budget),
+  matchStatus: String(item?.match_status || 'MATCHED').trim(),
+});
 
-  return flattenBoqTree(rootNodes).filter(
-    (node) =>
-      toNumber(node.total_budget) > 0 &&
-      (!Array.isArray(node.children) || node.children.length === 0)
-  );
-};
+const sanitizeExecutionSummaryItem = (item, index = 0) => ({
+  key: String(item?.key || `execution-summary-${index}`),
+  label: String(item?.label || `Metric ${index + 1}`).trim(),
+  amount: toNumber(item?.amount),
+  count: toNumber(item?.count),
+  tone: String(item?.tone || 'neutral').trim(),
+});
 
 const toProjectCardItem = (project) => {
   const id = project.project_id || project.id || '';
@@ -373,62 +406,138 @@ export async function getDashboardData() {
 
   const kpis = data?.kpis || {};
   const monthlyCashflow = Array.isArray(data?.monthly_cashflow) ? data.monthly_cashflow : [];
+  const recentActions = Array.isArray(data?.recent_actions) ? data.recent_actions : [];
 
-  const totalIncome = monthlyCashflow.reduce((sum, item) => sum + toNumber(item.income), 0);
-  const totalExpense = monthlyCashflow.reduce((sum, item) => sum + toNumber(item.expense), 0);
-  const balance = totalIncome - totalExpense;
+  const cashflow = monthlyCashflow.map((item) => {
+    const income = toNumber(item.income);
+    const expense = toNumber(item.expense);
 
-  const shipmentData = monthlyCashflow.map((item) => ({
-    name: item.month || '-',
-    green: toNumber(item.income),
-    red: toNumber(item.expense),
-  }));
+    return {
+      month: item.month || '-',
+      income,
+      expense,
+      balance: income - expense,
+    };
+  });
 
-  const budgetData = withColor(
-    [
-      { name: 'Budget', value: toNumber(kpis.total_budget) },
-      { name: 'Actual Cost', value: toNumber(kpis.actual_cost) },
-      { name: 'Overdue', value: toNumber(kpis.overdue_amount) },
-    ].filter((item) => item.value > 0)
+  const totalBudget = toNumber(kpis.total_budget);
+  const actualCost = toNumber(kpis.actual_cost);
+  const pendingApprovalCount = toNumber(kpis.pending_approval_count);
+  const overdueAmount = toNumber(kpis.overdue_amount);
+  const profitMargin = toNumber(
+    String(kpis.total_profit_margin || 0).replace('%', ''),
   );
 
-  const wagesData = withColor(
-    [
-      { id: 'income', value: totalIncome },
-      { id: 'expense', value: totalExpense },
-      { id: 'balance', value: Math.max(balance, 0) },
-    ].filter((item) => item.value > 0)
-  );
-
-  const valueData = withColor(
-    monthlyCashflow.map((item) => ({
-      name: item.month || '-',
-      value: toNumber(item.income),
-    }))
-  );
-
-  const workPeriodData = withColor(
-    monthlyCashflow.map((item) => ({
-      name: item.month || '-',
-      value: toNumber(item.expense),
-    }))
-  );
+  const totalIncome = cashflow.reduce((sum, item) => sum + item.income, 0);
+  const totalExpense = cashflow.reduce((sum, item) => sum + item.expense, 0);
+  const netCashflow = totalIncome - totalExpense;
+  const remainingBudget = totalBudget - actualCost;
+  const budgetUtilization = totalBudget > 0 ? (actualCost / totalBudget) * 100 : 0;
+  const overdueRatio = totalBudget > 0 ? (overdueAmount / totalBudget) * 100 : 0;
 
   return {
-    stats: [
-      { title: 'งบรวม', value: formatCurrency(kpis.total_budget) },
-      { title: 'ต้นทุนจริง', value: formatCurrency(kpis.actual_cost) },
-      { title: 'รออนุมัติ', value: String(toNumber(kpis.pending_approval_count)) },
+    kpis: {
+      totalBudget,
+      actualCost,
+      pendingApprovalCount,
+      overdueAmount,
+      profitMargin,
+      totalIncome,
+      totalExpense,
+      netCashflow,
+      remainingBudget,
+      budgetUtilization,
+      overdueRatio,
+    },
+    statCards: [
       {
-        title: 'Margin',
-        value: kpis.total_profit_margin || formatPercent(0),
+        key: 'total-budget',
+        label: 'งบรวมโครงการ',
+        value: totalBudget,
+        kind: 'currency',
+        description: 'งบประมาณรวมจากทุกโครงการที่มีอยู่ในระบบ',
+        tone: 'neutral',
+      },
+      {
+        key: 'actual-cost',
+        label: 'ต้นทุนที่บันทึกแล้ว',
+        value: actualCost,
+        kind: 'currency',
+        description: 'มูลค่ารายจ่ายที่อนุมัติแล้วทั้งหมด',
+        tone: budgetUtilization > 85 ? 'warning' : 'positive',
+      },
+      {
+        key: 'pending-approvals',
+        label: 'รายการรออนุมัติ',
+        value: pendingApprovalCount,
+        kind: 'number',
+        description: 'จำนวน input request ที่มีสถานะ Pending Admin',
+        tone: pendingApprovalCount > 0 ? 'warning' : 'positive',
+      },
+      {
+        key: 'profit-margin',
+        label: 'Profit Margin',
+        value: profitMargin,
+        kind: 'percent',
+        description: 'คำนวณจากงบรวมเทียบกับต้นทุนจริงที่บันทึกแล้ว',
+        tone: profitMargin < 0 ? 'danger' : 'neutral',
       },
     ],
-    shipmentData,
-    budgetData,
-    wagesData,
-    valueData,
-    workPeriodData,
+    budgetBreakdown: [
+      {
+        key: 'actual-cost',
+        label: 'ต้นทุนจริง',
+        value: actualCost,
+        ratio: Math.min(budgetUtilization, 100),
+        tone: budgetUtilization > 85 ? 'warning' : 'positive',
+      },
+      {
+        key: 'remaining-budget',
+        label: 'งบคงเหลือ',
+        value: remainingBudget,
+        ratio: totalBudget > 0 ? Math.min(Math.max((remainingBudget / totalBudget) * 100, 0), 100) : 0,
+        tone: remainingBudget < 0 ? 'danger' : 'neutral',
+      },
+      {
+        key: 'overdue-amount',
+        label: 'ยอดค้างชำระ',
+        value: overdueAmount,
+        ratio: Math.min(overdueRatio, 100),
+        tone: overdueAmount > 0 ? 'danger' : 'positive',
+      },
+    ],
+    attentionItems: [
+      {
+        key: 'pending',
+        label: 'Pending approvals',
+        value: pendingApprovalCount,
+        kind: 'number',
+        description: 'ควรเคลียร์รายการรออนุมัติเพื่อลดคอขวดงานเอกสาร',
+        tone: pendingApprovalCount > 0 ? 'warning' : 'positive',
+      },
+      {
+        key: 'overdue',
+        label: 'Overdue amount',
+        value: overdueAmount,
+        kind: 'currency',
+        description: 'ยอดที่เกินกำหนดชำระและยังไม่อนุมัติ',
+        tone: overdueAmount > 0 ? 'danger' : 'positive',
+      },
+      {
+        key: 'cashflow',
+        label: 'Net cashflow',
+        value: netCashflow,
+        kind: 'currency',
+        description: 'รายรับจาก installments หักรายจ่ายที่อนุมัติแล้ว',
+        tone: netCashflow < 0 ? 'danger' : 'positive',
+      },
+    ],
+    cashflow,
+    recentActions: recentActions.map((item, index) => ({
+      id: `recent-action-${index}`,
+      time: String(item?.time || '').trim(),
+      action: String(item?.action || '').trim(),
+    })),
   };
 }
 
@@ -507,59 +616,50 @@ export async function getProjectDetailData(projectId) {
   const project = await apiRequest(`/api/v1/projects/${projectId}`);
 
   const boqResponse = await apiRequest(`/api/v1/projects/${projectId}/boq`).catch(() => null);
-  const boqTree = Array.isArray(boqResponse?.boq_tree) ? boqResponse.boq_tree : [];
-  const chartNodes = toBoqChartNodes(boqTree);
-  const topItems = chartNodes
-    .filter((item) => toNumber(item.total_budget) > 0)
-    .sort((left, right) => toNumber(right.total_budget) - toNumber(left.total_budget))
-    .slice(0, 5);
-
-  const chartBase = topItems.map((item, index) => ({
-    name: shortLabel(item.description || item.item_no, `BOQ ${index + 1}`),
-    totalBudget: toNumber(item.total_budget),
-    laborBudget: toNumber(item.labor_budget),
-    materialBudget: toNumber(item.material_budget),
-    color: CHART_COLORS[index % CHART_COLORS.length],
-  }));
+  const customerTree = Array.isArray(boqResponse?.customer_tree)
+    ? boqResponse.customer_tree.map((node, index) => sanitizeBoqTreeNode(node, 'customer-node', index))
+    : [];
+  const subcontractorTree = Array.isArray(boqResponse?.subcontractor_tree)
+    ? boqResponse.subcontractor_tree.map((node, index) => sanitizeBoqTreeNode(node, 'subcontractor-node', index))
+    : [];
+  const compareTree = Array.isArray(boqResponse?.compare_tree)
+    ? boqResponse.compare_tree.map((node, index) => sanitizeCompareBoqNode(node, 'compare-node', index))
+    : [];
+  const compareSummary = boqResponse?.compare_summary || {};
+  const wbsSummary = Array.isArray(boqResponse?.wbs_summary)
+    ? boqResponse.wbs_summary.map((item, index) => sanitizeWbsSummaryItem(item, index))
+    : [];
+  const executionSummary = Array.isArray(boqResponse?.execution_summary)
+    ? boqResponse.execution_summary.map((item, index) => sanitizeExecutionSummaryItem(item, index))
+    : [];
+  const sheetNames = Array.isArray(compareSummary?.sheet_names)
+    ? compareSummary.sheet_names.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
 
   return {
     projectId: project.project_id || project.id || projectId,
     name: project.name || boqResponse?.project_name || 'Project',
-    stats: [
-      { title: 'สถานะ', value: normalizeStatusLabel(project.status) },
-      { title: 'งบสำรอง', value: formatCurrency(project.contingency_budget) },
-      { title: 'Overhead', value: formatPercent(project.overhead_percent) },
-      { title: 'Profit', value: formatPercent(project.profit_percent) },
-    ],
-    shipmentData: chartBase.map((item) => ({
-      name: item.name,
-      green: item.totalBudget,
-      red: item.laborBudget,
-    })),
-    salesData: chartBase.map((item) => ({
-      name: item.name,
-      sales: item.totalBudget,
-      target: Math.max(item.totalBudget, item.materialBudget + item.laborBudget),
-    })),
-    wagesData: chartBase
-      .filter((item) => item.laborBudget > 0)
-      .map((item) => ({
-        id: item.name,
-        value: item.laborBudget,
-        color: item.color,
-      })),
-    valueData: chartBase.map((item) => ({
-      name: item.name,
-      value: item.totalBudget,
-      color: item.color,
-    })),
-    workPeriodData: chartBase
-      .filter((item) => item.materialBudget > 0)
-      .map((item) => ({
-        name: item.name,
-        value: item.materialBudget,
-        color: item.color,
-      })),
+    projectType: String(project.project_type || '').trim(),
+    status: String(project.status || '').trim(),
+    overheadPercent: toNumber(project.overhead_percent),
+    profitPercent: toNumber(project.profit_percent),
+    vatPercent: toNumber(project.vat_percent),
+    contingencyBudget: toNumber(project.contingency_budget),
+    customerTree,
+    subcontractorTree,
+    compareTree,
+    wbsSummary,
+    executionSummary,
+    compareSummary: {
+      customerTotalBudget: toNumber(compareSummary?.customer_total_budget),
+      subcontractorTotalBudget: toNumber(compareSummary?.subcontractor_total_budget),
+      totalVariance: toNumber(compareSummary?.total_variance),
+      marginPercent: compareSummary?.margin_percent == null ? null : toNumber(compareSummary.margin_percent),
+      matchedCount: toNumber(compareSummary?.matched_count),
+      customerOnlyCount: toNumber(compareSummary?.customer_only_count),
+      subcontractorOnlyCount: toNumber(compareSummary?.subcontractor_only_count),
+      sheetNames,
+    },
   };
 }
 

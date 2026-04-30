@@ -76,6 +76,106 @@ body {
   margin-top: 24px;
 }
 
+.dashboard-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dashboard-hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.dashboard-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.dashboard-kpi-card {
+  border-radius: 22px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.04);
+}
+
+.dashboard-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.95fr);
+  gap: 24px;
+}
+
+.dashboard-side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dashboard-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+  gap: 24px;
+}
+
+.dashboard-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dashboard-timeline-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid #f0ebdf;
+}
+
+.dashboard-timeline-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.project-detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.project-detail-tree-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.project-detail-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.project-detail-execution-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.project-detail-record-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.project-detail-node-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .card {
   background: var(--card-bg);
   border-radius: var(--radius-md);
@@ -160,9 +260,22 @@ h3 {
   }
 
   .dashboard-grid,
+  .dashboard-hero-metrics,
+  .dashboard-kpi-grid,
+  .dashboard-main-grid,
+  .dashboard-bottom-grid,
+  .project-detail-summary-grid,
+  .project-detail-chart-grid,
+  .project-detail-tree-grid,
+  .project-detail-execution-grid,
+  .project-detail-node-grid,
   .chart-section,
   .bottom-section {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-kpi-card {
+    padding: 20px;
   }
 
   .chat-ai-message {

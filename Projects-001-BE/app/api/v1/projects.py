@@ -2,21 +2,29 @@
 Router 2 & 3: Project List, Project Detail, BOQ Tree, BOQ Sync.
 """
 
+import re
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
 from app.core.database import get_db
 from app.models.boq import BOQItem, Project
 from app.models.finance import Installment  # noqa: F401
+from app.models.finance import Transaction
+from app.models.input_request import InputRequest
 from app.schemas.boq_schema import (
+    BOQCompareNode,
+    BOQCompareSummary,
+    BOQWbsSummaryItem,
     BOQTreeNode,
     BOQTreeResponse,
     CreateProjectRequest,
+    ProjectExecutionSummaryItem,
     ProjectDetailResponse,
     ProjectItem,
     ProjectListResponse,
@@ -40,14 +48,20 @@ from app.services.boq_sync_service import fetch_google_sheet_tabs, sync_boq_shee
 
 router = APIRouter(prefix="/projects", tags=["Projects & BOQ"])
 
+MATCH_STATUS_MATCHED = "MATCHED"
+MATCH_STATUS_CUSTOMER_ONLY = "CUSTOMER_ONLY"
+MATCH_STATUS_SUBCONTRACTOR_ONLY = "SUBCONTRACTOR_ONLY"
 
-def _to_project_list_item(project: Project) -> ProjectItem:
+
+def _to_project_list_item(project: Project, *, total_budget: float | None = None) -> ProjectItem:
     return ProjectItem(
         id=project.id,
         name=project.name,
         project_type=project.project_type,
         status=project.status,
-        total_budget=float(project.contingency_budget or 0),
+        total_budget=float(
+            total_budget if total_budget is not None else (project.contingency_budget or 0)
+        ),
         progress_percent=0.0,  # TODO: calculate from installments
     )
 
@@ -65,6 +79,282 @@ def _to_project_detail(project: Project) -> ProjectDetailResponse:
     )
 
 
+def _to_float(value: Any) -> float:
+    return float(value or 0)
+
+
+def _normalize_compare_text(value: Any) -> str:
+    cleaned = re.sub(r"\s+", " ", str(value or "").strip().lower())
+    return cleaned
+
+
+def _build_boq_tree_payload(items: list[BOQItem], parent_id: UUID | None = None) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = []
+    for item in items:
+        if item.parent_id != parent_id:
+            continue
+
+        children = _build_boq_tree_payload(items, parent_id=item.id)
+        nodes.append(
+            {
+                "sheet_name": item.sheet_name,
+                "boq_type": item.boq_type,
+                "wbs_level": item.wbs_level,
+                "description": item.description,
+                "item_no": item.item_no,
+                "qty": _to_float(item.qty) if item.qty is not None else None,
+                "unit": item.unit,
+                "total_budget": _to_float(item.grand_total),
+                "actual_spent": None,
+                "variance": None,
+                "material_budget": _to_float(item.total_material),
+                "labor_budget": _to_float(item.total_labor),
+                "customer_price": None,
+                "subcontractor_price": None,
+                "margin_per_unit": None,
+                "children": children,
+            }
+        )
+    return nodes
+
+
+def _compare_base_key(node: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            _normalize_compare_text(node.get("sheet_name")),
+            str(node.get("wbs_level") or ""),
+            _normalize_compare_text(node.get("item_no")),
+            _normalize_compare_text(node.get("description")),
+        ]
+    )
+
+
+def _group_nodes_by_base_key(nodes: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for node in nodes:
+        base_key = _compare_base_key(node)
+        grouped.setdefault(base_key, []).append(node)
+    return grouped
+
+
+def _ordered_base_keys(
+    customer_nodes: list[dict[str, Any]],
+    subcontractor_nodes: list[dict[str, Any]],
+) -> list[str]:
+    ordered_keys: list[str] = []
+    seen: set[str] = set()
+
+    for node in [*customer_nodes, *subcontractor_nodes]:
+        base_key = _compare_base_key(node)
+        if base_key in seen:
+            continue
+        seen.add(base_key)
+        ordered_keys.append(base_key)
+
+    return ordered_keys
+
+
+def _build_compare_tree(
+    customer_nodes: list[dict[str, Any]],
+    subcontractor_nodes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    compare_nodes: list[dict[str, Any]] = []
+    customer_groups = _group_nodes_by_base_key(customer_nodes)
+    subcontractor_groups = _group_nodes_by_base_key(subcontractor_nodes)
+
+    for base_key in _ordered_base_keys(customer_nodes, subcontractor_nodes):
+        customer_group = customer_groups.get(base_key, [])
+        subcontractor_group = subcontractor_groups.get(base_key, [])
+        pair_count = max(len(customer_group), len(subcontractor_group))
+
+        for index in range(pair_count):
+            customer_node = customer_group[index] if index < len(customer_group) else None
+            subcontractor_node = (
+                subcontractor_group[index] if index < len(subcontractor_group) else None
+            )
+
+            if customer_node and subcontractor_node:
+                match_status = MATCH_STATUS_MATCHED
+            elif customer_node:
+                match_status = MATCH_STATUS_CUSTOMER_ONLY
+            else:
+                match_status = MATCH_STATUS_SUBCONTRACTOR_ONLY
+
+            customer_total_budget = _to_float(customer_node.get("total_budget")) if customer_node else 0.0
+            subcontractor_total_budget = (
+                _to_float(subcontractor_node.get("total_budget")) if subcontractor_node else 0.0
+            )
+            variance = customer_total_budget - subcontractor_total_budget
+            margin_percent = (
+                (variance / customer_total_budget) * 100 if customer_total_budget else None
+            )
+
+            compare_nodes.append(
+                {
+                    "key": f"{base_key}#{index}",
+                    "sheet_name": (
+                        customer_node.get("sheet_name")
+                        if customer_node
+                        else subcontractor_node.get("sheet_name") if subcontractor_node else None
+                    ),
+                    "wbs_level": (
+                        customer_node.get("wbs_level")
+                        if customer_node
+                        else subcontractor_node.get("wbs_level") if subcontractor_node else 1
+                    ),
+                    "description": (
+                        customer_node.get("description")
+                        if customer_node
+                        else subcontractor_node.get("description") if subcontractor_node else None
+                    ),
+                    "item_no": (
+                        customer_node.get("item_no")
+                        if customer_node
+                        else subcontractor_node.get("item_no") if subcontractor_node else None
+                    ),
+                    "unit": (
+                        customer_node.get("unit")
+                        if customer_node
+                        else subcontractor_node.get("unit") if subcontractor_node else None
+                    ),
+                    "customer_qty": customer_node.get("qty") if customer_node else None,
+                    "subcontractor_qty": subcontractor_node.get("qty") if subcontractor_node else None,
+                    "customer_total_budget": customer_total_budget,
+                    "subcontractor_total_budget": subcontractor_total_budget,
+                    "customer_material_budget": (
+                        _to_float(customer_node.get("material_budget")) if customer_node else 0.0
+                    ),
+                    "subcontractor_material_budget": (
+                        _to_float(subcontractor_node.get("material_budget")) if subcontractor_node else 0.0
+                    ),
+                    "customer_labor_budget": (
+                        _to_float(customer_node.get("labor_budget")) if customer_node else 0.0
+                    ),
+                    "subcontractor_labor_budget": (
+                        _to_float(subcontractor_node.get("labor_budget")) if subcontractor_node else 0.0
+                    ),
+                    "variance": variance,
+                    "margin_percent": margin_percent,
+                    "match_status": match_status,
+                    "children": _build_compare_tree(
+                        customer_node.get("children", []) if customer_node else [],
+                        subcontractor_node.get("children", []) if subcontractor_node else [],
+                    ),
+                }
+            )
+
+    return compare_nodes
+
+
+def _count_compare_statuses(nodes: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {
+        MATCH_STATUS_MATCHED: 0,
+        MATCH_STATUS_CUSTOMER_ONLY: 0,
+        MATCH_STATUS_SUBCONTRACTOR_ONLY: 0,
+    }
+
+    for node in nodes:
+        status = str(node.get("match_status") or MATCH_STATUS_MATCHED)
+        counts[status] = counts.get(status, 0) + 1
+        child_counts = _count_compare_statuses(node.get("children", []))
+        for key, value in child_counts.items():
+            counts[key] = counts.get(key, 0) + value
+
+    return counts
+
+
+def _to_wbs_summary_item(node: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "key": str(node.get("key") or ""),
+        "label": str(node.get("description") or node.get("item_no") or "-"),
+        "sheet_name": node.get("sheet_name"),
+        "customer_total_budget": _to_float(node.get("customer_total_budget")),
+        "subcontractor_total_budget": _to_float(
+            node.get("subcontractor_total_budget")
+        ),
+        "variance": _to_float(node.get("variance")),
+        "margin_percent": node.get("margin_percent"),
+        "customer_material_budget": _to_float(
+            node.get("customer_material_budget")
+        ),
+        "subcontractor_material_budget": _to_float(
+            node.get("subcontractor_material_budget")
+        ),
+        "customer_labor_budget": _to_float(node.get("customer_labor_budget")),
+        "subcontractor_labor_budget": _to_float(
+            node.get("subcontractor_labor_budget")
+        ),
+        "match_status": str(node.get("match_status") or MATCH_STATUS_MATCHED),
+    }
+
+
+def _execution_summary_items(
+    installments: list[Installment],
+    transactions: list[Transaction],
+    input_requests: list[InputRequest],
+) -> list[dict[str, Any]]:
+    pending_installments = [
+        item
+        for item in installments
+        if str(item.status or "").upper() in {"PENDING", "PENDING_ADMIN", "ADVANCE"}
+    ]
+    overdue_installments = [
+        item
+        for item in installments
+        if bool(item.is_overdue)
+        and str(item.status or "").upper() not in {"APPROVED", "PAID", "ACCEPT"}
+    ]
+    pending_input_requests = [
+        item
+        for item in input_requests
+        if str(item.status or "").upper() == "PENDING_ADMIN"
+    ]
+    paid_input_requests = [
+        item for item in input_requests if str(item.status or "").upper() == "PAID"
+    ]
+
+    return [
+        {
+            "key": "approved_transactions",
+            "label": "Approved Transactions",
+            "amount": sum(_to_float(item.net_payable or item.base_amount) for item in transactions),
+            "count": len(transactions),
+            "tone": "positive",
+        },
+        {
+            "key": "pending_installments",
+            "label": "Pending Installments",
+            "amount": sum(_to_float(item.amount) for item in pending_installments),
+            "count": len(pending_installments),
+            "tone": "warning",
+        },
+        {
+            "key": "overdue_installments",
+            "label": "Overdue Installments",
+            "amount": sum(_to_float(item.amount) for item in overdue_installments),
+            "count": len(overdue_installments),
+            "tone": "danger",
+        },
+        {
+            "key": "pending_input_requests",
+            "label": "Pending Input Requests",
+            "amount": sum(_to_float(item.amount) for item in pending_input_requests),
+            "count": len(pending_input_requests),
+            "tone": "warning",
+        },
+        {
+            "key": "paid_input_requests",
+            "label": "Paid Input Requests",
+            "amount": sum(
+                _to_float(item.approved_amount if item.approved_amount is not None else item.amount)
+                for item in paid_input_requests
+            ),
+            "count": len(paid_input_requests),
+            "tone": "positive",
+        },
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Router 2: GET /api/v1/projects
 # ---------------------------------------------------------------------------
@@ -74,8 +364,32 @@ async def list_projects(db: AsyncSession = Depends(get_db)):
     try:
         result = await db.execute(select(Project).options(noload("*")))
         projects = result.scalars().all()
+        project_ids = [project.id for project in projects]
+        budget_by_project_id: dict[UUID, float] = {}
 
-        items = [_to_project_list_item(project) for project in projects]
+        if project_ids:
+            budget_result = await db.execute(
+                select(
+                    BOQItem.project_id,
+                    func.coalesce(func.sum(BOQItem.grand_total), 0),
+                )
+                .filter(BOQItem.project_id.in_(project_ids))
+                .filter(BOQItem.valid_to.is_(None))
+                .filter(BOQItem.parent_id.is_(None))
+                .group_by(BOQItem.project_id)
+            )
+            budget_by_project_id = {
+                project_id: float(total_budget or 0)
+                for project_id, total_budget in budget_result.all()
+            }
+
+        items = [
+            _to_project_list_item(
+                project,
+                total_budget=budget_by_project_id.get(project.id, float(project.contingency_budget or 0)),
+            )
+            for project in projects
+        ]
         return StandardResponse(data=items)
 
     except Exception as exc:
@@ -204,40 +518,13 @@ async def get_project_detail(
         ) from exc
 
 
-# ---------------------------------------------------------------------------
-# Router 3: GET /api/v1/projects/{id}/boq  (Tree / Nested)
-# ---------------------------------------------------------------------------
-def _build_boq_tree(items: list[BOQItem], parent_id=None) -> list[BOQTreeNode]:
-    """Recursively build a nested BOQ tree from flat ORM records."""
-    nodes = []
-    for item in items:
-        if item.parent_id == parent_id:
-            children = _build_boq_tree(items, parent_id=item.id)
-            node = BOQTreeNode(
-                wbs_level=item.wbs_level,
-                description=item.description,
-                item_no=item.item_no,
-                qty=float(item.qty) if item.qty else None,
-                unit=item.unit,
-                total_budget=float(item.grand_total or 0),
-                material_budget=float(item.total_material or 0),
-                labor_budget=float(item.total_labor or 0),
-                material_unit_price=float(item.material_unit_price or 0),
-                labor_unit_price=float(item.labor_unit_price or 0),
-                children=children,
-            )
-            nodes.append(node)
-    return nodes
-
-
 @router.get("/{project_id}/boq", response_model=StandardResponse[BOQTreeResponse])
 async def get_project_boq(
     project_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """Return BOQ data as a nested WBS tree for the frontend to render."""
+    """Return Customer, Subcontractor, and Compare BOQ trees for Project Detail."""
     try:
-        # Verify project exists
         proj_result = await db.execute(
             select(Project).options(noload("*")).filter_by(id=project_id)
         )
@@ -248,20 +535,117 @@ async def get_project_boq(
                 detail=f"Project {project_id} not found.",
             )
 
-        # Fetch all BOQ items for this project (current versions only)
         items_result = await db.execute(
             select(BOQItem)
             .options(noload("*"))
             .filter_by(project_id=project_id)
             .filter(BOQItem.valid_to.is_(None))
-            .order_by(BOQItem.wbs_level, BOQItem.item_no)
+            .order_by(BOQItem.boq_type, BOQItem.sheet_name, BOQItem.wbs_level, BOQItem.item_no)
         )
         all_items = items_result.scalars().all()
 
-        tree = _build_boq_tree(all_items, parent_id=None)
+        customer_items = [item for item in all_items if item.boq_type == "CUSTOMER"]
+        subcontractor_items = [
+            item for item in all_items if item.boq_type == "SUBCONTRACTOR"
+        ]
+
+        customer_tree = _build_boq_tree_payload(customer_items, parent_id=None)
+        subcontractor_tree = _build_boq_tree_payload(
+            subcontractor_items,
+            parent_id=None,
+        )
+        compare_tree = _build_compare_tree(customer_tree, subcontractor_tree)
+        wbs_summary = [_to_wbs_summary_item(node) for node in compare_tree]
+
+        customer_total_budget = sum(
+            _to_float(node.get("total_budget")) for node in customer_tree
+        )
+        subcontractor_total_budget = sum(
+            _to_float(node.get("total_budget")) for node in subcontractor_tree
+        )
+        total_variance = customer_total_budget - subcontractor_total_budget
+        compare_counts = _count_compare_statuses(compare_tree)
+        sheet_names = sorted(
+            {
+                str(item.sheet_name).strip()
+                for item in all_items
+                if str(item.sheet_name or "").strip()
+            }
+        )
+
+        installments_result = await db.execute(
+            select(Installment)
+            .join(BOQItem, BOQItem.id == Installment.boq_item_id)
+            .options(noload("*"))
+            .filter(BOQItem.project_id == project_id)
+        )
+        project_installments = installments_result.scalars().all()
+
+        transactions_result = await db.execute(
+            select(Transaction)
+            .join(Installment, Installment.id == Transaction.installment_id)
+            .join(BOQItem, BOQItem.id == Installment.boq_item_id)
+            .options(noload("*"))
+            .filter(BOQItem.project_id == project_id)
+        )
+        project_transactions = transactions_result.scalars().all()
+
+        input_requests_result = await db.execute(
+            select(InputRequest)
+            .options(noload("*"))
+            .filter(InputRequest.project_id == project_id)
+        )
+        project_input_requests = input_requests_result.scalars().all()
+        execution_summary = _execution_summary_items(
+            project_installments,
+            project_transactions,
+            project_input_requests,
+        )
 
         return StandardResponse(
-            data=BOQTreeResponse(project_name=project.name, boq_tree=tree)
+            data=BOQTreeResponse(
+                project_name=project.name,
+                boq_tree=[
+                    BOQTreeNode.model_validate(node)
+                    for node in (customer_tree or subcontractor_tree)
+                ],
+                customer_tree=[
+                    BOQTreeNode.model_validate(node) for node in customer_tree
+                ],
+                subcontractor_tree=[
+                    BOQTreeNode.model_validate(node) for node in subcontractor_tree
+                ],
+                compare_tree=[
+                    BOQCompareNode.model_validate(node) for node in compare_tree
+                ],
+                compare_summary=BOQCompareSummary(
+                    customer_total_budget=customer_total_budget,
+                    subcontractor_total_budget=subcontractor_total_budget,
+                    total_variance=total_variance,
+                    margin_percent=(
+                        (total_variance / customer_total_budget) * 100
+                        if customer_total_budget
+                        else None
+                    ),
+                    matched_count=compare_counts.get(MATCH_STATUS_MATCHED, 0),
+                    customer_only_count=compare_counts.get(
+                        MATCH_STATUS_CUSTOMER_ONLY,
+                        0,
+                    ),
+                    subcontractor_only_count=compare_counts.get(
+                        MATCH_STATUS_SUBCONTRACTOR_ONLY,
+                        0,
+                    ),
+                    sheet_names=sheet_names,
+                ),
+                wbs_summary=[
+                    BOQWbsSummaryItem.model_validate(item) for item in wbs_summary
+                ],
+                execution_summary=[
+                    ProjectExecutionSummaryItem.model_validate(item)
+                    for item in execution_summary
+                ],
+            )
         )
 
     except HTTPException:

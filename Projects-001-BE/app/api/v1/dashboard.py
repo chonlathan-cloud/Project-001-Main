@@ -52,8 +52,8 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
         total_budget = sum(float(project.contingency_budget or 0) for project in projects)
         actual_cost = sum(float(transaction.base_amount or 0) for transaction in transactions)
         pending_approval_count = sum(
-            1 for installment in installments if installment.status == "PENDING"
-        ) + sum(1 for request in input_requests if request.status == "PENDING_ADMIN")
+            1 for request in input_requests if request.status == "PENDING_ADMIN"
+        )
         overdue_amount = sum(
             float(installment.amount or 0)
             for installment in installments

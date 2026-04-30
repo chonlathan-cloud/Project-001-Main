@@ -75,6 +75,8 @@ class BOQTreeNode(BaseModel):
     """
     model_config = ConfigDict(from_attributes=True)
 
+    sheet_name: Optional[str] = None
+    boq_type: Optional[str] = None
     wbs_level: int
     description: Optional[str] = None
     item_no: Optional[str] = None
@@ -97,10 +99,75 @@ class BOQTreeNode(BaseModel):
     children: list[BOQTreeNode] = Field(default_factory=list)
 
 
+class BOQCompareNode(BaseModel):
+    """Merged BOQ node used by the Project Detail compare view."""
+    key: str
+    sheet_name: Optional[str] = None
+    wbs_level: int
+    description: Optional[str] = None
+    item_no: Optional[str] = None
+    unit: Optional[str] = None
+    customer_qty: Optional[float] = None
+    subcontractor_qty: Optional[float] = None
+    customer_total_budget: float = 0.0
+    subcontractor_total_budget: float = 0.0
+    customer_material_budget: float = 0.0
+    subcontractor_material_budget: float = 0.0
+    customer_labor_budget: float = 0.0
+    subcontractor_labor_budget: float = 0.0
+    variance: float = 0.0
+    margin_percent: Optional[float] = None
+    match_status: str = "MATCHED"
+    children: list[BOQCompareNode] = Field(default_factory=list)
+
+
+class BOQCompareSummary(BaseModel):
+    """Top-level summary for the Customer vs Subcontractor BOQ comparison."""
+    customer_total_budget: float = 0.0
+    subcontractor_total_budget: float = 0.0
+    total_variance: float = 0.0
+    margin_percent: Optional[float] = None
+    matched_count: int = 0
+    customer_only_count: int = 0
+    subcontractor_only_count: int = 0
+    sheet_names: list[str] = Field(default_factory=list)
+
+
+class BOQWbsSummaryItem(BaseModel):
+    """Top-level WBS summary used for Project Detail charts."""
+    key: str
+    label: str
+    sheet_name: Optional[str] = None
+    customer_total_budget: float = 0.0
+    subcontractor_total_budget: float = 0.0
+    variance: float = 0.0
+    margin_percent: Optional[float] = None
+    customer_material_budget: float = 0.0
+    subcontractor_material_budget: float = 0.0
+    customer_labor_budget: float = 0.0
+    subcontractor_labor_budget: float = 0.0
+    match_status: str = "MATCHED"
+
+
+class ProjectExecutionSummaryItem(BaseModel):
+    """Execution-level financial state for Project Detail charts/cards."""
+    key: str
+    label: str
+    amount: float = 0.0
+    count: int = 0
+    tone: str = "neutral"
+
+
 class BOQTreeResponse(BaseModel):
     """Payload for GET /api/v1/projects/{id}/boq."""
     project_name: str
     boq_tree: list[BOQTreeNode] = Field(default_factory=list)
+    customer_tree: list[BOQTreeNode] = Field(default_factory=list)
+    subcontractor_tree: list[BOQTreeNode] = Field(default_factory=list)
+    compare_tree: list[BOQCompareNode] = Field(default_factory=list)
+    compare_summary: BOQCompareSummary = Field(default_factory=BOQCompareSummary)
+    wbs_summary: list[BOQWbsSummaryItem] = Field(default_factory=list)
+    execution_summary: list[ProjectExecutionSummaryItem] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
