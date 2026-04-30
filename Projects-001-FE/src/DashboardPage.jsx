@@ -10,8 +10,10 @@ import {
 } from 'lucide-react';
 import {
   Bar,
+  BarChart,
   CartesianGrid,
   ComposedChart,
+  Legend,
   Line,
   ResponsiveContainer,
   Tooltip,
@@ -101,6 +103,12 @@ function formatDateTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function truncateLabel(value, limit = 18) {
+  const label = String(value || '').trim();
+  if (label.length <= limit) return label || '-';
+  return `${label.slice(0, limit - 1)}…`;
 }
 
 function KpiCard({ card }) {
@@ -439,6 +447,125 @@ function DashboardPage() {
                 ยังไม่มีข้อมูล cashflow สำหรับแสดงผล
               </div>
             )}
+          </div>
+
+          <div
+            style={{
+              borderTop: '1px solid #f1ecdf',
+              paddingTop: '18px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ ...sectionTitleStyle, fontSize: '18px' }}>Top Risky Projects</div>
+                <div style={sectionDescriptionStyle}>
+                  เรียงตามยอดค้างชำระรวมกับยอด input request ที่ยังรอ Pending Admin เพื่อชี้ว่าโปรเจกต์ไหนควรเข้าไปแก้ก่อน
+                </div>
+              </div>
+              <div
+                style={{
+                  flexShrink: 0,
+                  padding: '8px 12px',
+                  borderRadius: '999px',
+                  background: '#faf7f2',
+                  color: '#8b7355',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                }}
+              >
+                Top 5 by risk amount
+              </div>
+            </div>
+
+            <div style={{ height: '250px' }}>
+              {data?.riskyProjects?.length ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={data.riskyProjects}
+                    layout="vertical"
+                    margin={{ top: 8, right: 12, left: 8, bottom: 0 }}
+                    barCategoryGap={18}
+                  >
+                    <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" horizontal={false} />
+                    <XAxis
+                      type="number"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12, fill: '#6b7280' }}
+                      tickFormatter={(value) => `${Math.round(Number(value || 0) / 1000)}k`}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      axisLine={false}
+                      tickLine={false}
+                      width={120}
+                      tick={{ fontSize: 12, fill: '#4b5563' }}
+                      tickFormatter={(value) => truncateLabel(value, 18)}
+                    />
+                    <Tooltip
+                      formatter={(value, name, payload) => {
+                        if (name === 'pendingRequestAmount') {
+                          return [
+                            `${formatMetric(value, 'currency')} (${formatMetric(payload?.payload?.pendingRequestCount, 'number')} รายการ)`,
+                            'Pending Admin',
+                          ];
+                        }
+                        return [
+                          `${formatMetric(value, 'currency')} (${formatMetric(payload?.payload?.overdueCount, 'number')} รายการ)`,
+                          'Overdue',
+                        ];
+                      }}
+                      labelFormatter={(label) => `Project: ${label}`}
+                      labelStyle={{ color: '#111827', fontWeight: 700 }}
+                      contentStyle={{
+                        borderRadius: '14px',
+                        border: '1px solid #e5e7eb',
+                        boxShadow: '0 18px 40px rgba(15, 23, 42, 0.08)',
+                      }}
+                    />
+                    <Legend
+                      wrapperStyle={{ fontSize: '12px', color: '#6b7280', paddingTop: '8px' }}
+                      formatter={(value) => (value === 'overdueAmount' ? 'Overdue' : 'Pending Admin')}
+                    />
+                    <Bar
+                      dataKey="overdueAmount"
+                      name="overdueAmount"
+                      stackId="risk"
+                      fill="#de5b52"
+                      radius={[0, 6, 6, 0]}
+                      barSize={18}
+                    />
+                    <Bar
+                      dataKey="pendingRequestAmount"
+                      name="pendingRequestAmount"
+                      stackId="risk"
+                      fill="#d0a24c"
+                      radius={[0, 6, 6, 0]}
+                      barSize={18}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div
+                  style={{
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '18px',
+                    background: '#faf7f2',
+                    color: '#6b7280',
+                    fontSize: '14px',
+                  }}
+                >
+                  ยังไม่มีโปรเจกต์ที่มียอด overdue หรือ pending admin ให้จัดอันดับ
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

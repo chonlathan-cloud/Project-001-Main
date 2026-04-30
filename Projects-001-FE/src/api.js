@@ -410,6 +410,7 @@ export async function getDashboardData() {
 
   const kpis = data?.kpis || {};
   const monthlyCashflow = Array.isArray(data?.monthly_cashflow) ? data.monthly_cashflow : [];
+  const riskyProjectsRaw = Array.isArray(data?.risky_projects) ? data.risky_projects : [];
   const recentActions = Array.isArray(data?.recent_actions) ? data.recent_actions : [];
 
   const cashflow = monthlyCashflow.map((item) => {
@@ -438,6 +439,22 @@ export async function getDashboardData() {
   const remainingBudget = totalBudget - actualCost;
   const budgetUtilization = totalBudget > 0 ? (actualCost / totalBudget) * 100 : 0;
   const overdueRatio = totalBudget > 0 ? (overdueAmount / totalBudget) * 100 : 0;
+  const riskyProjects = riskyProjectsRaw
+    .map((item) => {
+      const overdueProjectAmount = toNumber(item?.overdue_amount);
+      const pendingRequestAmount = toNumber(item?.pending_request_amount);
+
+      return {
+        projectId: String(item?.project_id || '').trim(),
+        name: String(item?.project_name || 'Unknown project').trim(),
+        overdueAmount: overdueProjectAmount,
+        overdueCount: toNumber(item?.overdue_count),
+        pendingRequestAmount,
+        pendingRequestCount: toNumber(item?.pending_request_count),
+        totalRiskAmount: toNumber(item?.total_risk_amount) || (overdueProjectAmount + pendingRequestAmount),
+      };
+    })
+    .filter((item) => item.totalRiskAmount > 0);
 
   return {
     kpis: {
@@ -537,6 +554,7 @@ export async function getDashboardData() {
       },
     ],
     cashflow,
+    riskyProjects,
     recentActions: recentActions.map((item, index) => ({
       id: `recent-action-${index}`,
       time: String(item?.time || '').trim(),

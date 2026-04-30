@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { motion as Motion } from 'framer-motion';
 import { Hammer, Wrench, HardHat, Pickaxe, Ruler, Drill } from 'lucide-react';
-import logoImage from '../assets/logo.png';
+import logoImage from '../assets/Logo.png';
 
 const ToolIcon = ({ icon, radius, duration, delay, color }) => {
   const IconComponent = icon;

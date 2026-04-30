@@ -13,7 +13,7 @@ from sqlalchemy.orm import noload
 
 from app.core.database import get_db
 from app.models.finance import Installment, Transaction
-from app.models.boq import Project
+from app.models.boq import BOQItem, Project
 from app.models.input_request import InputRequest
 from app.schemas.responses import StandardResponse
 
@@ -36,6 +36,9 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
     """
     try:
         projects = (await db.execute(select(Project).options(noload("*")))).scalars().all()
+        boq_item_rows = (
+            await db.execute(select(BOQItem.id, BOQItem.project_id))
+        ).all()
         installments = (
             await db.execute(select(Installment).options(noload("*")))
         ).scalars().all()
@@ -47,6 +50,10 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
         ).scalars().all()
         installment_lookup = {
             installment.id: installment.installment_no for installment in installments
+        }
+        project_name_lookup = {project.id: project.name for project in projects}
+        boq_project_lookup = {
+            boq_item_id: project_id for boq_item_id, project_id in boq_item_rows
         }
 
         total_budget = sum(float(project.contingency_budget or 0) for project in projects)
@@ -88,6 +95,87 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
         monthly_cashflow = [
             monthly_cashflow_map[key] for key in sorted(monthly_cashflow_map.keys())
         ]
+
+        risky_project_map: dict[str, dict[str, float | int | str]] = defaultdict(
+            lambda: {
+                "project_id": "",
+                "project_name": "",
+                "overdue_amount": 0.0,
+                "overdue_count": 0,
+                "pending_request_amount": 0.0,
+                "pending_request_count": 0,
+            }
+        )
+
+        for installment in installments:
+            project_id = boq_project_lookup.get(installment.boq_item_id)
+            if project_id is None:
+                continue
+
+            if not (
+                bool(installment.is_overdue)
+                and str(installment.status or "").upper() != "APPROVED"
+            ):
+                continue
+
+            project_key = str(project_id)
+            risky_project_map[project_key]["project_id"] = project_key
+            risky_project_map[project_key]["project_name"] = project_name_lookup.get(
+                project_id, "Unknown project"
+            )
+            risky_project_map[project_key]["overdue_amount"] = float(
+                risky_project_map[project_key]["overdue_amount"]
+            ) + float(installment.amount or 0)
+            risky_project_map[project_key]["overdue_count"] = int(
+                risky_project_map[project_key]["overdue_count"]
+            ) + 1
+
+        for request in input_requests:
+            if str(request.status or "").upper() != "PENDING_ADMIN":
+                continue
+
+            project_key = str(request.project_id)
+            risky_project_map[project_key]["project_id"] = project_key
+            risky_project_map[project_key]["project_name"] = project_name_lookup.get(
+                request.project_id, "Unknown project"
+            )
+            risky_project_map[project_key]["pending_request_amount"] = float(
+                risky_project_map[project_key]["pending_request_amount"]
+            ) + float(request.amount or 0)
+            risky_project_map[project_key]["pending_request_count"] = int(
+                risky_project_map[project_key]["pending_request_count"]
+            ) + 1
+
+        risky_projects = sorted(
+            [
+                {
+                    "project_id": str(item["project_id"] or ""),
+                    "project_name": str(item["project_name"] or "Unknown project"),
+                    "overdue_amount": round(float(item["overdue_amount"]), 2),
+                    "overdue_count": int(item["overdue_count"]),
+                    "pending_request_amount": round(
+                        float(item["pending_request_amount"]), 2
+                    ),
+                    "pending_request_count": int(item["pending_request_count"]),
+                    "total_risk_amount": round(
+                        float(item["overdue_amount"])
+                        + float(item["pending_request_amount"]),
+                        2,
+                    ),
+                }
+                for item in risky_project_map.values()
+                if (
+                    float(item["overdue_amount"]) > 0
+                    or float(item["pending_request_amount"]) > 0
+                )
+            ],
+            key=lambda item: (
+                item["total_risk_amount"],
+                item["overdue_amount"],
+                item["pending_request_amount"],
+            ),
+            reverse=True,
+        )[:5]
 
         recent_transaction_actions = [
             {
@@ -134,6 +222,7 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
                 "total_profit_margin": f"{total_profit_margin:.1f}%",
             },
             "monthly_cashflow": monthly_cashflow,
+            "risky_projects": risky_projects,
             "recent_actions": recent_actions,
         }
         return StandardResponse(data=data)

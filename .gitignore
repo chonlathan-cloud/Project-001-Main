@@ -14,6 +14,9 @@ dist-ssr
 .env.*
 !.env.example
 *.local
+cloudrun.env
+cloudrun-backend.env.yaml
+cloudrun-frontend.build.env
 
 # Editor directories and files
 .vscode/*

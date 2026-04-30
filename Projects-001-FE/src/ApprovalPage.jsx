@@ -109,6 +109,7 @@ function ApprovalPage() {
   const [receiptPreview, setReceiptPreview] = useState(null);
   const [receiptPreviewLoading, setReceiptPreviewLoading] = useState(false);
   const [receiptPreviewError, setReceiptPreviewError] = useState('');
+  const [technicalDetailsOpen, setTechnicalDetailsOpen] = useState(false);
 
   const selectedRequest = useMemo(
     () => requests.find((item) => item.request_id === selectedRequestId) || null,
@@ -228,6 +229,10 @@ function ApprovalPage() {
   useEffect(() => {
     syncEditorWithRequest(selectedRequest);
   }, [selectedRequest]);
+
+  useEffect(() => {
+    setTechnicalDetailsOpen(false);
+  }, [selectedRequestId]);
 
   useEffect(() => {
     let isActive = true;
@@ -663,22 +668,68 @@ function ApprovalPage() {
               </div>
 
               {selectedRequest.ocr_raw_json ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <strong style={{ display: 'block' }}>OCR Debug JSON</strong>
-                  <pre
+                <div
+                  style={{
+                    border: '1px solid #e7decd',
+                    borderRadius: '16px',
+                    backgroundColor: '#faf7f1',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setTechnicalDetailsOpen((current) => !current)}
                     style={{
-                      margin: 0,
+                      width: '100%',
+                      border: 'none',
+                      background: 'transparent',
                       padding: '14px 16px',
-                      borderRadius: '14px',
-                      backgroundColor: '#1f1f1f',
-                      color: '#f5f5f5',
-                      overflowX: 'auto',
-                      fontSize: '12px',
-                      lineHeight: 1.6,
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '12px',
                     }}
                   >
-                    {JSON.stringify(selectedRequest.ocr_raw_json, null, 2)}
-                  </pre>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <strong style={{ display: 'block' }}>Technical details</strong>
+                      <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                        ข้อมูล OCR debug สำหรับเปิดดูเมื่อจำเป็น
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#8b7355' }}>
+                      {technicalDetailsOpen ? 'Hide' : 'Show'}
+                    </span>
+                  </button>
+
+                  {technicalDetailsOpen ? (
+                    <div
+                      style={{
+                        borderTop: '1px solid #e7decd',
+                        padding: '14px 16px 16px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px',
+                      }}
+                    >
+                      <strong style={{ display: 'block', fontSize: '13px' }}>OCR Debug JSON</strong>
+                      <pre
+                        style={{
+                          margin: 0,
+                          padding: '14px 16px',
+                          borderRadius: '14px',
+                          backgroundColor: '#1f1f1f',
+                          color: '#f5f5f5',
+                          overflowX: 'auto',
+                          fontSize: '12px',
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        {JSON.stringify(selectedRequest.ocr_raw_json, null, 2)}
+                      </pre>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
