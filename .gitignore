@@ -28,3 +28,4 @@ cloudrun-frontend.build.env
 *.njsproj
 *.sln
 *.sw?
+backend-runtime-key.json
