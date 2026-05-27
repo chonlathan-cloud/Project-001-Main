@@ -59,7 +59,7 @@ const Sidebar = () => {
   };
 
   return (
-    <aside style={{
+    <aside className="app-sidebar" style={{
       width: '240px',
       backgroundColor: 'var(--sidebar-bg)',
       color: 'white',
@@ -73,8 +73,8 @@ const Sidebar = () => {
     }}>
       <Logo />
 
-      <div style={{ padding: '0 20px', marginTop: '20px', flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <p style={{
+      <div className="sidebar-inner" style={{ padding: '0 20px', marginTop: '20px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <p className="sidebar-section-label" style={{
           fontSize: '11px',
           fontWeight: '700',
           color: 'var(--text-sidebar)',
@@ -83,7 +83,7 @@ const Sidebar = () => {
           paddingLeft: '12px',
         }}>MANAGE</p>
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <nav className="sidebar-nav" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {navItems.map((item) => (
             <NavLink
               key={item.name}
@@ -93,9 +93,10 @@ const Sidebar = () => {
                 alignItems: 'center',
                 gap: '12px',
                 padding: '12px 16px',
+                minHeight: '44px',
                 borderRadius: '12px',
                 cursor: 'pointer',
-                backgroundColor: isActive ? 'var(--accent-gold)' : 'transparent',
+                backgroundColor: isActive ? 'var(--primary)' : 'transparent',
                 color: isActive ? 'white' : 'var(--text-sidebar)',
                 transition: 'all 0.2s ease',
                 textDecoration: 'none',
@@ -107,10 +108,10 @@ const Sidebar = () => {
           ))}
         </nav>
 
-        <div style={{ marginTop: 'auto', paddingTop: '20px' }}>
+        <div className="sidebar-footer" style={{ marginTop: 'auto', paddingTop: '20px' }}>
           <div style={{
             padding: '12px 14px',
-            borderRadius: '14px',
+            borderRadius: '12px',
             backgroundColor: 'rgba(255,255,255,0.06)',
             marginBottom: '12px',
           }}>

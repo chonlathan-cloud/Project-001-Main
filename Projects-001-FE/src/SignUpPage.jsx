@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, FileBadge2, IdCard, Landmark, Phone, User } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Building2, FileBadge2, IdCard, Landmark, Phone, User } from 'lucide-react';
 
 import {
   clearPendingLineAuth,
@@ -15,9 +15,9 @@ import logoImage from './assets/Logo.png';
 const fieldBoxStyle = {
   display: 'flex',
   alignItems: 'center',
-  backgroundColor: '#f3f4f6',
-  borderRadius: '12px',
-  padding: '10px 16px',
+  backgroundColor: '#fff',
+  borderRadius: '8px',
+  padding: '11px 14px',
   border: '1px solid var(--border-color)',
 };
 
@@ -27,6 +27,18 @@ const inputStyle = {
   width: '100%',
   outline: 'none',
   fontSize: '14px',
+  color: 'var(--text-main)',
+};
+
+const sectionTitleStyle = {
+  gridColumn: '1 / -1',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  paddingBottom: '10px',
+  borderBottom: '1px solid var(--border-color)',
+  fontSize: '18px',
+  fontWeight: '700',
   color: 'var(--text-main)',
 };
 
@@ -129,27 +141,27 @@ const SignUpPage = () => {
     }}>
       <div style={{
         backgroundColor: 'var(--card-bg)',
-        borderRadius: '32px',
+        borderRadius: '12px',
         width: '100%',
-        maxWidth: '460px',
+        maxWidth: '800px',
         border: '1px solid var(--border-color)',
-        boxShadow: '0 10px 40px rgba(0,0,0,0.05)',
+        boxShadow: 'none',
         overflow: 'hidden',
       }}>
         <div style={{
           display: 'flex',
           justifyContent: 'center',
-          padding: '40px 0',
+          padding: '28px 0',
           borderBottom: '1px solid var(--border-color)',
         }}>
-          <img src={logoImage} alt="DOUBLEBO" style={{ height: '110px', objectFit: 'contain' }} />
+          <img src={logoImage} alt="DOUBLEBO" style={{ height: '82px', objectFit: 'contain' }} />
         </div>
 
         <div style={{ padding: '32px' }}>
           <div style={{ marginBottom: '22px' }}>
-            <h1 style={{ fontSize: '28px', marginBottom: '10px' }}>Subcontractor Sign Up</h1>
+            <h1 style={{ fontSize: '32px', marginBottom: '8px', color: 'var(--text-main)' }}>Complete Your Profile</h1>
             <p style={{ color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
-              First-time access requires tax information and a KYC ID card image. The file is stored in private GCS storage.
+              Provide business, financial, and KYC details once. Future input requests will reuse these defaults.
             </p>
           </div>
 
@@ -157,8 +169,8 @@ const SignUpPage = () => {
             <div style={{
               marginBottom: '18px',
               padding: '12px 14px',
-              borderRadius: '14px',
-              backgroundColor: '#f8fafc',
+              borderRadius: '12px',
+              backgroundColor: 'var(--bg-primary)',
               border: '1px solid var(--border-color)',
               color: 'var(--text-main)',
               fontSize: '13px',
@@ -171,7 +183,7 @@ const SignUpPage = () => {
             <div style={{
               marginBottom: '18px',
               padding: '12px 14px',
-              borderRadius: '14px',
+              borderRadius: '12px',
               backgroundColor: '#fff5f4',
               color: '#b42318',
               border: '1px solid #f7b4ad',
@@ -181,7 +193,20 @@ const SignUpPage = () => {
             </div>
           ) : null}
 
-          <form onSubmit={handleSignUp}>
+          <form
+            onSubmit={handleSignUp}
+            className="subcon-signup-form"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+              gap: '18px 20px',
+            }}
+          >
+            <div style={sectionTitleStyle}>
+              <Building2 size={20} color="var(--primary)" />
+              Business Information
+            </div>
+
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
                 Company / Subcontractor Name
@@ -249,6 +274,11 @@ const SignUpPage = () => {
               </div>
             </div>
 
+            <div style={sectionTitleStyle}>
+              <Landmark size={20} color="var(--primary)" />
+              Financial Details
+            </div>
+
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
                 Default Bank Name
@@ -297,15 +327,20 @@ const SignUpPage = () => {
               </div>
             </div>
 
-            <div style={{ marginBottom: '22px' }}>
+            <div style={sectionTitleStyle}>
+              <FileBadge2 size={20} color="var(--primary)" />
+              KYC Verification
+            </div>
+
+            <div style={{ marginBottom: '22px', gridColumn: '1 / -1' }}>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
                 KYC ID Card Image
               </label>
               <div style={{
-                borderRadius: '14px',
-                border: '1px dashed var(--border-color)',
-                backgroundColor: '#faf8f3',
-                padding: '18px',
+                borderRadius: '12px',
+                border: '2px dashed #c1c8c4',
+                backgroundColor: 'var(--bg-primary)',
+                padding: '24px',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', color: 'var(--text-muted)' }}>
                   <FileBadge2 size={18} />
@@ -329,19 +364,22 @@ const SignUpPage = () => {
               type="submit"
               disabled={loading}
               style={{
-                width: '100%',
-                backgroundColor: 'var(--accent-gold)',
+                gridColumn: '1 / -1',
+                justifySelf: 'end',
+                minWidth: '280px',
+                backgroundColor: 'var(--primary)',
                 color: '#fff',
                 border: 'none',
-                borderRadius: '14px',
+                borderRadius: '8px',
                 padding: '14px',
                 fontSize: '16px',
                 fontWeight: '700',
-                cursor: 'pointer',
+                cursor: loading ? 'wait' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '8px',
+                opacity: loading ? 0.7 : 1,
               }}
             >
               {loading ? 'Submitting Registration...' : 'Complete Registration'}
@@ -352,7 +390,7 @@ const SignUpPage = () => {
           <div style={{ textAlign: 'center', marginTop: '24px', fontSize: '14px' }}>
             <Link
               to="/login"
-              style={{ color: '#0066cc', textDecoration: 'none', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              style={{ color: 'var(--primary)', textDecoration: 'none', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
               onClick={() => clearPendingLineAuth()}
             >
               <ArrowLeft size={16} /> Back to Login

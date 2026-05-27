@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ArrowRight, ShieldCheck, Smartphone } from 'lucide-react';
 
 import { clearPendingLineAuth, resolvePostLoginPath, saveAuthSession, savePendingLineAuth } from './auth';
@@ -10,20 +10,20 @@ import logoImage from './assets/Logo.png';
 
 const panelStyle = {
   backgroundColor: 'var(--card-bg)',
-  borderRadius: '32px',
+  borderRadius: '12px',
   width: '100%',
-  maxWidth: '460px',
+  maxWidth: '440px',
   border: '1px solid var(--border-color)',
-  boxShadow: '0 10px 40px rgba(0,0,0,0.05)',
+  boxShadow: 'none',
   overflow: 'hidden',
 };
 
 const actionButton = (tone = 'primary') => ({
   width: '100%',
-  backgroundColor: tone === 'primary' ? 'var(--accent-gold)' : '#06c755',
+  backgroundColor: tone === 'primary' ? 'var(--primary)' : '#06c755',
   color: '#fff',
   border: 'none',
-  borderRadius: '16px',
+  borderRadius: '8px',
   padding: '16px 18px',
   fontSize: '15px',
   fontWeight: '700',
@@ -102,17 +102,17 @@ const LoginPage = () => {
         <div style={{
           display: 'flex',
           justifyContent: 'center',
-          padding: '40px 0',
+          padding: '28px 0',
           borderBottom: '1px solid var(--border-color)',
         }}>
-          <img src={logoImage} alt="DOUBLEBO" style={{ height: '110px', objectFit: 'contain' }} />
+          <img src={logoImage} alt="DOUBLEBO" style={{ height: '92px', objectFit: 'contain' }} />
         </div>
 
         <div style={{ padding: '32px' }}>
           <div style={{ marginBottom: '26px' }}>
-            <h1 style={{ fontSize: '28px', marginBottom: '10px' }}>Sign In</h1>
+            <h1 style={{ fontSize: '32px', marginBottom: '8px', color: 'var(--text-main)' }}>Projects-001</h1>
             <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-              Admin uses Google sign-in. Subcontractor enters through LINE LIFF and completes KYC on first access.
+              Subcontractor Portal access with LINE LIFF. Admins can continue with Google sign-in.
             </p>
           </div>
 
@@ -120,7 +120,7 @@ const LoginPage = () => {
             <div style={{
               marginBottom: '18px',
               padding: '12px 14px',
-              borderRadius: '14px',
+              borderRadius: '12px',
               backgroundColor: '#fff5f4',
               color: '#b42318',
               border: '1px solid #f7b4ad',
@@ -156,19 +156,24 @@ const LoginPage = () => {
             <div style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>
               Need to complete first-time subcontractor registration?
             </div>
-            <Link
-              to="/signup"
+            <button
+              type="button"
+              onClick={handleLineLogin}
+              disabled={loadingAction !== ''}
               style={{
-                color: '#0066cc',
-                textDecoration: 'none',
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                color: 'var(--primary)',
                 fontWeight: '600',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
+                cursor: loadingAction ? 'wait' : 'pointer',
               }}
             >
-              Open Sign Up <ArrowRight size={16} />
-            </Link>
+              Start with LINE <ArrowRight size={16} />
+            </button>
           </div>
         </div>
       </div>

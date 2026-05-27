@@ -1,8 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Search, Bell, ChevronDown, User,
-  Briefcase, Clock, CheckCircle, TrendingUp, DollarSign, Users, 
-  ChevronLeft, ChevronRight 
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Briefcase,
+  CheckCircle,
+  Clock,
+  DollarSign,
+  IdCard,
+  Landmark,
+  Phone,
+  TrendingUp,
+  User,
+  Users,
 } from 'lucide-react';
 import {
   BarChart,
@@ -16,97 +23,21 @@ import {
 import { fetchData, resetProfileAvatar, uploadProfileAvatar } from './api';
 import Loading from './components/Loading';
 
-const StatCard = ({ value, label, subtext, icon }) => {
-  const IconComponent = icon;
-
-  return (
-    <div style={{
-    backgroundColor: 'var(--card-bg)',
-    borderRadius: 'var(--radius-lg)',
-    padding: '24px',
-    display: 'flex',
-    flexDirection: 'column',
-    boxShadow: '0 4px 15px rgba(0,0,0,0.03)',
-    border: '1px solid var(--border-color)',
-    height: '100%',
-    justifyContent: 'space-between'
-  }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-      <div>
-        <div style={{ fontSize: '28px', fontWeight: '700', color: 'var(--text-main)', marginBottom: '4px' }}>{value}</div>
-        <div style={{ fontSize: '15px', fontWeight: '600', color: 'var(--text-main)' }}>{label}</div>
-      </div>
-      <div style={{
-        width: '48px',
-        height: '48px',
-        borderRadius: '50%',
-        backgroundColor: 'var(--accent-gold)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: 'white'
-      }}>
-        {IconComponent ? <IconComponent size={24} /> : null}
-      </div>
-    </div>
-    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '16px' }}>{subtext}</div>
-  </div>
-  );
-};
-
-const CalendarWidget = () => {
-  // Simple static calendar visual for UI demonstration
-  const days = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-  const dates = Array.from({ length: 31 }, (_, i) => i + 1);
-  // Pad the start with empty slots (assume month starts on Wed)
-  const paddedDates = [null, null, null, ...dates, null];
-
-  return (
-    <div style={{
-      backgroundColor: 'var(--card-bg)',
-      borderRadius: 'var(--radius-lg)',
-      padding: '24px',
-      boxShadow: '0 4px 15px rgba(0,0,0,0.03)',
-      border: '1px solid var(--border-color)',
-      height: '100%'
-    }}>
-      <div style={{ fontSize: '18px', fontWeight: '700', marginBottom: '20px' }}>Calendar</div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}><ChevronLeft size={16} /></button>
-        <span style={{ fontWeight: '600', color: 'var(--accent-gold)' }}>April 2026</span>
-        <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}><ChevronRight size={16} /></button>
-      </div>
-      
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px', textAlign: 'center', marginBottom: '16px' }}>
-        {days.map(d => <div key={d} style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-main)' }}>{d}</div>)}
-      </div>
-      
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px', textAlign: 'center' }}>
-        {paddedDates.map((date, index) => (
-          <div key={index} style={{ 
-            fontSize: '13px', 
-            padding: '8px 0',
-            backgroundColor: date === 27 ? 'var(--accent-gold)' : 'transparent',
-            borderRadius: '50%',
-            color: date === 27 ? 'white' : 'var(--text-main)',
-            fontWeight: date === 27 ? '600' : '400',
-            cursor: date ? 'pointer' : 'default'
-          }}>
-            {date || '0'}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+const cardStyle = {
+  backgroundColor: 'var(--card-bg)',
+  borderRadius: '12px',
+  padding: '24px',
+  boxShadow: 'none',
+  border: '1px solid var(--border-color)',
 };
 
 const iconMap = {
-  'active_projects': Briefcase,
-  'pending_approvals': Clock,
-  'completed_tasks': CheckCircle,
-  'team_members': Users,
-  'reports_generated': TrendingUp,
-  'budget_managed': DollarSign
+  active_projects: Briefcase,
+  pending_approvals: Clock,
+  completed_tasks: CheckCircle,
+  team_members: Users,
+  reports_generated: TrendingUp,
+  budget_managed: DollarSign,
 };
 
 const buildInitials = (value) => {
@@ -115,20 +46,53 @@ const buildInitials = (value) => {
   return words.slice(0, 2).map((word) => word.charAt(0).toUpperCase()).join('');
 };
 
-const AvatarCircle = ({ name, imageUrl, size = 140 }) => (
+const findStat = (stats, id) => stats.find((stat) => stat.id === id);
+
+const StatCard = ({ value, label, subtext, icon }) => {
+  const IconComponent = icon;
+
+  return (
+    <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '18px', minHeight: '168px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ fontSize: '28px', fontWeight: '700', color: 'var(--text-main)', marginBottom: '4px' }}>
+            {value}
+          </div>
+          <div style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-main)' }}>{label}</div>
+        </div>
+        <div style={{
+          width: '44px',
+          height: '44px',
+          borderRadius: '12px',
+          backgroundColor: 'rgba(79, 111, 100, 0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--primary)',
+          flex: '0 0 auto',
+        }}>
+          {IconComponent ? <IconComponent size={22} /> : null}
+        </div>
+      </div>
+      <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>{subtext}</div>
+    </div>
+  );
+};
+
+const AvatarCircle = ({ name, imageUrl, size = 120 }) => (
   <div style={{
     width: `${size}px`,
     height: `${size}px`,
     borderRadius: '50%',
-    backgroundColor: 'var(--accent-gold-light)',
-    margin: '0 auto',
+    backgroundColor: 'rgba(79, 111, 100, 0.1)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    color: 'var(--accent-gold)',
+    color: 'var(--primary)',
     border: '4px solid var(--card-bg)',
-    boxShadow: '0 0 0 2px var(--accent-gold-light)',
+    boxShadow: '0 0 0 2px #d7e3dd',
     overflow: 'hidden',
+    flex: '0 0 auto',
   }}>
     {imageUrl ? (
       <img
@@ -144,6 +108,43 @@ const AvatarCircle = ({ name, imageUrl, size = 140 }) => (
   </div>
 );
 
+const DetailRow = ({ label, value }) => (
+  <div style={{ display: 'grid', gap: '4px' }}>
+    <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+      {label}
+    </div>
+    <div style={{ fontSize: '14px', color: 'var(--text-main)', fontWeight: '600', wordBreak: 'break-word' }}>
+      {value || '-'}
+    </div>
+  </div>
+);
+
+const DetailPanel = ({ title, icon, children }) => {
+  const IconComponent = icon;
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '18px' }}>
+        <div style={{
+          width: '36px',
+          height: '36px',
+          borderRadius: '10px',
+          backgroundColor: 'rgba(79, 111, 100, 0.1)',
+          color: 'var(--primary)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          <IconComponent size={19} />
+        </div>
+        <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--text-main)' }}>{title}</h2>
+      </div>
+      <div style={{ display: 'grid', gap: '16px' }}>
+        {children}
+      </div>
+    </div>
+  );
+};
 
 const ProfilePage = () => {
   const [profileData, setProfileData] = useState(null);
@@ -155,7 +156,6 @@ const ProfilePage = () => {
   useEffect(() => {
     const loadData = async () => {
       const result = await fetchData('profile');
-      // result might be [] from api.js if backend is not ready
       if (Array.isArray(result) && result.length === 0) {
         setProfileData(null);
       } else {
@@ -229,208 +229,208 @@ const ProfilePage = () => {
   if (!profileData || !profileData.user) {
     return (
       <div style={{ maxWidth: '1400px', margin: '0 auto', textAlign: 'center', padding: '100px 20px' }}>
-        <h2 style={{ fontSize: '24px', color: 'var(--text-main)', marginBottom: '16px' }}>กำลังรอเชื่อมต่อข้อมูลจาก Backend...</h2>
+        <h2 style={{ fontSize: '24px', color: 'var(--text-main)', marginBottom: '16px' }}>
+          กำลังรอเชื่อมต่อข้อมูลจาก Backend...
+        </h2>
         <p style={{ color: 'var(--text-muted)' }}>หน้าต่างโปรไฟล์จะแสดงข้อมูลของคุณเมื่อ API พร้อมใช้งาน</p>
       </div>
     );
   }
 
+  const user = profileData.user;
+  const stats = Array.isArray(profileData.stats) ? profileData.stats : [];
+  const bankAccount = user.bank_account || {};
+  const approvedStat = findStat(stats, 'budget_managed');
+  const pendingStat = findStat(stats, 'pending_approvals');
+  const assignedProjectIds = Array.isArray(user.assigned_project_ids)
+    ? user.assigned_project_ids.filter(Boolean)
+    : [];
+  const profileName = user.contact_name || user.name;
+  const avatarUrl = user.profile_image_url || user.line_picture_url || user.avatar_url;
+  const isSubcontractor = user.role === 'Subcontractor';
+
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-      
-      {/* Top Navigation Bar */}
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center',
-        marginBottom: '32px',
-        backgroundColor: 'var(--card-bg)',
-        padding: '16px 24px',
-        borderRadius: 'var(--radius-lg)',
-        boxShadow: '0 4px 15px rgba(0,0,0,0.02)'
-      }}>
-        <div style={{ position: 'relative', width: '300px' }}>
-          <Search size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-          <input 
-            type="text" 
-            placeholder="Search..." 
-            style={{ 
-              width: '100%', 
-              padding: '12px 16px 12px 42px', 
-              borderRadius: '24px', 
-              border: '1px solid var(--border-color)',
-              backgroundColor: 'var(--bg-primary)',
-              outline: 'none',
-              fontSize: '14px'
-            }} 
-          />
-        </div>
-        
-        <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>
-            ENG <ChevronDown size={16} />
-          </div>
-          
-          <div style={{ position: 'relative', cursor: 'pointer' }}>
-            <Bell size={20} color="var(--text-muted)" />
-            <div style={{ 
-              position: 'absolute', top: '-4px', right: '-4px', 
-              width: '14px', height: '14px', 
-              backgroundColor: 'var(--chart-green)', 
-              borderRadius: '50%', border: '2px solid white',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: 'white', fontSize: '9px', fontWeight: 'bold'
-            }}>
-              3
-            </div>
-          </div>
-        </div>
+      <div style={{ marginBottom: '28px' }}>
+        <h1 style={{ fontSize: '32px', marginBottom: '8px', fontWeight: '700', color: 'var(--text-main)' }}>
+          My Profile
+        </h1>
+        <p style={{ margin: 0, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          Subcontractor identity, assigned work, and payment defaults used by input requests.
+        </p>
       </div>
 
-      {/* Main Content Area */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px' }}>
-        
-        {/* Left Side: Profile Info Card */}
-        <div style={{
-          backgroundColor: 'var(--card-bg)',
-          borderRadius: 'var(--radius-lg)',
-          padding: '32px 24px',
-          boxShadow: '0 4px 15px rgba(0,0,0,0.03)',
-          border: '1px solid var(--border-color)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          textAlign: 'center'
-        }}>
-          <div style={{ fontSize: '18px', fontWeight: '700', color: 'var(--accent-gold)', marginBottom: '4px' }}>Today Available</div>
-          <div style={{ fontSize: '14px', color: 'var(--text-main)', fontWeight: '500', marginBottom: '32px' }}>From: {profileData?.user?.company || 'N/A'}</div>
-          
-          <div style={{ position: 'relative', marginBottom: '24px' }}>
-            <button style={{ position: 'absolute', left: '-40px', top: '50%', transform: 'translateY(-50%)', background: 'var(--bg-primary)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-muted)' }}><ChevronLeft size={16}/></button>
-            
-            <AvatarCircle
-              name={profileData?.user?.contact_name || profileData?.user?.name}
-              imageUrl={profileData?.user?.profile_image_url || profileData?.user?.line_picture_url}
-              size={140}
-            />
-            
-            <button style={{ position: 'absolute', right: '-40px', top: '50%', transform: 'translateY(-50%)', background: 'var(--bg-primary)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-muted)' }}><ChevronRight size={16}/></button>
-          </div>
-          
-          <div style={{ fontSize: '22px', fontWeight: '700', marginBottom: '8px' }}>{profileData?.user?.name || 'Unknown'}</div>
-          <div style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>{profileData?.user?.role || 'N/A'} <span style={{ margin: '0 8px' }}>|</span> {profileData?.user?.time || 'N/A'}</div>
-          {profileData?.user?.role === 'Subcontractor' ? (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                style={{ display: 'none' }}
-                onChange={handleAvatarChange}
-              />
-              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '10px', marginTop: '16px' }}>
-                <button
-                  type="button"
-                  onClick={handlePickAvatar}
-                  disabled={avatarSaving}
-                  style={{
-                    padding: '10px 14px',
-                    borderRadius: '12px',
-                    border: '1px solid var(--border-color)',
-                    backgroundColor: '#fff',
-                    cursor: avatarSaving ? 'wait' : 'pointer',
-                    fontWeight: '600',
-                  }}
-                >
-                  {avatarSaving ? 'Uploading...' : 'Change Photo'}
-                </button>
-                {profileData?.user?.profile_image_url ? (
+      <div className="profile-hero-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(300px, 0.65fr)', gap: '24px' }}>
+        <div style={{ ...cardStyle, display: 'flex', gap: '24px', alignItems: 'center' }}>
+          <AvatarCircle name={profileName} imageUrl={avatarUrl} size={120} />
+
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--primary)', marginBottom: '6px' }}>
+              {user.role || 'Subcontractor'}
+            </div>
+            <h2 style={{ fontSize: '26px', margin: 0, color: 'var(--text-main)' }}>{user.name || 'Unknown'}</h2>
+            <div style={{ color: 'var(--text-muted)', marginTop: '8px', lineHeight: 1.5 }}>
+              {user.company || 'Subcontractor Portal'}
+            </div>
+
+            {isSubcontractor ? (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handleAvatarChange}
+                />
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '18px' }}>
                   <button
                     type="button"
-                    onClick={handleResetAvatar}
+                    onClick={handlePickAvatar}
                     disabled={avatarSaving}
                     style={{
                       padding: '10px 14px',
-                      borderRadius: '12px',
-                      border: '1px solid var(--border-color)',
-                      backgroundColor: '#f8f2e6',
+                      borderRadius: '8px',
+                      border: '1px solid var(--primary)',
+                      backgroundColor: 'var(--primary)',
+                      color: '#fff',
                       cursor: avatarSaving ? 'wait' : 'pointer',
-                      fontWeight: '600',
+                      fontWeight: '700',
                     }}
                   >
-                    Use LINE Avatar
+                    {avatarSaving ? 'Uploading...' : 'Change Photo'}
                   </button>
+                  {user.profile_image_url ? (
+                    <button
+                      type="button"
+                      onClick={handleResetAvatar}
+                      disabled={avatarSaving}
+                      style={{
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--secondary)',
+                        backgroundColor: 'var(--card-bg)',
+                        color: 'var(--secondary)',
+                        cursor: avatarSaving ? 'wait' : 'pointer',
+                        fontWeight: '700',
+                      }}
+                    >
+                      Use LINE Avatar
+                    </button>
+                  ) : null}
+                </div>
+                {avatarError ? (
+                  <div style={{ marginTop: '12px', fontSize: '13px', color: '#b42318' }}>{avatarError}</div>
                 ) : null}
-              </div>
-              {avatarError ? (
-                <div style={{ marginTop: '12px', fontSize: '13px', color: '#b42318' }}>{avatarError}</div>
-              ) : null}
-            </>
-          ) : null}
+              </>
+            ) : null}
+          </div>
         </div>
 
-        {/* Right Side: Grid Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
-          {profileData?.stats?.map((stat) => {
-            const Icon = iconMap[stat.id] || User;
-            return (
-              <StatCard 
-                key={stat.id} 
-                value={stat.value} 
-                label={stat.label} 
-                subtext={stat.subtext} 
-                icon={Icon} 
-              />
-            );
-          })}
+        <div style={{
+          ...cardStyle,
+          backgroundColor: 'var(--primary)',
+          borderColor: 'var(--primary)',
+          color: '#fff',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          minHeight: '220px',
+        }}>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: '700', opacity: 0.75, marginBottom: '8px' }}>
+              Total Approved Amount
+            </div>
+            <div style={{ fontSize: '42px', fontWeight: '800', lineHeight: 1 }}>
+              {approvedStat?.value || '-'}
+            </div>
+          </div>
+          <div style={{ display: 'grid', gap: '8px', fontSize: '14px', lineHeight: 1.5 }}>
+            <div>{approvedStat?.subtext || 'Approved or paid requests for this subcontractor'}</div>
+            <div style={{ opacity: 0.82 }}>
+              Pending approval: <strong>{pendingStat?.value || '0'}</strong>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Bottom Section: Chart and Calendar */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginTop: '24px' }}>
-        
-        {/* Bar Chart Section */}
-        <div style={{
-          backgroundColor: 'var(--card-bg)',
-          borderRadius: 'var(--radius-lg)',
-          padding: '24px',
-          boxShadow: '0 4px 15px rgba(0,0,0,0.03)',
-          border: '1px solid var(--border-color)',
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-            <div style={{ fontSize: '18px', fontWeight: '700' }}>Project Activity vs Expenses</div>
-            <div style={{ display: 'flex', gap: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '500', color: 'var(--text-muted)' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--chart-green)' }}></span> Activity
+      <div className="profile-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginTop: '24px' }}>
+        {stats.map((stat) => {
+          const Icon = iconMap[stat.id] || User;
+          return (
+            <StatCard
+              key={stat.id}
+              value={stat.value}
+              label={stat.label}
+              subtext={stat.subtext}
+              icon={Icon}
+            />
+          );
+        })}
+      </div>
+
+      <div className="profile-bottom-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, 0.65fr)', gap: '24px', marginTop: '24px' }}>
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: 'var(--text-main)' }}>
+                Activity vs Expenses
+              </h2>
+              <div style={{ color: 'var(--text-muted)', marginTop: '6px', fontSize: '13px' }}>
+                Last six active months
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '500', color: 'var(--text-muted)' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--accent-gold)' }}></span> Expenses
+            </div>
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#27a57a' }}></span> Activity
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--secondary)' }}></span> Expenses
               </div>
             </div>
           </div>
-          
-          <div style={{ height: '300px', width: '100%' }}>
+
+          <div style={{ height: '320px', width: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={profileData?.chartData || []} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}>
+              <BarChart data={profileData.chartData || []} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--text-muted)' }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--text-muted)' }} />
-                <Tooltip 
-                  cursor={{ fill: 'var(--bg-primary)', opacity: 0.5 }}
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 15px rgba(0,0,0,0.1)' }}
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }} />
+                <Tooltip
+                  cursor={{ fill: '#f8fafc', opacity: 0.8 }}
+                  contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: 'none' }}
                 />
-                <Bar dataKey="Activity" fill="var(--chart-green)" radius={[4, 4, 0, 0]} barSize={12} />
-                <Bar dataKey="Expenses" fill="var(--accent-gold)" radius={[4, 4, 0, 0]} barSize={12} />
+                <Bar dataKey="Activity" fill="#27a57a" radius={[4, 4, 0, 0]} barSize={12} />
+                <Bar dataKey="Expenses" fill="#c2a878" radius={[4, 4, 0, 0]} barSize={12} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Calendar Widget Section */}
-        <CalendarWidget />
+        <div style={{ display: 'grid', gap: '24px' }}>
+          <DetailPanel title="Business Details" icon={IdCard}>
+            <DetailRow label="Contact Name" value={user.contact_name || user.name} />
+            <DetailRow label="Phone" value={user.phone} />
+            <DetailRow label="Email" value={user.email} />
+            <DetailRow label="LINE UID" value={user.line_uid} />
+            <DetailRow
+              label="Assigned Projects"
+              value={assignedProjectIds.length ? assignedProjectIds.join(', ') : '-'}
+            />
+          </DetailPanel>
 
+          <DetailPanel title="Bank Account" icon={Landmark}>
+            <DetailRow label="Bank Name" value={bankAccount.bank_name} />
+            <DetailRow label="Account Number" value={bankAccount.account_no} />
+            <DetailRow label="Account Name" value={bankAccount.account_name} />
+            <DetailRow label="Contact Phone" value={user.phone} />
+          </DetailPanel>
+
+          <DetailPanel title="Contract Status" icon={Phone}>
+            <DetailRow label="KYC Status" value="Private signed-URL review" />
+            <DetailRow label="Timezone" value={user.time || 'Asia/Bangkok'} />
+          </DetailPanel>
+        </div>
       </div>
-
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, CheckCircle2, ExternalLink, LoaderCircle, ReceiptText, TriangleAlert } from 'lucide-react';
+import { ArrowUp, CheckCircle2, ExternalLink, LoaderCircle, ReceiptText, RotateCcw, TriangleAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Loading from './components/Loading';
 import ConstructionAnimation from './components/ConstructionAnimation';
@@ -110,36 +110,38 @@ const buildDefaultedFormState = (defaults = {}, overrides = {}) => ({
 
 const fieldBaseStyle = {
   width: '100%',
-  padding: '12px 16px',
-  borderRadius: '12px',
-  backgroundColor: '#e6decb',
-  border: '1px solid #bba684',
+  padding: '11px 14px',
+  borderRadius: '8px',
+  backgroundColor: '#fff',
+  border: '1px solid #e2e8f0',
   fontSize: '14px',
   outline: 'none',
-  color: '#333',
-  transition: 'all 0.3s ease',
+  color: 'var(--text-main)',
+  transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
 };
 
 const InputField = ({
   label,
   placeholder,
   type = 'text',
+  inputMode,
   style = {},
   value,
   onChange,
   disabled = false,
 }) => (
   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', ...style }}>
-    {label && <label style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a' }}>{label}</label>}
+    {label && <label style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>{label}</label>}
     <input
       type={type}
+      inputMode={inputMode}
       value={value}
       onChange={onChange}
       placeholder={placeholder}
       disabled={disabled}
       style={{
         ...fieldBaseStyle,
-        textAlign: type === 'date' ? 'left' : 'center',
+        textAlign: type === 'number' ? 'right' : 'left',
         opacity: disabled ? 0.65 : 1,
       }}
     />
@@ -156,7 +158,7 @@ const SelectField = ({
   disabled = false,
 }) => (
   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', ...style }}>
-    {label && <label style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a' }}>{label}</label>}
+    {label && <label style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>{label}</label>}
     <div style={{ position: 'relative' }}>
       <select
         value={value}
@@ -164,9 +166,9 @@ const SelectField = ({
         disabled={disabled}
         style={{
           ...fieldBaseStyle,
-          textAlign: 'center',
+          textAlign: 'left',
           appearance: 'none',
-          color: value ? '#333' : '#666',
+          color: value ? 'var(--text-main)' : 'var(--text-muted)',
           cursor: disabled ? 'not-allowed' : 'pointer',
           opacity: disabled ? 0.65 : 1,
         }}
@@ -182,9 +184,49 @@ const SelectField = ({
   </div>
 );
 
+const EntryTypeSegment = ({ value, onChange }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+    <label style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>รายจ่าย / รายรับ</label>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        gap: '6px',
+        padding: '4px',
+        borderRadius: '10px',
+        backgroundColor: 'var(--bg-primary)',
+        border: '1px solid var(--border-color)',
+      }}
+    >
+      {ENTRY_TYPE_OPTIONS.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            style={{
+              minHeight: '42px',
+              border: active ? '1px solid var(--primary)' : '1px solid transparent',
+              borderRadius: '8px',
+              backgroundColor: active ? 'var(--primary)' : 'transparent',
+              color: active ? '#fff' : 'var(--text-main)',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '700',
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  </div>
+);
+
 const TextAreaField = ({ label, placeholder, style = {}, value, onChange }) => (
   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', ...style }}>
-    {label && <label style={{ fontSize: '14px', fontWeight: '600', color: '#1a1a1a' }}>{label}</label>}
+    {label && <label style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>{label}</label>}
     <textarea
       value={value}
       onChange={onChange}
@@ -264,6 +306,7 @@ const InputPage = () => {
   const [flashMessage, setFlashMessage] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [entryTypeTouched, setEntryTypeTouched] = useState(false);
 
   const fileInputRef = useRef(null);
 
@@ -361,8 +404,8 @@ const InputPage = () => {
     setForm((current) => ({ ...current, [field]: nextValue }));
   };
 
-  const handleEntryTypeChange = (event) => {
-    const nextType = event.target.value;
+  const handleEntryTypeChange = (nextType) => {
+    setEntryTypeTouched(true);
     setForm((current) => ({
       ...current,
       entryType: nextType,
@@ -375,7 +418,30 @@ const InputPage = () => {
     setSubmitResult(null);
   };
 
+  const handleClearDraft = () => {
+    setForm(buildDefaultedFormState(inputDefaults, {
+      projectId:
+        projects.length === 1
+          ? String(projects[0]?.project_id || '')
+          : '',
+    }));
+    setSelectedFile(null);
+    setLocalReceiptPreviewUrl('');
+    setExtractData(null);
+    setUploadedReceipt(null);
+    setSubmitResult(null);
+    setSubmitReceiptPreview(null);
+    setSubmitReceiptPreviewError('');
+    setSubmitError('');
+    setFlashMessage('');
+    setEntryTypeTouched(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const handlePickFile = () => {
+    if (isExtracting || isSubmitting) return;
     fileInputRef.current?.click();
   };
 
@@ -388,6 +454,7 @@ const InputPage = () => {
     setSelectedFile(file);
     setExtractData(null);
     setUploadedReceipt(null);
+    setSubmitResult(null);
     setSubmitError('');
     setFlashMessage('');
 
@@ -402,27 +469,39 @@ const InputPage = () => {
       };
 
       setExtractData(normalizedExtracted);
-      setForm((current) => ({
-        ...current,
-        amount: current.amount
-          ? current.amount
-          : normalizedExtracted.total_amount == null
-            ? ''
-            : String(normalizedExtracted.total_amount),
-        documentDate: current.documentDate || normalizeDateInputValue(normalizedExtracted.document_date),
-        requestType: current.requestType || normalizedExtracted.suggested_request_type || '',
-        vendorName: current.vendorName || normalizedExtracted.vendor_name || '',
-        receiptNo: current.receiptNo || normalizedExtracted.receipt_no || '',
-        note:
-          current.note ||
-          [
-            normalizedExtracted.vendor_name,
-            normalizedExtracted.receipt_no,
-            normalizedExtracted.document_date,
-          ]
-            .filter(Boolean)
-            .join(' | '),
-      }));
+      setForm((current) => {
+        const nextEntryType =
+          !entryTypeTouched && normalizedExtracted.suggested_entry_type
+            ? normalizedExtracted.suggested_entry_type
+            : current.entryType;
+        const nextRequestType = current.requestType || normalizedExtracted.suggested_request_type || '';
+
+        return {
+          ...current,
+          entryType: nextEntryType,
+          amount: current.amount
+            ? current.amount
+            : normalizedExtracted.total_amount == null
+              ? ''
+              : String(normalizedExtracted.total_amount),
+          documentDate: current.documentDate || normalizeDateInputValue(normalizedExtracted.document_date),
+          requestType:
+            nextEntryType === 'INCOME' && nextRequestType === 'ค่าเบิกล่วงหน้า'
+              ? ''
+              : nextRequestType,
+          vendorName: current.vendorName || normalizedExtracted.vendor_name || '',
+          receiptNo: current.receiptNo || normalizedExtracted.receipt_no || '',
+          note:
+            current.note ||
+            [
+              normalizedExtracted.vendor_name,
+              normalizedExtracted.receipt_no,
+              normalizedExtracted.document_date,
+            ]
+              .filter(Boolean)
+              .join(' | '),
+        };
+      });
       setFlashMessage(`อ่านข้อมูลจาก ${file.name} สำเร็จแล้ว`);
     } catch (error) {
       setSubmitError(error.message || 'Failed to extract receipt data.');
@@ -532,6 +611,7 @@ const InputPage = () => {
       setSelectedFile(null);
       setExtractData(null);
       setUploadedReceipt(null);
+      setEntryTypeTouched(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -563,18 +643,71 @@ const InputPage = () => {
     value: project.project_id,
     label: project.name,
   }));
+  const hasAssignedProjects = projectOptions.length > 0;
+  const availableRequestTypeOptions = isIncome
+    ? REQUEST_TYPE_OPTIONS.filter((option) => option.value !== 'ค่าเบิกล่วงหน้า')
+    : REQUEST_TYPE_OPTIONS;
+  const numericFormAmount = Number(form.amount);
+  const isSubmitDisabled =
+    isSubmitting ||
+    isExtracting ||
+    !hasAssignedProjects ||
+    !form.projectId ||
+    !form.requesterName.trim() ||
+    !form.requestDate ||
+    !form.amount ||
+    !Number.isFinite(numericFormAmount) ||
+    numericFormAmount <= 0 ||
+    (!selectedFile && !uploadedReceipt);
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '20px' }}>
-      <h1 style={{ fontSize: '32px', marginBottom: '32px', fontWeight: '700', color: '#1a1a1a' }}>
-        Input
-      </h1>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-end',
+          gap: '16px',
+          marginBottom: '28px',
+        }}
+      >
+        <div>
+          <h1 style={{ fontSize: '32px', marginBottom: '8px', fontWeight: '700', color: 'var(--text-main)' }}>
+            Submit Request
+          </h1>
+          <p style={{ margin: 0, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Upload the receipt first, review OCR values, then submit for admin approval.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleClearDraft}
+          disabled={isExtracting || isSubmitting}
+          style={{
+            minHeight: '42px',
+            padding: '0 14px',
+            borderRadius: '8px',
+            border: '1px solid var(--secondary)',
+            backgroundColor: 'var(--card-bg)',
+            color: 'var(--secondary)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            cursor: isExtracting || isSubmitting ? 'wait' : 'pointer',
+            fontWeight: '700',
+          }}
+        >
+          <RotateCcw size={16} />
+          Clear Draft
+        </button>
+      </div>
 
       <MotionDiv
+        className="input-workflow-layout"
         layout
         style={{
           display: 'flex',
-          flexDirection: isIncome ? 'row-reverse' : 'row',
+          flexDirection: 'row',
           gap: '32px',
           alignItems: 'start',
         }}
@@ -584,13 +717,14 @@ const InputPage = () => {
             <div
               className="card"
               style={{
-                backgroundColor: 'white',
+                backgroundColor: 'var(--card-bg)',
                 padding: '32px 24px',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '20px',
-                borderRadius: '24px',
-                boxShadow: '0 10px 30px rgba(0,0,0,0.05)',
+                borderRadius: '12px',
+                border: '1px solid var(--border-color)',
+                boxShadow: 'none',
               }}
             >
               <AnimatePresence mode="popLayout">
@@ -614,16 +748,16 @@ const InputPage = () => {
                   flexDirection: 'column',
                   gap: '10px',
                   padding: '18px',
-                  borderRadius: '18px',
-                  backgroundColor: '#f8f1e3',
-                  border: '1px solid #d6c29f',
+                  borderRadius: '12px',
+                  backgroundColor: 'var(--bg-primary)',
+                  border: '2px dashed #c1c8c4',
                 }}
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <div style={{ fontSize: '16px', fontWeight: '700', color: '#1a1a1a' }}>
+                  <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
                     1. Upload Receipt File
                   </div>
-                  <div style={{ fontSize: '13px', color: '#6b6256', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                     อัปโหลดรูปหรือ PDF ของบิล/ใบเสร็จก่อน เพื่อให้ระบบอ่านข้อมูลและช่วยกรอกฟอร์มให้
                   </div>
                 </div>
@@ -638,18 +772,20 @@ const InputPage = () => {
                 <button
                   type="button"
                   onClick={handlePickFile}
+                  disabled={isExtracting || isSubmitting}
                   style={{
                     width: '100%',
                     height: '140px',
-                    backgroundColor: '#e6decb',
-                    border: '1px solid #bba684',
-                    borderRadius: '14px',
+                    backgroundColor: 'var(--card-bg)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '8px',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '8px',
-                    cursor: 'pointer',
-                    color: '#1a1a1a',
+                    cursor: isExtracting || isSubmitting ? 'wait' : 'pointer',
+                    color: 'var(--text-main)',
+                    opacity: isSubmitting ? 0.7 : 1,
                   }}
                 >
                   {isExtracting ? (
@@ -668,14 +804,11 @@ const InputPage = () => {
                 </button>
               </div>
 
-              <SelectField
-                label="รายจ่าย / รายรับ"
-                placeholder="เลือกรายการที่ทำ"
-                options={ENTRY_TYPE_OPTIONS}
-                value={form.entryType}
-                onChange={handleEntryTypeChange}
-                style={{ width: '60%' }}
-              />
+              <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
+                2. Request Details
+              </div>
+
+              <EntryTypeSegment value={form.entryType} onChange={handleEntryTypeChange} />
 
               <SelectField
                 label="โครงการ"
@@ -683,11 +816,10 @@ const InputPage = () => {
                 options={projectOptions}
                 value={form.projectId}
                 onChange={handleFieldChange('projectId')}
-                disabled={projectOptions.length === 0}
-                style={{ width: '60%' }}
+                disabled={!hasAssignedProjects}
               />
 
-              {projectOptions.length === 0 ? (
+              {!hasAssignedProjects ? (
                 <StatusBanner
                   tone="warning"
                   text="ยังไม่มีโครงการที่ assign ให้บัญชีนี้ กรุณาให้ admin ตั้งค่า Assigned Projects ในหน้า Settings ก่อน"
@@ -699,13 +831,13 @@ const InputPage = () => {
                 placeholder="กรุณากรอกชื่อ-นามสกุล"
                 value={form.requesterName}
                 onChange={handleFieldChange('requesterName')}
-                style={{ width: '60%' }}
               />
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+              <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                 <InputField
                   label="เบอร์ติดต่อ"
                   placeholder="กรุณากรอกเบอร์โทรศัพท์"
+                  inputMode="tel"
                   value={form.phone}
                   onChange={handleFieldChange('phone')}
                 />
@@ -717,7 +849,7 @@ const InputPage = () => {
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+              <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                 <InputField
                   label="เลขที่ใบเสร็จ"
                   placeholder="กรุณากรอกเลขที่ใบเสร็จ"
@@ -732,7 +864,7 @@ const InputPage = () => {
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+              <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                 <SelectField
                   label="ประเภทงาน"
                   placeholder="กรุณาเลือก"
@@ -743,7 +875,7 @@ const InputPage = () => {
                 <SelectField
                   label="ประเภทการเบิก"
                   placeholder="กรุณาเลือก"
-                  options={REQUEST_TYPE_OPTIONS}
+                  options={availableRequestTypeOptions}
                   value={form.requestType}
                   onChange={handleFieldChange('requestType')}
                 />
@@ -754,7 +886,6 @@ const InputPage = () => {
                 placeholder="กรุณากรอกชื่อร้านหรือผู้ขาย"
                 value={form.vendorName}
                 onChange={handleFieldChange('vendorName')}
-                style={{ width: '60%' }}
               />
 
               <TextAreaField
@@ -765,7 +896,11 @@ const InputPage = () => {
                 style={{ width: '100%' }}
               />
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+              <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
+                3. Disbursement Account
+              </div>
+
+              <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                 <InputField
                   label="ธนาคาร"
                   placeholder="กรุณากรอก"
@@ -776,15 +911,17 @@ const InputPage = () => {
                   label="จำนวนเงินที่ขอเบิก"
                   placeholder="กรุณากรอก"
                   type="number"
+                  inputMode="decimal"
                   value={form.amount}
                   onChange={handleFieldChange('amount')}
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+              <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                 <InputField
                   label="เลขที่บัญชี"
                   placeholder="กรุณากรอก"
+                  inputMode="numeric"
                   value={form.accountNo}
                   onChange={handleFieldChange('accountNo')}
                 />
@@ -796,25 +933,42 @@ const InputPage = () => {
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'center', marginTop: '4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '4px' }}>
                 <button
-                  type="submit"
-                  disabled={isSubmitting}
+                  type="button"
+                  onClick={handleClearDraft}
+                  disabled={isExtracting || isSubmitting}
                   style={{
-                    backgroundColor: '#c9a15c',
-                    color: 'black',
-                    border: 'none',
-                    borderRadius: '12px',
-                    padding: '12px 48px',
-                    fontSize: '20px',
+                    backgroundColor: 'var(--card-bg)',
+                    color: 'var(--secondary)',
+                    border: '1px solid var(--secondary)',
+                    borderRadius: '8px',
+                    padding: '12px 18px',
+                    fontSize: '14px',
                     fontWeight: '700',
-                    cursor: isSubmitting ? 'wait' : 'pointer',
-                    width: '160px',
-                    boxShadow: '0 4px 15px rgba(201, 161, 92, 0.3)',
-                    opacity: isSubmitting ? 0.75 : 1,
+                    cursor: isExtracting || isSubmitting ? 'wait' : 'pointer',
                   }}
                 >
-                  {isSubmitting ? 'กำลังส่ง...' : 'ส่ง'}
+                  Clear
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitDisabled}
+                  style={{
+                    backgroundColor: 'var(--primary)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '12px 24px',
+                    fontSize: '15px',
+                    fontWeight: '700',
+                    cursor: isSubmitDisabled ? 'not-allowed' : 'pointer',
+                    minWidth: '220px',
+                    boxShadow: 'none',
+                    opacity: isSubmitDisabled ? 0.65 : 1,
+                  }}
+                >
+                  {isSubmitting ? 'กำลังส่ง...' : 'ส่งให้ Admin ตรวจสอบ'}
                 </button>
               </div>
             </div>
@@ -822,18 +976,19 @@ const InputPage = () => {
         </MotionDiv>
 
         <MotionDiv
+          className="input-preview-panel"
           layout
           style={{
             flex: 1,
-            backgroundColor: '#f9f6f0',
-            minHeight: '800px',
-            borderRadius: '24px',
+            backgroundColor: 'var(--bg-primary)',
+            minHeight: '760px',
+            borderRadius: '12px',
             display: 'flex',
             alignItems: 'stretch',
             justifyContent: 'center',
             position: 'relative',
             overflow: 'hidden',
-            border: '1px solid #ede4d3',
+            border: '1px solid var(--border-color)',
           }}
         >
           <div style={{ width: '100%', padding: '28px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -862,7 +1017,7 @@ const InputPage = () => {
                       text={`OCR ยังไม่มั่นใจในบางช่อง: ${submitResult.ocr_low_confidence_fields.map(formatOcrFieldLabel).join(', ')}`}
                     />
                   ) : null}
-                  <div className="card" style={{ backgroundColor: 'white', borderRadius: '20px', padding: '24px' }}>
+                  <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
                     <h2 style={{ fontSize: '22px', marginBottom: '16px' }}>Submission Summary</h2>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
                       <div><strong>Request ID:</strong> {submitResult.request_id}</div>
@@ -876,7 +1031,7 @@ const InputPage = () => {
                       <div><strong>Status:</strong> {submitResult.status}</div>
                     </div>
                   </div>
-                  <div className="card" style={{ backgroundColor: 'white', borderRadius: '20px', padding: '24px' }}>
+                  <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
                       <div>
                         <h2 style={{ fontSize: '22px', margin: 0 }}>Receipt Preview</h2>
@@ -894,10 +1049,10 @@ const InputPage = () => {
                             alignItems: 'center',
                             gap: '8px',
                             textDecoration: 'none',
-                            color: '#1a1a1a',
-                            backgroundColor: '#f3eadb',
-                            border: '1px solid #d8cfbf',
-                            borderRadius: '12px',
+                            color: 'var(--secondary)',
+                            backgroundColor: 'var(--card-bg)',
+                            border: '1px solid var(--secondary)',
+                            borderRadius: '8px',
                             padding: '10px 12px',
                             fontSize: '13px',
                             fontWeight: '600',
@@ -910,7 +1065,7 @@ const InputPage = () => {
                     </div>
 
                     {submitReceiptPreviewLoading ? (
-                      <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                      <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
                         กำลังโหลดลิงก์ไฟล์จาก GCS...
                       </div>
                     ) : null}
@@ -922,13 +1077,13 @@ const InputPage = () => {
                     ) : null}
 
                     {!submitResult.receipt_storage_key && !submitReceiptPreviewLoading ? (
-                      <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                      <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
                         คำขอนี้ไม่มีไฟล์ receipt ที่เก็บไว้
                       </div>
                     ) : null}
 
                     {canPreviewSubmittedReceipt && isSubmittedReceiptImage ? (
-                      <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                      <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
                         <img
                           src={submitReceiptPreview.signed_url}
                           alt={submitReceiptPreview.file_name || 'Receipt preview'}
@@ -938,14 +1093,14 @@ const InputPage = () => {
                             objectFit: 'contain',
                             borderRadius: '12px',
                             display: 'block',
-                            backgroundColor: 'white',
+                            backgroundColor: 'var(--card-bg)',
                           }}
                         />
                       </div>
                     ) : null}
 
                     {canPreviewSubmittedReceipt && isSubmittedReceiptPdf ? (
-                      <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                      <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
                         <iframe
                           src={submitReceiptPreview.signed_url}
                           title={submitReceiptPreview.file_name || 'Receipt PDF preview'}
@@ -954,14 +1109,14 @@ const InputPage = () => {
                             height: '520px',
                             border: 'none',
                             borderRadius: '12px',
-                            backgroundColor: 'white',
+                            backgroundColor: 'var(--card-bg)',
                           }}
                         />
                       </div>
                     ) : null}
 
                     {canPreviewSubmittedReceipt && !isSubmittedReceiptImage && !isSubmittedReceiptPdf ? (
-                      <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                      <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
                         ไฟล์นี้ไม่ใช่รูปภาพ ใช้ปุ่ม Open Receipt เพื่อเปิดไฟล์ต้นฉบับ
                       </div>
                     ) : null}
@@ -981,7 +1136,7 @@ const InputPage = () => {
                       text={`OCR ยังไม่มั่นใจในบางช่อง: ${extractData.low_confidence_fields.map(formatOcrFieldLabel).join(', ')} กรุณาตรวจและแก้ไขก่อนส่ง`}
                     />
                   ) : null}
-                  <div className="card" style={{ backgroundColor: 'white', borderRadius: '20px', padding: '24px' }}>
+                  <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
                       <ReceiptText size={20} />
                       <h2 style={{ fontSize: '22px', margin: 0 }}>OCR Preview</h2>
@@ -990,7 +1145,7 @@ const InputPage = () => {
                       <strong>Uploaded Receipt</strong>
 
                       {canPreviewLocalReceipt && isLocalReceiptImage ? (
-                        <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                        <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
                           <img
                             src={localReceiptPreviewUrl}
                             alt={selectedFile?.name || 'Uploaded receipt preview'}
@@ -1000,14 +1155,14 @@ const InputPage = () => {
                               objectFit: 'contain',
                               borderRadius: '12px',
                               display: 'block',
-                              backgroundColor: 'white',
+                              backgroundColor: 'var(--card-bg)',
                             }}
                           />
                         </div>
                       ) : null}
 
                       {canPreviewLocalReceipt && isLocalReceiptPdf ? (
-                        <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
+                        <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
                           <iframe
                             src={localReceiptPreviewUrl}
                             title={selectedFile?.name || 'Uploaded receipt PDF preview'}
@@ -1016,14 +1171,14 @@ const InputPage = () => {
                               height: '520px',
                               border: 'none',
                               borderRadius: '12px',
-                              backgroundColor: 'white',
+                              backgroundColor: 'var(--card-bg)',
                             }}
                           />
                         </div>
                       ) : null}
 
                       {canPreviewLocalReceipt && !isLocalReceiptImage && !isLocalReceiptPdf ? (
-                        <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
+                        <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
                           ไฟล์นี้ไม่สามารถ preview ในเบราว์เซอร์ได้ แต่ระบบยังใช้ไฟล์นี้อ่าน OCR ได้
                         </div>
                       ) : null}
@@ -1042,7 +1197,7 @@ const InputPage = () => {
                         <div
                           key={`${item.description}-${index}`}
                           style={{
-                            backgroundColor: '#f9f6f0',
+                            backgroundColor: 'var(--bg-primary)',
                             borderRadius: '14px',
                             padding: '12px 14px',
                             display: 'flex',
@@ -1066,10 +1221,10 @@ const InputPage = () => {
                   style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}
                 >
                   <div>
-                    <h2 style={{ fontSize: '24px', marginBottom: '10px', color: '#1a1a1a' }}>
-                      Input Workflow Preview
+                    <h2 style={{ fontSize: '24px', marginBottom: '10px', color: 'var(--text-main)' }}>
+                      Receipt Preview
                     </h2>
-                    <p style={{ color: '#6b6256', lineHeight: 1.6 }}>
+                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
                       เลือกโครงการ อัปโหลดใบเสร็จหรือ PDF เพื่อให้ Gemini ช่วยอ่านข้อมูลและส่งคำขอเข้า backend ใหม่ที่ออกแบบตาม flow
                       ของ subcontractor input และ admin review
                     </p>
