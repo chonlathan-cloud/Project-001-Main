@@ -1,0 +1,6 @@
+{
+  "name": "Projects-001 Admin Portal",
+  "description": "High-fidelity administrative portal for managing construction programs, Bill of Quantities (BOQ), insights, approvals, and subcontractor sync under Projects-001.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
