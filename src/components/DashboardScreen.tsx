@@ -23,6 +23,7 @@ interface DashboardStats {
   budgetChangeLabel: string; // เช่น "+2.4% vs last quarter"
   actualCost: string;
   pendingRequests: number;
+  pendingReviewers: string[]; // รายชื่อ URL รูปภาพผู้ตรวจทาน
   pendingReviewersExtra: number; // เช่น 5 (สำหรับ +5 ใน avatar stack)
   pastDueInvoices: number; // เช่น 12
   cashFlow: string;
@@ -204,16 +205,14 @@ export default function DashboardScreen({
             <div className="flex items-center gap-2 mt-2">
               {/* Profile Avatars overlapping Stack */}
               <div className="flex -space-x-2 overflow-hidden">
-                <img
-                  className="inline-block h-[20px] w-[20px] rounded-full ring-2 ring-white object-cover"
-                  src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=40&h=40&q=80"
-                  alt="Reviewer 1"
-                />
-                <img
-                  className="inline-block h-[20px] w-[20px] rounded-full ring-2 ring-white object-cover"
-                  src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=40&h=40&q=80"
-                  alt="Reviewer 2"
-                />
+                {(stats?.pendingReviewers || []).map((avatarUrl, idx) => (
+                  <img
+                    key={idx}
+                    className="inline-block h-[20px] w-[20px] rounded-full ring-2 ring-white object-cover"
+                    src={avatarUrl}
+                    alt={`Reviewer ${idx + 1}`}
+                  />
+                ))}
                 <div className="inline-flex h-[20px] w-[20px] rounded-full ring-2 ring-white bg-zinc-200 items-center justify-center text-[9px] font-bold text-zinc-650">
                   +{stats?.pendingReviewersExtra || 0}
                 </div>
