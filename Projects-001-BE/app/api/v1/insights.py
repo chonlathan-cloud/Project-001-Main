@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
+from app.api.deps.auth import AuthenticatedUser, require_admin_user
 from app.core.database import get_db
 from app.models.boq import Project
 from app.schemas.insight_schema import (
@@ -236,6 +237,7 @@ async def list_insight_warehouse_rows(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
 ):
     """
     Contract-first warehouse row endpoint.
@@ -292,6 +294,7 @@ async def get_insight_warehouse_summary(
     amount_min: float | None = Query(default=None, ge=0),
     amount_max: float | None = Query(default=None, ge=0),
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
 ):
     """
     Contract-first summary endpoint for the warehouse header cards.
@@ -344,6 +347,7 @@ async def export_insight_warehouse(
     sort_by: str = Query(default="event_date"),
     sort_order: str = Query(default="desc"),
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
 ):
     """
     Export the current warehouse view as CSV.
@@ -399,7 +403,10 @@ async def export_insight_warehouse(
 
 
 @router.get("/filters", response_model=StandardResponse[InsightWarehouseFiltersResponse])
-async def get_insight_warehouse_filters(db: AsyncSession = Depends(get_db)):
+async def get_insight_warehouse_filters(
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
     """
     Return selectable metadata for the Insight Warehouse page:
     projects, quick views, filters, and default table columns.

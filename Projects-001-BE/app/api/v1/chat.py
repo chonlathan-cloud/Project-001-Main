@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps.auth import AuthenticatedUser, require_owner_user
 from app.core.database import get_db
 from app.schemas.responses import StandardResponse
 from app.services.ai_service import ask_strategic_question
@@ -40,6 +41,7 @@ class ChatRequest(BaseModel):
 async def chat_history(
     limit: int = Query(default=CHAT_HISTORY_RETENTION_LIMIT, ge=1, le=CHAT_HISTORY_RETENTION_LIMIT),
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_owner_user),
 ):
     try:
         history = await list_recent_chat_history(db, limit=limit)
@@ -57,6 +59,7 @@ async def chat_history(
 @router.delete("/history", response_model=StandardResponse[dict])
 async def chat_history_clear(
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_owner_user),
 ):
     try:
         deleted_count = await clear_chat_history(db)
@@ -75,6 +78,7 @@ async def chat_history_clear(
 async def chat_ask(
     request: ChatRequest,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_owner_user),
 ):
     """
     Executive asks a strategic question.

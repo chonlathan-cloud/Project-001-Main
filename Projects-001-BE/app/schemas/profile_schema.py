@@ -6,7 +6,18 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+ADMIN_ROLE_VALUES = {"admin", "owner"}
+
+
+def _normalize_admin_role(value: str | None, *, default: str = "admin") -> str:
+    cleaned = str(value or "").strip().lower()
+    if not cleaned:
+        return default
+    if cleaned not in ADMIN_ROLE_VALUES:
+        raise ValueError("role must be either 'admin' or 'owner'.")
+    return cleaned
 
 
 class BankAccountInfo(BaseModel):
@@ -52,21 +63,41 @@ class AdminDirectoryItem(BaseModel):
     id: str
     email: str
     display_name: str | None = None
+    role: str = "admin"
     is_active: bool = True
     granted_by: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
+    @field_validator("role", mode="before")
+    @classmethod
+    def validate_role(cls, value: str | None) -> str:
+        return _normalize_admin_role(value)
+
 
 class UpsertAdminRequest(BaseModel):
     email: str
     display_name: str | None = None
+    role: str = "admin"
     is_active: bool = True
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def validate_role(cls, value: str | None) -> str:
+        return _normalize_admin_role(value)
 
 
 class UpdateAdminRequest(BaseModel):
     display_name: str | None = None
+    role: str | None = None
     is_active: bool | None = None
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def validate_role(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_admin_role(value)
 
 
 class SessionUserPayload(BaseModel):
@@ -75,6 +106,7 @@ class SessionUserPayload(BaseModel):
     display_name: str | None = None
     subcontractor_id: str | None = None
     line_uid: str | None = None
+    permissions: list[str] = Field(default_factory=list)
 
 
 class AuthSessionResponse(BaseModel):

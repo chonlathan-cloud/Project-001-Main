@@ -17,19 +17,26 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
-from app.api.deps.auth import AuthenticatedUser, get_current_user, require_admin_user
+from app.api.deps.auth import (
+    AuthenticatedUser,
+    get_current_user,
+    require_admin_user,
+    require_owner_user,
+)
 from app.core.database import get_db
 from app.models.boq import Project
 from app.models.input_request import InputRequest
 from app.schemas.input_schema import (
     BankAccountPayload,
     InputDefaultValuesResponse,
+    InputRequestAdminSummaryResponse,
     InputRequestAdminUpdate,
     InputRequestApproveAction,
     InputRequestCreate,
     InputRequestItem,
     InputRequestMarkPaidAction,
     InputRequestRejectAction,
+    InputRequestStatusSummaryItem,
     ProjectOptionItem,
     ReceiptAccessResponse,
     ReceiptExtractResponse,
@@ -62,6 +69,13 @@ def _duplicate_flag_value(value: object) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def _money_value(value: object) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _validate_request_business_rules(*, entry_type: str, request_type: str | None) -> None:
@@ -510,7 +524,7 @@ async def get_admin_input_request_receipt_url(
 )
 async def cleanup_admin_temp_receipts(
     older_than_hours: int = Query(default=24, ge=1, le=168),
-    _user: AuthenticatedUser = Depends(require_admin_user),
+    _user: AuthenticatedUser = Depends(require_owner_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete old temp receipt objects that are no longer referenced in the database."""
@@ -679,11 +693,95 @@ async def list_admin_input_requests(
         ) from exc
 
 
+@router.get(
+    "/admin/requests/summary",
+    response_model=StandardResponse[InputRequestAdminSummaryResponse],
+)
+async def get_admin_input_requests_summary(
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    try:
+        rows = (
+            await db.execute(select(InputRequest).options(noload("*")))
+        ).scalars().all()
+
+        status_map: dict[str, dict[str, float | int]] = {}
+        total_amount = 0.0
+        duplicate_count = 0
+        paid_amount = 0.0
+
+        for item in rows:
+            status_key = str(item.status or "UNKNOWN").upper()
+            amount = _money_value(
+                item.approved_amount if item.approved_amount is not None else item.amount
+            )
+            total_amount += amount
+            if _duplicate_flag_value(item.is_duplicate_flag):
+                duplicate_count += 1
+            if status_key == "PAID":
+                paid_amount += amount
+            if status_key not in status_map:
+                status_map[status_key] = {"count": 0, "amount": 0.0}
+            status_map[status_key]["count"] = int(status_map[status_key]["count"]) + 1
+            status_map[status_key]["amount"] = _money_value(status_map[status_key]["amount"]) + amount
+
+        pending = status_map.get("PENDING_ADMIN", {"count": 0, "amount": 0.0})
+        paid = status_map.get("PAID", {"count": 0, "amount": 0.0})
+
+        return StandardResponse(
+            data=InputRequestAdminSummaryResponse(
+                total_count=len(rows),
+                total_amount=round(total_amount, 2),
+                pending_count=int(pending["count"]),
+                pending_amount=round(_money_value(pending["amount"]), 2),
+                duplicate_count=duplicate_count,
+                paid_count=int(paid["count"]),
+                paid_amount=round(paid_amount, 2),
+                by_status=[
+                    InputRequestStatusSummaryItem(
+                        status=status_key,
+                        count=int(values["count"]),
+                        amount=round(_money_value(values["amount"]), 2),
+                    )
+                    for status_key, values in sorted(status_map.items())
+                ],
+            )
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to summarize input requests: {exc}",
+        ) from exc
+
+
+@router.get("/admin/requests/{request_id}", response_model=StandardResponse[InputRequestItem])
+async def get_admin_input_request_detail(
+    request_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    try:
+        input_request, project_name = await _get_input_request_with_project(db, request_id)
+        return StandardResponse(
+            data=_serialize_input_request(input_request, project_name)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch input request {request_id}: {exc}",
+        ) from exc
+
+
 @router.put("/admin/requests/{request_id}", response_model=StandardResponse[InputRequestItem])
 async def update_admin_input_request(
     request_id: UUID,
     request: InputRequestAdminUpdate,
-    _user: AuthenticatedUser = Depends(require_admin_user),
+    _user: AuthenticatedUser = Depends(require_owner_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Admin direct edit before approval, matching the project docs review flow."""
@@ -745,7 +843,7 @@ async def update_admin_input_request(
 async def approve_admin_input_request(
     request_id: UUID,
     request: InputRequestApproveAction,
-    _user: AuthenticatedUser = Depends(require_admin_user),
+    _user: AuthenticatedUser = Depends(require_owner_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Approve an input request after review."""
@@ -796,7 +894,7 @@ async def approve_admin_input_request(
 async def reject_admin_input_request(
     request_id: UUID,
     request: InputRequestRejectAction,
-    _user: AuthenticatedUser = Depends(require_admin_user),
+    _user: AuthenticatedUser = Depends(require_owner_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Reject an input request and record the review note."""
@@ -835,7 +933,7 @@ async def reject_admin_input_request(
 async def mark_paid_admin_input_request(
     request_id: UUID,
     request: InputRequestMarkPaidAction,
-    _user: AuthenticatedUser = Depends(require_admin_user),
+    _user: AuthenticatedUser = Depends(require_owner_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Move an approved input request into paid state after transfer is completed."""

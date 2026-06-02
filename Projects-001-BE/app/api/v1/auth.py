@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
-from app.api.deps.auth import AuthenticatedUser, get_current_user
+from app.api.deps.auth import AuthenticatedUser, get_current_user, role_permissions
 from app.core.google_clients import get_firebase_auth
 from app.core.security import issue_session_token
 from app.schemas.profile_schema import (
@@ -24,8 +24,8 @@ from app.services.gcs_storage_service import upload_kyc_image_to_storage
 from app.services.identity_service import (
     create_subcontractor_profile,
     ensure_bootstrap_admin,
+    get_authorized_admin_role,
     get_subcontractor_by_line_uid,
-    is_email_authorized_admin,
     update_subcontractor_profile,
 )
 
@@ -97,6 +97,7 @@ def _subcontractor_session_response(*, line_uid: str, subcontractor_id: str, nam
             display_name=name,
             subcontractor_id=subcontractor_id,
             line_uid=line_uid,
+            permissions=role_permissions("subcontractor"),
         ),
     )
 
@@ -227,23 +228,26 @@ async def admin_login(request: AdminLoginRequest):
                 detail="Admin email is required.",
             )
 
-        if not is_email_authorized_admin(email):
+        authorized_role = get_authorized_admin_role(email)
+        if authorized_role is None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This email is not authorized as an admin.",
             )
 
-        ensure_bootstrap_admin(email, display_name)
+        bootstrap_entry = ensure_bootstrap_admin(email, display_name)
+        if bootstrap_entry is not None:
+            authorized_role = bootstrap_entry.role
 
         session_token = issue_session_token(
             subject=email,
-            role="admin",
+            role=authorized_role,
             email=email,
             display_name=display_name,
         )
         firebase_custom_token = _create_firebase_custom_token(
             email,
-            claims={"role": "admin", "email": email},
+            claims={"role": authorized_role, "email": email},
         )
         return StandardResponse(
             data=AuthSessionResponse(
@@ -251,9 +255,10 @@ async def admin_login(request: AdminLoginRequest):
                 session_token=session_token,
                 firebase_custom_token=firebase_custom_token,
                 user=SessionUserPayload(
-                    role="admin",
+                    role=authorized_role,
                     email=email,
                     display_name=display_name,
+                    permissions=role_permissions(authorized_role),
                 ),
             )
         )
@@ -275,5 +280,6 @@ async def get_current_session_user(user: AuthenticatedUser = Depends(get_current
             email=user.email,
             display_name=user.display_name,
             subcontractor_id=user.subcontractor_id,
+            permissions=role_permissions(user.role),
         )
     )

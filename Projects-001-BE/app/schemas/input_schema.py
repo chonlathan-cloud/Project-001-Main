@@ -251,6 +251,23 @@ class InputRequestItem(BaseModel):
     updated_at: datetime | None = None
 
 
+class InputRequestStatusSummaryItem(BaseModel):
+    status: str
+    count: int = 0
+    amount: float = 0.0
+
+
+class InputRequestAdminSummaryResponse(BaseModel):
+    total_count: int = 0
+    total_amount: float = 0.0
+    pending_count: int = 0
+    pending_amount: float = 0.0
+    duplicate_count: int = 0
+    paid_count: int = 0
+    paid_amount: float = 0.0
+    by_status: list[InputRequestStatusSummaryItem] = Field(default_factory=list)
+
+
 class InputRequestAdminUpdate(BaseModel):
     subcontractor_id: str | None = None
     requester_name: str | None = Field(default=None, min_length=1)

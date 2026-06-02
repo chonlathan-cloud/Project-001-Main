@@ -75,21 +75,31 @@ status: (String) DRAFT หรือ PENDING_ADMIN
 ### **🔌 2. API Specifications (Mapped to 7 UI Routers)**
 These are the API Endpoints that the Backend must develop so the Frontend can connect them to the 7 functional screens.
 
+**Internal Admin Roles**
+
+- **Owner:** Full access. Can view Dashboard/Chat AI and can mutate projects, BOQ sync, settings, and approval states.
+- **Admin:** Limited operational access. Can view Projects, Approval queues/details, Insights, Settings list data, Profile, and KYC previews. Cannot view Dashboard or Chat AI and cannot approve/reject/mark-paid or mutate Settings/Projects/BOQ.
+- **Default assignment:** First-time internal users allowed by `ADMIN_EMAILS` or `ADMIN_EMAIL_DOMAIN` are created as `admin` by default. Owner access requires an existing Firestore admin record with `role = "owner"` or a role change by another Owner.
+
 * **Router 1: Dashboard (Overall Overview)**
-    * **GET `/api/v1/dashboard/summary` (Admin)**
-    * **Response:** Sends aggregated KPI data (Total Budget, Actual Cost, Pending Bills, Overdue Amount) and Time-series data (Monthly Income/Expense) for rendering bar charts.
+    * **GET `/api/v1/dashboard/summary` (Owner only)**
+    * **Response:** Sends typed Stitch dashboard data: KPI cards, monthly cashflow, zone status, risky projects, project health, attention items, and recent actions.
 
 * **Router 2: Project List (Consolidated Project Page)**
-    * **GET `/api/v1/projects` (Admin)**
+    * **GET `/api/v1/projects` (Owner/Admin)**
     * **Response:** A list of projects along with calculated percentage of payment progress and status.
-    * **POST `/api/v1/boq/sync` (Admin)**
+    * **POST `/api/v1/projects` (Owner only)**
+    * **PUT `/api/v1/projects/{id}` (Owner only)**
+    * **POST `/api/v1/projects/boq/tabs` (Owner only)**
+    * **POST `/api/v1/projects/boq/sync` (Owner only)**
+    * **POST `/api/v1/projects/boq/sync-batch` (Owner only)**
     * **Body:** `{ "project_id": "uuid", "boq_type": "CUSTOMER", "sheet_url": "string" }`
     * **Logic:** Fetch Google Sheet -> Gemini 2.0 analyzes WBS -> Save to Database.
 
 * **Router 3: Project Detail & BOQ**
-    * **GET `/api/v1/projects/{id}` (Admin)**
+    * **GET `/api/v1/projects/{id}` (Owner/Admin)**
     * **Response:** Basic project information.
-    * **GET `/api/v1/projects/{id}/boq` (Admin)**
+    * **GET `/api/v1/projects/{id}/boq` (Owner/Admin)**
     * **Response:** BOQ data formatted as Tree/Nested JSON (Parent-Child) with attached Variance values (Customer Price vs. Sub Price) on the same line. This allows the Frontend to render "Card" displays (WBS Level 1) that can be expanded to view internal details.
 
 * **Router 4: Subcontractor Input (Billing Page)**
@@ -101,26 +111,41 @@ These are the API Endpoints that the Backend must develop so the Frontend can co
     * **Logic:** Record to Firestore (Status: `PENDING_ADMIN`).
 
 * **Router 6: Admin Approval (Approval & Status Tracking)**
-    * **GET `/api/v1/admin/bills?status=PENDING` (Admin)**
-    * **Response:** List of bills awaiting review.
-    * **PUT `/api/v1/admin/bills/{id}` (Admin)**
-    * **Logic:** **Direct Edit** allowing Admins to modify amount figures or change BOQ categories directly before clicking "Approve."
-    * **POST `/api/v1/admin/bills/{id}/approve` (Admin)**
-    * **Logic:** Calculate Net Payable -> Record into `transactions` table -> Move image file to `/perm_bills`.
+    * **GET `/api/v1/input/admin/requests?status=PENDING_ADMIN` (Owner/Admin)**
+    * **GET `/api/v1/input/admin/requests/summary` (Owner/Admin)**
+    * **GET `/api/v1/input/admin/requests/{id}` (Owner/Admin)**
+    * **GET `/api/v1/input/admin/requests/{id}/receipt-url` (Owner/Admin)**
+    * **Response:** List/detail/summary contracts for the Stitch approval queue, selected request panel, status cards, and receipt preview.
+    * **PUT `/api/v1/input/admin/requests/{id}` (Owner only)**
+    * **Logic:** **Direct Edit** allowing Owners to modify amount figures before clicking "Approve."
+    * **POST `/api/v1/input/admin/requests/{id}/approve` (Owner only)**
+    * **POST `/api/v1/input/admin/requests/{id}/reject` (Owner only)**
+    * **POST `/api/v1/input/admin/requests/{id}/mark-paid` (Owner only)**
+    * **Logic:** Owner reviews request -> moves receipt to `/perm_bills` on approval -> can mark paid after approval. Limited Admin can view the queue/details but cannot mutate status.
 
 * **Router 7: Settings (Admin Settings)**
-    * **GET `/api/v1/settings/subcontractors` (Admin)**
-    * **Response:** List of all subcontractor names.
-    * **PUT `/api/v1/settings/subcontractors/{id}` (Admin)**
+    * **GET `/api/v1/settings/subcontractors` (Owner/Admin)**
+    * **GET `/api/v1/settings/subcontractors/{id}` (Owner/Admin)**
+    * **Response:** List/detail contracts for subcontractor KYC, assigned projects, bank/tax/rate fields, active state, and LINE binding context.
+    * **PUT `/api/v1/settings/subcontractors/{id}` (Owner only)**
     * **Body:** `{ "vat_rate": 0.07, "wht_rate": 0.03, "retention_rate": 0.05, "name": "..." }`
     * **Logic:** Update profile in Firestore.
-    * **POST `/api/v1/settings/subcontractors/{id}/reset-line` (Admin)**
+    * **POST `/api/v1/settings/subcontractors/{id}/reset-line` (Owner only)**
     * **Logic:** Delete the existing `line_uid` to allow the subcontractor to bind a new LINE account.
-    * **GET `/api/v1/users/{id}/kyc-image` (Admin)**
+    * **GET `/api/v1/settings/users/{id}/kyc-image` (Owner/Admin)**
     * **Logic:** Generate a Signed URL (15 minutes) for viewing the ID card photo.
+    * **GET `/api/v1/settings/admins` (Owner/Admin)**
+    * **GET `/api/v1/settings/admins/{id}` (Owner/Admin)**
+    * **POST `/api/v1/settings/admins` (Owner only)**
+    * **PUT `/api/v1/settings/admins/{id}` (Owner only)**
+    * **Logic:** Manage internal users and assign `owner` or `admin` role. The backend prevents removing the final active Owner and prevents users from changing their own role or active status.
+    * **GET `/api/v1/settings/integrations` (Owner/Admin)**
+    * **Logic:** Read-only grouped integration status for Backend/API, Google Cloud, Firebase, LINE/LIFF, private storage, AI services, and admin access configuration. Sensitive values are not returned.
 
 ### **🤖 Router 8: AI Strategic Chat (Executive Assistant Brain)**
-* **POST `/api/v1/chat/ask` (Admin Only)**
+* **POST `/api/v1/chat/ask` (Owner only)**
+* **GET `/api/v1/chat/history` (Owner only)**
+* **DELETE `/api/v1/chat/history` (Owner only)**
 * **Function:** Receive questions from executives, search for relevant information (RAG), and have Gemini summarize the answer.
 * **Request Body (Frontend must send):**
     ```json

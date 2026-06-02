@@ -7,9 +7,10 @@ It is based on the repository code and the existing product/design documents.
 
 `Projects-001` is a construction management system for internal project finance, BOQ tracking, subcontractor input, approval, insight reporting, and AI-assisted analysis.
 
-The system has two main user groups:
+The system has three application roles:
 
-- Admin / Project Manager: manages projects, BOQs, approvals, subcontractors, dashboard, insights, settings, and AI chat.
+- Owner: full internal admin access. Owners can view Dashboard and Chat AI, mutate projects/BOQ/settings, and approve/reject/mark paid requests.
+- Admin / Project Manager: operational read/review access. Admins can view Projects, Approvals, Insights, Profile, and Settings list data, but cannot view Dashboard or Chat AI and cannot perform approval/payment/configuration mutations.
 - Subcontractor: signs in through LINE LIFF, registers profile/KYC, submits income or expense input requests, and views their own profile/input flow.
 
 The app is currently split into:
@@ -106,18 +107,18 @@ Public routes:
 | `/signup` | `SignUpPage` | Subcontractor KYC/profile registration after LINE login. |
 | `/auth/line/callback` | `LineCallbackPage` | Completes LINE login redirect flow. |
 
-Protected admin routes:
+Protected internal routes:
 
 | Route | Page | Purpose |
 | --- | --- | --- |
-| `/` | `DashboardPage` | Financial overview and attention items. |
-| `/project` | `ProjectPage` | Project list, create/rename project, BOQ sync. |
-| `/project/detail/:projectId` | `ProjectDetailPage` | BOQ comparison, project execution summary, linked warehouse records. |
-| `/insights` | `InsightsPage` | Unified warehouse table, filters, export. |
-| `/approval` | `ApprovalPage` | Admin review queue for input requests. |
-| `/chat-ai` | `ChatAIPage` | Strategic AI chat and chat history. |
-| `/profile` | `ProfilePage` | Admin profile. |
-| `/setting` | `SettingPage` | Subcontractor/admin directory and KYC viewing. |
+| `/` | `DashboardPage` | Owner-only financial overview and attention items. |
+| `/project` | `ProjectPage` | Owner/Admin project list. Owner-only project create/update and BOQ sync actions. |
+| `/project/detail/:projectId` | `ProjectDetailPage` | Owner/Admin BOQ comparison, project execution summary, linked warehouse records. |
+| `/insights` | `InsightsPage` | Owner/Admin unified warehouse table, filters, export. |
+| `/approval` | `ApprovalPage` | Owner/Admin review queue. Owner-only edit, approve, reject, and mark-paid actions. |
+| `/chat-ai` | `ChatAIPage` | Owner-only strategic AI chat and chat history. |
+| `/profile` | `ProfilePage` | Owner/Admin profile. |
+| `/setting` | `SettingPage` | Owner/Admin directory and KYC viewing. Owner-only mutations. |
 
 Protected shared/subcontractor routes:
 
@@ -129,8 +130,9 @@ Protected shared/subcontractor routes:
 `ProtectedLayout` checks local session state:
 
 - Missing session token -> redirect to `/login`.
-- Admin-only route with non-admin user -> redirect to the user's post-login path.
-- Admin users see the full sidebar.
+- Internal route with a non-internal user -> redirect to the user's post-login path.
+- Owner users see the full internal sidebar.
+- Admin users do not see Dashboard or Chat AI links, and mutation controls are hidden or disabled based on returned permissions.
 - Subcontractors see only Input and Profile.
 
 ## 6. Authentication Flow
@@ -153,9 +155,16 @@ Backend:
 POST /api/v1/auth/admin-login
   -> verify Firebase ID token when provided
   -> check email against Firestore admin directory or configured admin allowlist/domain
+  -> resolve effective role as owner or admin
   -> issue HMAC-signed session token
+  -> return user payload with role and permissions
   -> optionally create Firebase custom token
 ```
+
+Current internal permissions returned by `/api/v1/auth/admin-login` and `/api/v1/auth/me`:
+
+- Owner: `dashboard:view`, `chat:use`, `approvals:view`, `approvals:mutate`, `projects:view`, `projects:mutate`, `settings:view`, `settings:mutate`, `insights:view`.
+- Admin: `approvals:view`, `projects:view`, `settings:view`, `insights:view`.
 
 Important files:
 
@@ -255,7 +264,15 @@ Important files:
 Firestore is used for identity/directory style data:
 
 - `users`: subcontractor profiles, LINE binding, KYC storage path, financial rates, bank account, assigned projects.
-- `admins`: admin directory and active/inactive access control.
+- `admins`: internal admin directory, active/inactive access control, and `role` (`owner` or `admin`).
+
+Role behavior:
+
+- Existing managed admin records without `role` are treated as `owner` for backward compatibility.
+- Configured `ADMIN_EMAILS` and `ADMIN_EMAIL_DOMAIN` allow first-time internal login, but missing admin records are created as `admin` by default.
+- Owner access must come from an existing Firestore admin record with `role = "owner"` or from another Owner changing the user's role.
+- At least one active Owner account must remain in the admin directory.
+- A user cannot change their own role or active status through the Settings admin-management API.
 
 Important file:
 
@@ -280,6 +297,8 @@ Important file:
 
 ### 9.1 Dashboard Flow
 
+Access: Owner only. Limited Admin receives `403 Owner access is required.`
+
 Frontend:
 
 ```text
@@ -290,18 +309,26 @@ DashboardPage
 
 Backend aggregates:
 
-- Project `contingency_budget` values as the current dashboard total budget.
+- BOQ top-level project budgets, falling back to project `contingency_budget`.
 - Transaction base amounts as actual cost.
 - Pending input request count.
 - Overdue installment amount.
 - Monthly income from installments.
 - Monthly expense from transactions.
+- Zone status cards.
 - Top risky projects from overdue installments and pending input requests.
+- Project health rows with burn percentage and risk tone.
+- Attention items for approvals, overdue exposure, and duplicate risk.
 - Recent approved transactions/input requests.
 
 Output feeds dashboard KPI cards, budget breakdown, cashflow charts, attention items, risky projects, and recent actions.
 
 ### 9.2 Project Creation and BOQ Sync Flow
+
+Access:
+
+- Owner and Admin can list and view projects/BOQ.
+- Owner only can create/update projects, preview BOQ tabs, queue BOQ sync, and poll sync job status.
 
 Frontend:
 
@@ -443,31 +470,38 @@ Important files:
 
 ### 9.5 Admin Approval Flow
 
+Access:
+
+- Owner and Admin can view the approval queue and receipt previews.
+- Owner only can edit reviewable requests, approve, reject, mark paid, or run temporary receipt cleanup.
+
 Frontend:
 
 ```text
 ApprovalPage
   -> GET /api/v1/input/projects
   -> GET /api/v1/input/admin/requests
+  -> GET /api/v1/input/admin/requests/summary
+  -> GET /api/v1/input/admin/requests/{request_id}
   -> GET /api/v1/input/admin/requests/{request_id}/receipt-url
-  -> PUT /api/v1/input/admin/requests/{request_id}
-  -> POST /api/v1/input/admin/requests/{request_id}/approve
-  -> POST /api/v1/input/admin/requests/{request_id}/reject
-  -> POST /api/v1/input/admin/requests/{request_id}/mark-paid
+  -> PUT /api/v1/input/admin/requests/{request_id}                    # Owner only
+  -> POST /api/v1/input/admin/requests/{request_id}/approve            # Owner only
+  -> POST /api/v1/input/admin/requests/{request_id}/reject             # Owner only
+  -> POST /api/v1/input/admin/requests/{request_id}/mark-paid          # Owner only
 ```
 
 Backend lifecycle:
 
 ```text
 PENDING_ADMIN or REJECTED
-  -> admin edits fields
+  -> owner edits fields
   -> duplicate detection can rerun
-  -> approve moves receipt from temp GCS to perm GCS
+  -> owner approval moves receipt from temp GCS to perm GCS
   -> status becomes APPROVED
-  -> mark-paid sets paid_at/payment_reference and status PAID
+  -> owner mark-paid sets paid_at/payment_reference and status PAID
 
 PENDING_ADMIN or REJECTED
-  -> reject requires review note
+  -> owner rejection requires review note
   -> status becomes REJECTED
 ```
 
@@ -488,6 +522,8 @@ Important files:
 - `Projects-001-BE/app/services/gcs_storage_service.py`
 
 ### 9.6 Insight Warehouse Flow
+
+Access: Owner and Admin.
 
 Frontend:
 
@@ -539,6 +575,8 @@ Important files:
 
 ### 9.7 Chat AI Flow
 
+Access: Owner only. Limited Admin receives `403 Owner access is required.`
+
 Frontend:
 
 ```text
@@ -573,17 +611,25 @@ Important files:
 
 ### 9.8 Settings and Profile Flow
 
+Access:
+
+- Owner and Admin can list subcontractors/admins and view KYC signed URLs.
+- Owner only can update subcontractors, reset LINE binding, create/edit admin records, and change admin roles.
+
 Settings page:
 
 ```text
 SettingPage
   -> GET /api/v1/settings/subcontractors
+  -> GET /api/v1/settings/subcontractors/{sub_id}
   -> PUT /api/v1/settings/subcontractors/{sub_id}
   -> POST /api/v1/settings/subcontractors/{sub_id}/reset-line
   -> GET /api/v1/settings/users/{user_id}/kyc-image
   -> GET /api/v1/settings/admins
+  -> GET /api/v1/settings/admins/{admin_id}
   -> POST /api/v1/settings/admins
   -> PUT /api/v1/settings/admins/{admin_id}
+  -> GET /api/v1/settings/integrations
 ```
 
 Settings responsibilities:
@@ -593,7 +639,8 @@ Settings responsibilities:
 - Update tax/retention/bank/profile fields.
 - Generate signed KYC image URLs.
 - Reset LINE binding.
-- Manage admin directory.
+- Manage admin directory and `owner`/`admin` role assignment.
+- Expose read-only integration status without returning secrets.
 
 Profile page:
 
@@ -625,8 +672,8 @@ Endpoints:
 POST /api/v1/bills/extract
 POST /api/v1/bills/submit
 GET /api/v1/bills/admin/bills
-PUT /api/v1/bills/admin/bills/{bill_id}
-POST /api/v1/bills/admin/bills/{bill_id}/approve
+PUT /api/v1/bills/admin/bills/{bill_id}                 # Owner only
+POST /api/v1/bills/admin/bills/{bill_id}/approve        # Owner only
 GET /api/v1/subcontractor/my-bills
 POST /api/v1/subcontractor/installments/{installment_id}/advance
 ```
@@ -635,7 +682,7 @@ Current implementation notes:
 
 - `/api/v1/bills/extract` returns mock OCR data.
 - `/api/v1/bills/submit` returns a mock success response and does not yet persist a full bill workflow.
-- Admin bill approval operates on `Installment` records and creates `Transaction` records.
+- Legacy bill approval is Owner-only, operates on `Installment` records, and creates `Transaction` records.
 - Advance request splits one installment into an advance row and remaining locked row.
 
 Advance split business rule:
@@ -678,16 +725,19 @@ Frontend:
 Backend:
 
 - Uses HMAC-signed session tokens in `core/security.py`.
-- Uses `get_current_user`, `require_admin_user`, and `require_subcontractor_user`.
-- In development, admin-only endpoints can use a debug admin override when no bearer token is present.
-- Admin authorization checks Firestore admin records and configured admin allowlists/domain.
+- Uses `get_current_user`, `require_admin_user`, `require_owner_user`, and `require_subcontractor_user`.
+- In development, internal endpoints can use a debug admin override when no bearer token is present. Use `X-Debug-Admin-Role: owner` or `X-Debug-Admin-Role: admin` to test role behavior.
+- Admin authorization checks Firestore admin records and configured admin allowlists/domain, then resolves the effective role.
 - GCS files are private and viewed through signed URLs.
 
 Access-sensitive areas:
 
 - Input project options are filtered by assigned project for subcontractors.
 - Subcontractors can access only their own receipt URLs.
-- Admin settings, KYC viewing, and approval endpoints require admin access.
+- Dashboard and Chat AI require Owner access.
+- Approval mutation endpoints require Owner access; Admin can view the queue/details only.
+- Project and Settings mutation endpoints require Owner access; Admin can view operational data.
+- KYC viewing and Insights require Admin-or-Owner access.
 
 ## 11. Environment and Configuration
 
@@ -732,7 +782,7 @@ Deployment-related files:
 Implemented or mostly implemented:
 
 - React routing and protected layout.
-- Admin Google login and subcontractor LINE login/signup session flow.
+- Owner/Admin Google login, role-aware permissions, and subcontractor LINE login/signup session flow.
 - Project creation/update/listing.
 - Google Sheets tab discovery and BOQ sync through Gemini.
 - BOQ versioning and project detail comparison.
@@ -742,6 +792,7 @@ Implemented or mostly implemented:
 - Chat AI database-grounded analytics and chat history.
 - Settings directory management, KYC signed URL, LINE reset.
 - Profile avatar upload/reset.
+- Backend Owner/Admin access guards for Dashboard, Chat AI, Projects, Approvals, Insights, and Settings.
 
 Partially implemented or planned:
 
@@ -751,22 +802,22 @@ Partially implemented or planned:
 - Input approval currently updates `input_requests`; deeper integration into finance transactions is listed as backlog.
 - Audit trail for submit/review/approve/reject/paid is listed as backlog.
 - Automated production cleanup scheduling for temp receipts is listed as backlog, though the backend cleanup service exists.
-- Some backend analytics/project endpoints do not enforce admin dependencies directly yet and rely on frontend route protection or development assumptions.
+- Frontend still needs to hide/disable controls based on `role` and `permissions` from `/api/v1/auth/me`.
 
 ## 13. Main User Journeys
 
-### Admin Starts Work
+### Owner Starts Work
 
 ```text
 Open app
   -> /login
-  -> Google admin login
-  -> backend verifies admin
+  -> Google internal login
+  -> backend verifies owner role
   -> session saved
   -> Dashboard
 ```
 
-### Admin Creates Project and Syncs BOQ
+### Owner Creates Project and Syncs BOQ
 
 ```text
 Project page
@@ -802,6 +853,17 @@ Approval page
   -> filter queue
   -> open request
   -> preview signed receipt URL
+  -> view OCR/request details
+  -> mutation controls are hidden/disabled
+```
+
+### Owner Completes Request Approval
+
+```text
+Approval page
+  -> filter queue
+  -> open request
+  -> preview signed receipt URL
   -> edit fields if needed
   -> approve or reject
   -> approved request can be marked paid
@@ -816,7 +878,7 @@ Insights page
   -> export CSV/JSON if needed
 ```
 
-### Admin Asks AI
+### Owner Asks AI
 
 ```text
 Chat AI page

@@ -1,10 +1,16 @@
 # Flow Detail: New Project Creation & BOQ Sync Loop
 
-This subsection details the workflow when an Admin clicks `[+ New Project]` and manages the Bill of Quantities (BOQ) synchronization.
+This subsection details the workflow when an **Owner** clicks `[+ New Project]` and manages the Bill of Quantities (BOQ) synchronization.
+
+Access rule:
+
+- **Owner:** Can create/update projects, load Google Sheet tabs, queue BOQ sync, and poll sync jobs.
+- **Admin:** Can view the project overview, project detail, BOQ tabs, and comparison summary only. Admin users must not see enabled create/sync controls.
 
 ## 📱 State 1: The Project Overview & List
 - **UI Elements:** A modern data table showing current projects (Project Name, Code, Total Budget, Sync Status).
-- **Primary Call-to-Action (CTA):** A prominent button `[+ New Project]` using the Muted Teal (#4f6f64) brand color.
+- **Primary Call-to-Action (CTA):** For Owner only, a prominent button `[+ New Project]` using the Muted Teal (#4f6f64) brand color.
+- **Admin Read-only State:** Admin users see the table and can open project detail, but the `[+ New Project]` CTA is hidden or disabled.
 
 ## 📱 State 2: "New Project" Modal / Form
 - **Trigger:** Clicking `[+ New Project]`.
@@ -24,7 +30,8 @@ This subsection details the workflow when an Admin clicks `[+ New Project]` and 
 - **Empty State UI:** If no BOQ is synced yet, show an empty state illustration with a clear button: `[🔗 Sync BOQ from Google Sheets]`.
 
 ## 📱 State 4: The BOQ Sync Drawer (The Technical Form)
-- **Trigger:** Clicking `[Sync BOQ]`. A sleek panel slides out from the right side (Right Drawer).
+- **Trigger:** Owner clicks `[Sync BOQ]`. A sleek panel slides out from the right side (Right Drawer).
+- **Admin Read-only State:** Admin users can inspect the current BOQ state but cannot open an enabled sync drawer.
 - **Step-by-Step Interactive Form:**
   1. **Input Field:** Google Sheet URL (ช่องวางลิงก์เอกสาร Google Sheets).
   2. **Action 1:** `[Load Tabs]` Button. Clicking this triggers a mock API call to fetch sheet names.

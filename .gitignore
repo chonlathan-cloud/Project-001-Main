@@ -29,3 +29,4 @@ cloudrun-frontend.build.env
 *.sln
 *.sw?
 backend-runtime-key.json
+.codex/config.toml

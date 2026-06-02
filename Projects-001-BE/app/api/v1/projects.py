@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
+from app.api.deps.auth import AuthenticatedUser, require_admin_user, require_owner_user
 from app.core.database import get_db
 from app.models.boq import BOQItem, Project
 from app.models.finance import Installment  # noqa: F401
@@ -359,7 +360,10 @@ def _execution_summary_items(
 # Router 2: GET /api/v1/projects
 # ---------------------------------------------------------------------------
 @router.get("", response_model=StandardResponse[list[ProjectItem]])
-async def list_projects(db: AsyncSession = Depends(get_db)):
+async def list_projects(
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
     """Return all projects with basic info and progress."""
     try:
         result = await db.execute(select(Project).options(noload("*")))
@@ -406,6 +410,7 @@ async def list_projects(db: AsyncSession = Depends(get_db)):
 async def create_project(
     request: CreateProjectRequest,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_owner_user),
 ):
     """Create a new project before connecting BOQ sources."""
     try:
@@ -440,6 +445,7 @@ async def update_project(
     project_id: UUID,
     request: UpdateProjectRequest,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_owner_user),
 ):
     """Update project fields such as name or financial settings."""
     try:
@@ -493,6 +499,7 @@ async def update_project(
 async def get_project_detail(
     project_id: UUID,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
 ):
     """Return basic project information."""
     try:
@@ -522,6 +529,7 @@ async def get_project_detail(
 async def get_project_boq(
     project_id: UUID,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
 ):
     """Return Customer, Subcontractor, and Compare BOQ trees for Project Detail."""
     try:
@@ -664,6 +672,7 @@ async def get_project_boq(
 async def sync_boq(
     request: SyncBOQRequest,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_owner_user),
 ):
     """
     Sync BOQ from a Google Sheet URL.
@@ -700,7 +709,10 @@ async def sync_boq(
 
 
 @router.post("/boq/tabs", response_model=StandardResponse[SheetTabsResponse])
-async def preview_boq_tabs(request: SheetTabsRequest):
+async def preview_boq_tabs(
+    request: SheetTabsRequest,
+    _user: AuthenticatedUser = Depends(require_owner_user),
+):
     """Preview workbook tabs so the frontend can batch select syncable BOQ tabs."""
     try:
         tabs = await fetch_google_sheet_tabs(request.sheet_url)
@@ -725,6 +737,7 @@ async def sync_boq_batch(
     request: SyncBOQBatchRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_owner_user),
 ):
     """Queue a background job that syncs multiple BOQ tabs from the same workbook."""
     try:
@@ -759,7 +772,10 @@ async def sync_boq_batch(
 
 
 @router.get("/boq/sync-jobs/{job_id}", response_model=StandardResponse[SyncBOQBatchJobResponse])
-async def get_sync_boq_batch_job(job_id: str):
+async def get_sync_boq_batch_job(
+    job_id: str,
+    _user: AuthenticatedUser = Depends(require_owner_user),
+):
     """Return current status and per-tab progress for a queued BOQ batch sync job."""
     try:
         job = await get_boq_sync_job(job_id)

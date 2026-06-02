@@ -13,7 +13,7 @@ from sqlalchemy.orm import noload
 from app.core.database import get_db
 from app.models.boq import BOQItem  # noqa: F401
 from app.models.finance import Installment
-from app.api.deps.auth import AuthenticatedUser, require_admin_user
+from app.api.deps.auth import AuthenticatedUser, require_admin_user, require_owner_user
 from app.schemas.bill_schema import (
     ApproveBillRequest,
     ExtractBillResponse,
@@ -122,7 +122,7 @@ async def edit_bill(
     bill_id: UUID,
     request: ApproveBillRequest,
     db: AsyncSession = Depends(get_db),
-    _user: AuthenticatedUser = Depends(require_admin_user),
+    _user: AuthenticatedUser = Depends(require_owner_user),
 ):
     """Admin can directly edit bill amount before approving."""
     try:
@@ -166,7 +166,7 @@ async def edit_bill(
 async def approve_bill(
     bill_id: UUID,
     db: AsyncSession = Depends(get_db),
-    _user: AuthenticatedUser = Depends(require_admin_user),
+    _user: AuthenticatedUser = Depends(require_owner_user),
 ):
     """
     Admin approves a bill:

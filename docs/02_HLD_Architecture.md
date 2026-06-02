@@ -7,12 +7,12 @@
 This diagram illustrates the integration of various components on GCP, clearly categorized into functional layers.
 flowchart TD
     %% Actors
-    Admin([Admin / PM])
+    InternalUser([Owner / Admin / PM])
     SubCon([Subcontractor])
 
     %% Client Layer
     subgraph ClientLayer ["1. Client Layer (Frontend)"]
-        WebApp["Admin Web App \n (React / Next.js)"]
+        WebApp["Internal Web App \n (React / Next.js)"]
         LIFF["LINE LIFF App \n (Subcontractor Portal)"]
     end
 
@@ -44,7 +44,7 @@ flowchart TD
     end
 
     %% Connections - User to Client
-    Admin -->|SSO / Google Workspace| WebApp
+    InternalUser -->|SSO / Google Workspace| WebApp
     SubCon -->|LINE Login API| LIFF
 
     %% Connections - Client to Compute
@@ -74,7 +74,7 @@ To ensure the system supports Business Logic V2.0 securely and cost-effectively,
 
 | Component | Technology Choice | Justification (Why choose this?) |
 | :--- | :--- | :--- |
-| **Frontend (Admin)** | React / Next.js | To build complex dashboards for Admins (Global View, BOQ management, bill approval). Hosted on Firebase Hosting. |
+| **Frontend (Internal Portal)** | React / Next.js | To build the Owner/Admin portal. Owners get Dashboard, Chat AI, approvals, BOQ sync, and settings mutation; Admin/PM users get operational read/review screens. Hosted on Firebase Hosting. |
 | **Frontend (SubCon)** | LINE LIFF App | **Zero-Friction UX:** Subcontractors don't need to download an app or remember passwords. They can access the Web App immediately via the Rich Menu in LINE OA. |
 | **Auth Provider** | Firebase Auth | Used for Custom Token Authentication by converting the LINE User ID from LIFF into a Firebase Token for secure backend communication. |
 | **Backend API** | Cloud Run (Python/FastAPI) | **Serverless:** Auto-scales to handle traffic spikes during month-end billing. Python is chosen for its superior AI libraries (LangChain) and data validation (Pydantic). |
@@ -92,7 +92,7 @@ To illustrate how the Backend (Cloud Run) handles the complexity of Business Log
 
   * **Upload:** Subcontractor uploads an ID photo via LIFF -\> Cloud Run receives and uploads the file to GCS (`/kyc_id_cards`), configured as a Private Bucket (no direct internet access).
   * **Store Reference:** Cloud Run records only the File Path (e.g., `gs://bucket/kyc/...`) in Firestore.
-  * **Secure Viewing:** When an Admin needs to view the ID, Cloud Run uses a Service Account to generate a **Signed URL** (a temporary link valid for 15 minutes). Once expired, the link is immediately inaccessible (100% PDPA Compliant).
+  * **Secure Viewing:** When an Owner or Admin needs to view the ID, Cloud Run uses a Service Account to generate a **Signed URL** (a temporary link valid for 15 minutes). Once expired, the link is immediately inaccessible (100% PDPA Compliant).
 
 **Workflow B: Dynamic Installment & Advance (Splitting Installments)**
 
@@ -100,7 +100,7 @@ To illustrate how the Backend (Cloud Run) handles the complexity of Business Log
   * **Database Transaction (Cloud SQL):**
     1.  Cloud Run initiates `BEGIN TRANSACTION`.
     2.  Retrieves Installment 2 record and performs the **Split**.
-    3.  Creates a new record: Installment 2.1 (Advance) = 50,000 THB (Status: Pending Admin).
+    3.  Creates a new record: Installment 2.1 (Advance) = 50,000 THB (Status: Pending internal review).
     4.  Updates original record: Installment 2.2 (Remaining) = 50,000 THB (Status: Locked).
     5.  `COMMIT TRANSACTION`. (If an error occurs, the system triggers a **Rollback** to 100,000 THB, preventing BOQ data distortion).
 
@@ -108,7 +108,13 @@ To illustrate how the Backend (Cloud Run) handles the complexity of Business Log
 
   * **Cron Trigger:** Cloud Scheduler sends a POST request to `/api/v1/cron/check-overdue` at 00:00 AM daily.
   * **Query:** Cloud Run searches Cloud SQL for customer bills where `status != 'Accept'` and `due_date < CURRENT_DATE`.
-  * **Action:** If found, Cloud Run updates the flag `is_overdue = true` and sends a Notification (via WebSocket or Firestore) to trigger a Red Alert on the Admin Dashboard the following morning.
+  * **Action:** If found, Cloud Run updates the flag `is_overdue = true` and sends a Notification (via WebSocket or Firestore) to trigger a Red Alert on the Owner Dashboard the following morning.
+
+**Workflow D: Internal Role Enforcement**
+
+  * **Owner:** Full access. Can view Dashboard and Chat AI, mutate projects/BOQ/settings, and approve/reject/mark paid requests.
+  * **Admin / PM:** Operational read/review access. Can view Projects, Approvals, Insights, Settings list data, receipts, and KYC signed URLs, but cannot access Dashboard/Chat AI or perform approval/configuration mutations.
+  * **Backend Enforcement:** Cloud Run resolves the effective internal role during login and applies Owner-only guards to Dashboard, Chat AI, approval mutation, project mutation, BOQ sync, and settings mutation endpoints.
 
 #### **🛡️ 4. Security & Failure by Design**
 

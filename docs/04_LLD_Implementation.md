@@ -23,9 +23,9 @@ project_001_backend/
 └── api/v1/
 ├── dashboard.py # R1: KPIs
 ├── projects.py # R2-3: Projects + BOQ tree
-├── bills.py # R4,6: Billing + Admin approval
+├── bills.py # R4,6: Billing + Owner approval
 ├── subcontractor.py # R5: Portal + Advance
-├── settings.py # R7: Admin settings
+├── settings.py # R7: Owner/Admin settings
 └── chat.py # R8: AI Strategic Chat
 ```
 
@@ -33,8 +33,15 @@ project_001_backend/
 **📝 2. API Contracts & JSON Mock Data (Sent to Frontend team)**
 This is the standard JSON structure that Backend will send to Frontend (FE can take this set of JSON to mock variables in Next.js / React to draw screens and wait).
 
+Internal role behavior:
+
+- `Owner`: full access, including Dashboard, Chat AI, BOQ sync, settings mutation, and approval/reject/mark-paid actions.
+- `Admin`: operational read/review access. Can view Projects, Approvals, Insights, Profile, and Settings list data, but cannot view Dashboard/Chat AI or perform mutation/approval actions.
+
 📊 Router 1: Dashboard (Overview)
-** GET /api/v1/dashboard/summary
+**GET `/api/v1/dashboard/summary`** - Owner only
+
+```json
 {
   "status": "success",
   "data": {
@@ -51,11 +58,12 @@ This is the standard JSON structure that Backend will send to Frontend (FE can t
       { "month": "Mar", "income": 900000, "expense": 1000000 }
     ],
     "recent_actions": [
-      { "time": "10 mins ago", "action": "Admin approved bill #INV-001" },
+      { "time": "10 mins ago", "action": "Owner approved bill #INV-001" },
       { "time": "1 hour ago", "action": "Subcontractor A submitted new bill" }
     ]
   }
 }
+```
 
 ### **📁 Router 2 & 3: Project List & BOQ Tree**
 **GET `/api/v1/projects` (Consolidated Project Page)**
@@ -163,7 +171,7 @@ This is the standard JSON structure that Backend will send to Frontend (FE can t
 ```
 
 ### **🤖 Router 8: AI Strategic Chat (Intelligence Engine)**
-**POST `/api/v1/chat/ask`**
+**POST `/api/v1/chat/ask`** - Owner only
 
 ```json
 {

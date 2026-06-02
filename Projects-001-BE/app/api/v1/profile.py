@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps.auth import AuthenticatedUser, get_current_user
+from app.api.deps.auth import AuthenticatedUser, get_current_user, role_permissions
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.boq import Project
@@ -161,6 +161,8 @@ async def _build_subcontractor_profile(
             "phone": profile.phone,
             "company": f"Tax ID: {profile.tax_id}" if profile.tax_id else "Subcontractor Portal",
             "role": "Subcontractor",
+            "role_key": "subcontractor",
+            "permissions": role_permissions("subcontractor"),
             "time": "Asia/Bangkok",
             "email": user.email,
             "line_uid": profile.line_uid,
@@ -218,11 +220,14 @@ async def _build_admin_profile(db: AsyncSession, user: AuthenticatedUser) -> dic
     total_count = await _count_input_requests(db, user)
     approved_total = await _sum_input_amounts(db, user, statuses={"APPROVED", "PAID"})
 
+    role_label = "Owner" if user.role == "owner" else "Admin / Project Manager"
     return {
         "user": {
             "name": user.display_name or user.email or "Admin",
             "company": "Manee Son Construction",
-            "role": "Admin / Project Manager",
+            "role": role_label,
+            "role_key": user.role,
+            "permissions": role_permissions(user.role),
             "time": "Asia/Bangkok",
             "email": user.email,
         },

@@ -17,6 +17,9 @@ from app.core.google_clients import get_firestore_client
 
 USERS_COLLECTION = "users"
 ADMINS_COLLECTION = "admins"
+OWNER_ROLE = "owner"
+ADMIN_ROLE = "admin"
+ADMIN_ROLES = {OWNER_ROLE, ADMIN_ROLE}
 
 
 def _now_utc() -> datetime:
@@ -45,9 +48,22 @@ def _normalize_email(value: str) -> str:
     return value.strip().lower()
 
 
+def _normalize_admin_role(value: object, *, default: str = ADMIN_ROLE) -> str:
+    cleaned = str(value or "").strip().lower()
+    if not cleaned:
+        return default
+    if cleaned not in ADMIN_ROLES:
+        return default
+    return cleaned
+
+
 def _email_doc_id(email: str) -> str:
     normalized = _normalize_email(email)
     return re.sub(r"[^a-z0-9]+", "-", normalized).strip("-") or "admin"
+
+
+def admin_doc_id_for_email(email: str) -> str:
+    return _email_doc_id(email)
 
 
 def _to_float(value: object, fallback: float = 0.0) -> float:
@@ -87,6 +103,7 @@ class AdminDirectoryEntry:
     id: str
     email: str
     display_name: str | None
+    role: str
     is_active: bool
     granted_by: str | None
     created_at: datetime | None
@@ -124,6 +141,9 @@ def _admin_from_dict(doc_id: str, payload: dict[str, Any]) -> AdminDirectoryEntr
         id=doc_id,
         email=_normalize_email(str(payload.get("email") or "")),
         display_name=_normalize_optional_text(payload.get("display_name")),
+        # Existing managed admin records predate role support. Treat them as
+        # owners so old full-access admins do not silently lose permissions.
+        role=_normalize_admin_role(payload.get("role"), default=OWNER_ROLE),
         is_active=bool(payload.get("is_active", True)),
         granted_by=_normalize_optional_text(payload.get("granted_by")),
         created_at=_datetime_value(payload.get("created_at")),
@@ -297,12 +317,6 @@ def list_admins() -> list[AdminDirectoryEntry]:
     return sorted(items, key=lambda item: item.email)
 
 
-def has_any_managed_admins() -> bool:
-    client = _ensure_firestore()
-    docs = client.collection(ADMINS_COLLECTION).limit(1).stream()
-    return next(iter(docs), None) is not None
-
-
 def get_admin_by_email(email: str) -> AdminDirectoryEntry | None:
     client = _ensure_firestore()
     snapshot = client.collection(ADMINS_COLLECTION).document(_email_doc_id(email)).get()
@@ -311,10 +325,46 @@ def get_admin_by_email(email: str) -> AdminDirectoryEntry | None:
     return _admin_from_dict(snapshot.id, snapshot.to_dict() or {})
 
 
+def get_admin(doc_id: str) -> AdminDirectoryEntry:
+    client = _ensure_firestore()
+    snapshot = client.collection(ADMINS_COLLECTION).document(doc_id).get()
+    if not snapshot.exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Admin record {doc_id} not found.",
+        )
+    return _admin_from_dict(snapshot.id, snapshot.to_dict() or {})
+
+
+def _active_owner_count() -> int:
+    return sum(
+        1
+        for entry in list_admins()
+        if entry.is_active and entry.role == OWNER_ROLE
+    )
+
+
+def _ensure_can_remove_owner(current: AdminDirectoryEntry, payload: dict[str, Any]) -> None:
+    next_role = _normalize_admin_role(payload.get("role"), default=current.role)
+    next_is_active = bool(payload.get("is_active", current.is_active))
+
+    removes_owner_access = (
+        current.role == OWNER_ROLE
+        and current.is_active
+        and (next_role != OWNER_ROLE or not next_is_active)
+    )
+    if removes_owner_access and _active_owner_count() <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one active Owner account is required.",
+        )
+
+
 def upsert_admin(
     *,
     email: str,
     display_name: str | None,
+    role: str = ADMIN_ROLE,
     is_active: bool,
     granted_by: str | None,
 ) -> AdminDirectoryEntry:
@@ -323,13 +373,17 @@ def upsert_admin(
     doc_id = _email_doc_id(normalized_email)
     existing = get_admin_by_email(normalized_email)
     now = _now_utc()
+    normalized_role = _normalize_admin_role(role)
     payload = {
         "email": normalized_email,
         "display_name": _normalize_optional_text(display_name),
+        "role": normalized_role,
         "is_active": bool(is_active),
         "granted_by": _normalize_optional_text(granted_by),
         "updated_at": now,
     }
+    if existing is not None:
+        _ensure_can_remove_owner(existing, payload)
     if existing is None:
         payload["created_at"] = now
     client.collection(ADMINS_COLLECTION).document(doc_id).set(payload, merge=True)
@@ -353,30 +407,36 @@ def update_admin(doc_id: str, *, updates: dict[str, Any]) -> AdminDirectoryEntry
     payload: dict[str, Any] = {"updated_at": _now_utc()}
     if "display_name" in updates:
         payload["display_name"] = _normalize_optional_text(updates["display_name"])
+    if "role" in updates:
+        payload["role"] = _normalize_admin_role(updates["role"])
     if "is_active" in updates:
         payload["is_active"] = bool(updates["is_active"])
 
+    _ensure_can_remove_owner(current, payload)
     client.collection(ADMINS_COLLECTION).document(doc_id).set(payload, merge=True)
     merged = asdict(current)
     merged.update(payload)
     return _admin_from_dict(doc_id, merged)
 
 
-def is_email_authorized_admin(email: str) -> bool:
+def get_authorized_admin_role(email: str) -> str | None:
     normalized_email = _normalize_email(email)
     managed_admin = get_admin_by_email(normalized_email)
     if managed_admin is not None:
-        return managed_admin.is_active
+        return managed_admin.role if managed_admin.is_active else None
 
     settings = get_settings()
     if normalized_email in settings.admin_emails:
-        return True
-
-    if has_any_managed_admins():
-        return False
+        return ADMIN_ROLE
 
     domain = settings.admin_email_domain
-    return bool(domain and normalized_email.endswith(f"@{domain}"))
+    if domain and normalized_email.endswith(f"@{domain}"):
+        return ADMIN_ROLE
+    return None
+
+
+def is_email_authorized_admin(email: str) -> bool:
+    return get_authorized_admin_role(email) is not None
 
 
 def ensure_bootstrap_admin(email: str, display_name: str | None) -> AdminDirectoryEntry | None:
@@ -395,7 +455,8 @@ def ensure_bootstrap_admin(email: str, display_name: str | None) -> AdminDirecto
         return upsert_admin(
             email=normalized_email,
             display_name=display_name,
+            role=ADMIN_ROLE,
             is_active=True,
-            granted_by="bootstrap",
+            granted_by="auto-admin-login",
         )
     return None
