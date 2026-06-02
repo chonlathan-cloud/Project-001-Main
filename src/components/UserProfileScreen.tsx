@@ -1,4 +1,4 @@
-import { Bell, HelpCircle, Settings as SettingsIcon, Lock, LogOut, Shield, Smartphone, Loader2, Camera as CameraIcon } from 'lucide-react';
+import { Shield, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 interface LoginSession {

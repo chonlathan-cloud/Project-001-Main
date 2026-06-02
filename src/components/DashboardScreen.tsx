@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { motion } from 'motion/react';
 import { 
   Search, 
   Loader2,
@@ -14,15 +13,18 @@ import {
   ArrowUpRight, 
   CheckCircle2, 
   FileText, 
-  Camera, 
+  Camera as CameraIcon, 
   ChevronRight 
 } from 'lucide-react';
 import { Project, ApprovalRequest, ActivityLog } from '../types';
 
 interface DashboardStats {
   totalBudget: string;
+  budgetChangeLabel: string; // เช่น "+2.4% vs last quarter"
   actualCost: string;
   pendingRequests: number;
+  pendingReviewersExtra: number; // เช่น 5 (สำหรับ +5 ใน avatar stack)
+  pastDueInvoices: number; // เช่น 12
   cashFlow: string;
   budgetUsagePercentage: number;
   lastUpdated: string;
@@ -151,7 +153,7 @@ export default function DashboardScreen({
             </span>
             <div className="flex items-center gap-1 mt-1 text-[11px] font-bold text-[#2E7D32]">
               <TrendingUp className="h-3.5 w-3.5 stroke-[2.5px]" />
-              <span>+2.4% vs last quarter</span>
+              <span>{stats?.budgetChangeLabel}</span>
             </div>
           </div>
         </div>
@@ -213,7 +215,7 @@ export default function DashboardScreen({
                   alt="Reviewer 2"
                 />
                 <div className="inline-flex h-[20px] w-[20px] rounded-full ring-2 ring-white bg-zinc-200 items-center justify-center text-[9px] font-bold text-zinc-650">
-                  +5
+                  +{stats?.pendingReviewersExtra || 0}
                 </div>
               </div>
               <span className="font-sans text-[11px] font-semibold text-zinc-500">
@@ -238,7 +240,7 @@ export default function DashboardScreen({
               {stats?.cashFlow || '$0.0M'}
             </span>
             <div className="flex items-center gap-1 mt-2 text-[11px] font-semibold text-zinc-500">
-              <span className="text-[#C5221F] font-bold">12</span>
+              <span className="text-[#C5221F] font-bold">{stats?.pastDueInvoices || 0}</span>
               <span>invoices past 30 days</span>
             </div>
           </div>
