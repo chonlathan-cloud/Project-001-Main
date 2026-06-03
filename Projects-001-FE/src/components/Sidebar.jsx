@@ -2,25 +2,38 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   BadgeCheck,
-  BarChart3,
-  FolderKanban,
+  Bot,
+  Briefcase,
+  ClipboardList,
+  HelpCircle,
   LayoutDashboard,
   LogOut,
-  MessageSquare,
-  PenSquare,
+  Plus,
   Settings,
+  TrendingUp,
   UserRound,
+  Wrench,
 } from 'lucide-react';
 
 import {
+  canAccessOwnerArea,
   clearAuthSession,
   getStoredAuthUser,
-  isAdminUser,
+  isAdminPortalUser,
   subscribeToAuthChanges,
 } from '../auth';
 import { signOutFirebaseClient } from '../firebaseClient';
 import { logoutLineClient } from '../liffClient';
-import Logo from './Logo';
+
+function getInitials(user) {
+  const source = user?.display_name || user?.email || user?.subcontractor_id || 'User';
+  return String(source)
+    .split(/[\s@.-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('') || 'U';
+}
 
 const Sidebar = () => {
   const navigate = useNavigate();
@@ -33,23 +46,41 @@ const Sidebar = () => {
   }, []);
 
   const navItems = useMemo(() => {
-    if (isAdminUser(authUser)) {
+    if (isAdminPortalUser(authUser)) {
+      const sharedAdminItems = [
+        { name: 'Projects', icon: Briefcase, path: '/project' },
+        { name: 'Input', icon: ClipboardList, path: '/input' },
+        { name: 'Approvals', icon: BadgeCheck, path: '/approval' },
+        { name: 'Insights', icon: TrendingUp, path: '/insights' },
+        { name: 'Profile', icon: UserRound, path: '/profile' },
+      ];
+
+      if (!canAccessOwnerArea(authUser)) {
+        return sharedAdminItems;
+      }
+
       return [
         { name: 'Dashboard', icon: LayoutDashboard, path: '/' },
-        { name: 'Project', icon: FolderKanban, path: '/project' },
-        { name: 'Insights', icon: BarChart3, path: '/insights' },
-        { name: 'Input', icon: PenSquare, path: '/input' },
-        { name: 'Approval', icon: BadgeCheck, path: '/approval' },
-        { name: 'Chat AI', icon: MessageSquare, path: '/chat-ai' },
-        { name: 'Profile', icon: UserRound, path: '/profile' },
-        { name: 'Setting', icon: Settings, path: '/setting' },
+        ...sharedAdminItems.slice(0, 3),
+        { name: 'Chat AI', icon: Bot, path: '/chat-ai' },
+        ...sharedAdminItems.slice(3),
       ];
     }
 
     return [
-      { name: 'Input', icon: PenSquare, path: '/input' },
+      { name: 'Input', icon: ClipboardList, path: '/input' },
       { name: 'Profile', icon: UserRound, path: '/profile/me' },
     ];
+  }, [authUser]);
+
+  const systemItems = useMemo(() => {
+    if (isAdminPortalUser(authUser)) {
+      return [
+        { name: 'Settings', icon: Settings, path: '/setting' },
+        { name: 'Support', icon: HelpCircle, path: '/support' },
+      ];
+    }
+    return [];
   }, [authUser]);
 
   const handleLogout = async () => {
@@ -59,88 +90,76 @@ const Sidebar = () => {
   };
 
   return (
-    <aside className="app-sidebar" style={{
-      width: '240px',
-      backgroundColor: 'var(--sidebar-bg)',
-      color: 'white',
-      padding: '40px 0',
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      position: 'sticky',
-      top: 0,
-      zIndex: 100,
-    }}>
-      <Logo />
+    <aside className="app-sidebar">
+      <div className="sidebar-brand">
+        <div className="sidebar-brand-mark">
+          <Wrench size={18} strokeWidth={2.25} />
+        </div>
+        <div>
+          <div className="sidebar-brand-title">Projects-001</div>
+          <div className="sidebar-brand-subtitle">
+            {isAdminPortalUser(authUser) ? 'Admin Portal' : 'Subcontractor Portal'}
+          </div>
+        </div>
+      </div>
 
-      <div className="sidebar-inner" style={{ padding: '0 20px', marginTop: '20px', flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <p className="sidebar-section-label" style={{
-          fontSize: '11px',
-          fontWeight: '700',
-          color: 'var(--text-sidebar)',
-          letterSpacing: '1px',
-          marginBottom: '16px',
-          paddingLeft: '12px',
-        }}>MANAGE</p>
+      {canAccessOwnerArea(authUser) ? (
+        <button
+          type="button"
+          className="sidebar-primary-action"
+          onClick={() => navigate('/project')}
+        >
+          <Plus size={16} strokeWidth={2.5} />
+          <span>New Project</span>
+        </button>
+      ) : null}
 
-        <nav className="sidebar-nav" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div className="sidebar-inner">
+        <nav className="sidebar-nav" aria-label="Primary navigation">
           {navItems.map((item) => (
             <NavLink
               key={item.name}
               to={item.path}
-              style={({ isActive }) => ({
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '12px 16px',
-                minHeight: '44px',
-                borderRadius: '12px',
-                cursor: 'pointer',
-                backgroundColor: isActive ? 'var(--primary)' : 'transparent',
-                color: isActive ? 'white' : 'var(--text-sidebar)',
-                transition: 'all 0.2s ease',
-                textDecoration: 'none',
-              })}
+              end={item.path === '/'}
+              className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
             >
-              <item.icon size={20} />
-              <span style={{ fontWeight: '500', fontSize: '14px' }}>{item.name}</span>
+              <item.icon size={18} strokeWidth={2} />
+              <span>{item.name}</span>
             </NavLink>
           ))}
         </nav>
 
-        <div className="sidebar-footer" style={{ marginTop: 'auto', paddingTop: '20px' }}>
-          <div style={{
-            padding: '12px 14px',
-            borderRadius: '12px',
-            backgroundColor: 'rgba(255,255,255,0.06)',
-            marginBottom: '12px',
-          }}>
-            <div style={{ fontSize: '12px', color: 'var(--text-sidebar)' }}>Signed in as</div>
-            <div style={{ fontSize: '14px', fontWeight: '700', marginTop: '4px' }}>
-              {authUser?.display_name || authUser?.email || authUser?.subcontractor_id || 'User'}
-            </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-sidebar)', marginTop: '4px' }}>
-              {authUser?.role || 'session'}
+        {systemItems.length > 0 ? (
+          <div className="sidebar-system">
+            {systemItems.map((item) => (
+              <NavLink
+                key={item.name}
+                to={item.path}
+                className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
+              >
+                <item.icon size={18} strokeWidth={2} />
+                <span>{item.name}</span>
+              </NavLink>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="sidebar-footer">
+          <div className="sidebar-user-card">
+            <div className="sidebar-user-avatar">{getInitials(authUser)}</div>
+            <div className="sidebar-user-meta">
+              <div className="sidebar-user-label">Signed in as</div>
+              <div className="sidebar-user-name">
+                {authUser?.display_name || authUser?.email || authUser?.subcontractor_id || 'User'}
+              </div>
+              <div className="sidebar-user-role">{authUser?.role || 'session'}</div>
             </div>
           </div>
 
           <button
             type="button"
             onClick={handleLogout}
-            style={{
-              width: '100%',
-              padding: '12px 14px',
-              borderRadius: '12px',
-              border: '1px solid rgba(255,255,255,0.12)',
-              backgroundColor: 'transparent',
-              color: 'white',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              fontWeight: '700',
-            }}
+            className="sidebar-logout-button"
           >
             <LogOut size={16} />
             Sign Out

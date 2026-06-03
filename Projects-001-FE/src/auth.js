@@ -2,6 +2,7 @@ const SESSION_TOKEN_KEY = 'app_session_token';
 const SESSION_USER_KEY = 'app_auth_user';
 const PENDING_LINE_AUTH_KEY = 'app_pending_line_auth';
 const AUTH_EVENT_NAME = 'app-auth-changed';
+const ADMIN_ROLES = new Set(['admin', 'owner', 'super_admin']);
 
 function parseJson(value, fallback = null) {
   try {
@@ -75,16 +76,51 @@ export function subscribeToAuthChanges(listener) {
 }
 
 export function resolvePostLoginPath(user) {
-  if (user?.role === 'subcontractor') {
+  if (isSubcontractorUser(user)) {
     return '/input';
+  }
+  if (isOwnerUser(user)) {
+    return '/';
+  }
+  if (isAdminUser(user)) {
+    return '/project';
   }
   return '/';
 }
 
+const normalizeRole = (user) => String(user?.role || '').trim().toLowerCase();
+const normalizeAccessLevel = (user) => String(user?.access_level || user?.accessLevel || '').trim().toLowerCase();
+
+export function isOwnerUser(user) {
+  const role = normalizeRole(user);
+  const accessLevel = normalizeAccessLevel(user);
+
+  return (
+    role === 'owner' ||
+    role === 'super_admin' ||
+    accessLevel === 'owner' ||
+    user?.is_owner === true ||
+    // Preserve the existing production contract until backend sends owner/admin separately.
+    (role === 'admin' && user?.is_owner !== false && !accessLevel)
+  );
+}
+
 export function isAdminUser(user) {
-  return user?.role === 'admin';
+  return ADMIN_ROLES.has(normalizeRole(user));
+}
+
+export function isAdminPortalUser(user) {
+  return isAdminUser(user) || isOwnerUser(user);
 }
 
 export function isSubcontractorUser(user) {
-  return user?.role === 'subcontractor';
+  return normalizeRole(user) === 'subcontractor';
+}
+
+export function canAccessOwnerArea(user) {
+  return isOwnerUser(user);
+}
+
+export function canMutateAdminData(user) {
+  return isOwnerUser(user);
 }

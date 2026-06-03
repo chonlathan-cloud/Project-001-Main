@@ -28,6 +28,7 @@ import {
 import Loading from './components/Loading';
 import CircularProgress from './components/CircularProgress';
 import SemiCircleGauge from './components/SemiCircleGauge';
+import { canMutateAdminData, getStoredAuthUser } from './auth';
 
 const INITIAL_PROJECT_FORM = {
   name: '',
@@ -51,7 +52,7 @@ const ACTIVE_SYNC_JOB_STATUSES = new Set(['QUEUED', 'RUNNING']);
 
 const buttonStyle = {
   border: 'none',
-  borderRadius: '24px',
+  borderRadius: '8px',
   fontSize: '14px',
   fontWeight: '600',
   cursor: 'pointer',
@@ -81,7 +82,7 @@ const FilterSelect = ({ icon: Icon, value, onChange, options }) => (
       alignItems: 'center',
       gap: '8px',
       padding: '10px 16px',
-      borderRadius: '24px',
+      borderRadius: '8px',
       backgroundColor: 'white',
       border: '1px solid #e0e0e0',
       boxShadow: 'var(--shadow-sm)',
@@ -118,7 +119,7 @@ const DrawerField = ({ label, children, helper }) => (
   </label>
 );
 
-const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync }) => {
+const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync, canMutate = true }) => {
   const { id, name, spent, total, status, progressPercent, projectType } = project;
   const left = total - spent;
   const normalizedStatus = String(status || '').toLowerCase();
@@ -185,9 +186,9 @@ const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync }) => {
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05 }}
       style={{
-        padding: '24px',
-        backgroundColor: 'white',
-        borderRadius: '24px',
+      padding: '24px',
+      backgroundColor: 'white',
+      borderRadius: '12px',
         boxShadow: 'var(--shadow-sm)',
         display: 'flex',
         flexDirection: 'column',
@@ -213,7 +214,7 @@ const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync }) => {
                 fontSize: '16px',
                 fontWeight: '600',
                 color: '#1a1a1a',
-                border: '1px solid #8a76fa',
+                border: '1px solid var(--primary)',
                 borderRadius: '8px',
                 padding: '6px 8px',
                 width: '100%',
@@ -228,7 +229,7 @@ const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync }) => {
           )}
         </div>
 
-        {!isEditing ? (
+        {!isEditing && canMutate ? (
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button
               type="button"
@@ -278,7 +279,7 @@ const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync }) => {
       </div>
 
       <div style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
-        <CircularProgress value={spent} max={Math.max(total, 1)} color="#8a76fa" bgColor="#f4f2ff" />
+        <CircularProgress value={spent} max={Math.max(total, 1)} color="#4f6f64" bgColor="#c7eadc" />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
           <div>
@@ -334,11 +335,11 @@ const ExpenseListItem = ({ name, amount, percentage, isUp }) => (
           width: '40px',
           height: '40px',
           borderRadius: '50%',
-          backgroundColor: '#f4f2ff',
+          backgroundColor: 'rgba(79, 111, 100, 0.12)',
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          color: '#8a76fa',
+          color: 'var(--primary)',
         }}
       >
         <svg
@@ -400,6 +401,7 @@ const ProjectPage = () => {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [amountFilter, setAmountFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState('DEFAULT');
+  const canMutateProjects = canMutateAdminData(getStoredAuthUser());
 
   useEffect(() => {
     const loadData = async () => {
@@ -432,6 +434,7 @@ const ProjectPage = () => {
   };
 
   const openCreateDrawer = () => {
+    if (!canMutateProjects) return;
     setDrawerOpen(true);
     setDrawerMode('create');
     setSelectedProject(null);
@@ -444,6 +447,7 @@ const ProjectPage = () => {
   };
 
   const openSyncDrawer = (project) => {
+    if (!canMutateProjects) return;
     setDrawerOpen(true);
     setDrawerMode('sync');
     setSelectedProject(project);
@@ -689,23 +693,26 @@ const ProjectPage = () => {
               <h1 style={{ fontSize: '32px', fontWeight: 'bold', color: '#1a1a1a', marginBottom: '4px' }}>Project</h1>
               <p style={{ color: '#888', fontSize: '14px' }}>Create, rename, and connect BOQ sheets for your projects</p>
             </div>
-            <button
-              type="button"
-              onClick={openCreateDrawer}
-              style={{
-                ...buttonStyle,
-                backgroundColor: '#8a76fa',
-                color: 'white',
-                padding: '12px 24px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: 'var(--shadow-sm)',
-              }}
-            >
-              <Plus size={18} />
-              Add new project
-            </button>
+            {canMutateProjects ? (
+              <button
+                type="button"
+                onClick={openCreateDrawer}
+                style={{
+                  ...buttonStyle,
+                  backgroundColor: 'var(--primary)',
+                  color: 'white',
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: 'none',
+                }}
+              >
+                <Plus size={18} />
+                Add new project
+              </button>
+            ) : null}
           </div>
 
           {flashMessage ? (
@@ -769,7 +776,7 @@ const ProjectPage = () => {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
-                  color: '#8a76fa',
+                  color: 'var(--primary)',
                   cursor: 'pointer',
                   fontSize: '14px',
                   fontWeight: '500',
@@ -796,6 +803,7 @@ const ProjectPage = () => {
                   index={index}
                   onEditName={handleRenameProject}
                   onOpenSync={openSyncDrawer}
+                  canMutate={canMutateProjects}
                   onClick={() =>
                     navigate(`/project/detail/${project.id}`, {
                       state: { projectName: project.name, projectId: project.id },
@@ -812,7 +820,7 @@ const ProjectPage = () => {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             className="card"
-            style={{ padding: '24px', backgroundColor: 'white', borderRadius: '24px', border: '1px solid #f0f0f0' }}
+        style={{ padding: '24px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid var(--border-color)' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 'bold' }}>Total budget</h3>
@@ -856,7 +864,7 @@ const ProjectPage = () => {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <SemiCircleGauge value={totalSpent} max={Math.max(totalBudget, 1)} color="#8a76fa" bgColor="#f4f2ff" size={260} />
+              <SemiCircleGauge value={totalSpent} max={Math.max(totalBudget, 1)} color="#4f6f64" bgColor="#c7eadc" size={260} />
             </div>
           </Motion.div>
 
@@ -865,7 +873,7 @@ const ProjectPage = () => {
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.1 }}
             className="card"
-            style={{ padding: '24px', backgroundColor: 'white', borderRadius: '24px', border: '1px solid #f0f0f0' }}
+            style={{ padding: '24px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid var(--border-color)' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 'bold' }}>Most expenses</h3>
@@ -919,15 +927,15 @@ const ProjectPage = () => {
             style={{
               width: 'min(560px, 100%)',
               height: '100%',
-              backgroundColor: '#faf9ff',
-              boxShadow: '-24px 0 60px rgba(17, 24, 39, 0.18)',
+              backgroundColor: 'var(--bg-primary)',
+              boxShadow: '-12px 0 30px rgba(47, 46, 44, 0.10)',
               padding: '28px',
               overflowY: 'auto',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
               <div>
-                <div style={{ fontSize: '12px', fontWeight: '700', color: '#8a76fa', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                   {drawerMode === 'create' ? 'Create Project' : 'Connect BOQ'}
                 </div>
                 <h2 style={{ fontSize: '28px', fontWeight: '700', margin: '8px 0 4px', color: '#1a1a1a' }}>
@@ -1093,7 +1101,7 @@ const ProjectPage = () => {
                       ...buttonStyle,
                       flex: 1,
                       padding: '14px 16px',
-                      backgroundColor: '#8a76fa',
+                      backgroundColor: 'var(--primary)',
                       color: 'white',
                       opacity: isCreating ? 0.7 : 1,
                     }}
@@ -1109,13 +1117,13 @@ const ProjectPage = () => {
                     padding: '18px',
                     backgroundColor: 'white',
                     borderRadius: '20px',
-                    border: '1px solid #ece8ff',
+                    border: '1px solid var(--border-color)',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '8px',
                   }}
                 >
-                  <div style={{ fontSize: '13px', color: '#8a76fa', fontWeight: '700' }}>Selected project</div>
+                  <div style={{ fontSize: '13px', color: 'var(--primary)', fontWeight: '700' }}>Selected project</div>
                   <div style={{ fontSize: '20px', fontWeight: '700', color: '#1a1a1a' }}>{selectedProject?.name}</div>
                   <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', fontSize: '13px', color: '#666' }}>
                     <span>Type: {selectedProject?.projectType}</span>
@@ -1317,7 +1325,7 @@ const ProjectPage = () => {
                         ...buttonStyle,
                         flex: 1,
                         padding: '14px 16px',
-                        backgroundColor: '#8a76fa',
+                        backgroundColor: 'var(--primary)',
                         color: 'white',
                         opacity: isSyncing || selectedSheetNames.length === 0 ? 0.7 : 1,
                       }}

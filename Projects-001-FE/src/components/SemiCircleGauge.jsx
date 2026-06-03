@@ -1,6 +1,6 @@
 import React from 'react';
 
-const SemiCircleGauge = ({ value, max, size = 240, strokeWidth = 16, color = '#8a76fa', bgColor = '#e6e0ff' }) => {
+const SemiCircleGauge = ({ value, max, size = 240, strokeWidth = 16, color = '#4f6f64', bgColor = '#c7eadc' }) => {
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * Math.PI;
   const percentage = max > 0 ? Math.min(value / max, 1) : 0;

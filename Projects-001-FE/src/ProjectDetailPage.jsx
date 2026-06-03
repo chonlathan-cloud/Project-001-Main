@@ -147,7 +147,7 @@ const executionToneStyles = {
 const baseChartTooltipStyle = {
   borderRadius: '14px',
   border: '1px solid #e5e7eb',
-  boxShadow: '0 18px 40px rgba(15, 23, 42, 0.08)',
+  boxShadow: 'none',
 };
 
 function SummaryCard({ icon, label, value, subtext, tone = 'neutral' }) {
@@ -165,7 +165,7 @@ function SummaryCard({ icon, label, value, subtext, tone = 'neutral' }) {
       style={{
         backgroundColor: currentTone.background,
         border: `1px solid ${currentTone.border}`,
-        borderRadius: '22px',
+        borderRadius: '12px',
         padding: '22px',
         display: 'flex',
         flexDirection: 'column',
@@ -916,12 +916,12 @@ function ProjectDetailPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <section
         style={{
-          borderRadius: '28px',
+          borderRadius: '12px',
           padding: '28px',
-          color: 'white',
-          background:
-            'linear-gradient(135deg, rgba(15,23,42,1) 0%, rgba(55,65,81,1) 40%, rgba(196,164,112,0.95) 100%)',
-          boxShadow: '0 24px 60px rgba(15, 23, 42, 0.16)',
+          color: 'var(--text-main)',
+          background: 'var(--card-bg)',
+          border: '1px solid var(--border-color)',
+          boxShadow: 'none',
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -932,7 +932,8 @@ function ProjectDetailPage() {
               gap: '8px',
               padding: '8px 12px',
               borderRadius: '999px',
-              backgroundColor: 'rgba(255,255,255,0.12)',
+              backgroundColor: 'rgba(79, 111, 100, 0.12)',
+              color: 'var(--primary)',
               width: 'fit-content',
               fontSize: '12px',
               fontWeight: '700',
@@ -946,7 +947,7 @@ function ProjectDetailPage() {
             <h1 style={{ fontSize: '34px', lineHeight: 1.12, marginBottom: '8px' }}>
               {passedProjectName || data.name}
             </h1>
-            <p style={{ maxWidth: '760px', fontSize: '15px', lineHeight: 1.7, color: 'rgba(255,255,255,0.82)' }}>
+            <p style={{ maxWidth: '760px', fontSize: '15px', lineHeight: 1.7, color: 'var(--text-muted)' }}>
               หน้านี้ใช้เทียบ Customer BOQ กับ Subcontractor BOQ ในโครงสร้าง WBS เดียวกัน เพื่อให้เห็นงบ,
               variance และ margin ในแต่ละ node ได้ทันที
             </p>
@@ -959,7 +960,8 @@ function ProjectDetailPage() {
                 alignItems: 'center',
                 padding: '7px 10px',
                 borderRadius: '999px',
-                backgroundColor: 'rgba(255,255,255,0.12)',
+                backgroundColor: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
                 fontSize: '12px',
                 fontWeight: '700',
               }}
@@ -972,7 +974,8 @@ function ProjectDetailPage() {
                 alignItems: 'center',
                 padding: '7px 10px',
                 borderRadius: '999px',
-                backgroundColor: 'rgba(255,255,255,0.12)',
+                backgroundColor: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
                 fontSize: '12px',
                 fontWeight: '700',
               }}
@@ -985,7 +988,8 @@ function ProjectDetailPage() {
                 alignItems: 'center',
                 padding: '7px 10px',
                 borderRadius: '999px',
-                backgroundColor: 'rgba(255,255,255,0.12)',
+                backgroundColor: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
                 fontSize: '12px',
                 fontWeight: '700',
               }}
@@ -998,7 +1002,8 @@ function ProjectDetailPage() {
                 alignItems: 'center',
                 padding: '7px 10px',
                 borderRadius: '999px',
-                backgroundColor: 'rgba(255,255,255,0.12)',
+                backgroundColor: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
                 fontSize: '12px',
                 fontWeight: '700',
               }}
@@ -1011,7 +1016,8 @@ function ProjectDetailPage() {
                 alignItems: 'center',
                 padding: '7px 10px',
                 borderRadius: '999px',
-                backgroundColor: 'rgba(255,255,255,0.12)',
+                backgroundColor: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
                 fontSize: '12px',
                 fontWeight: '700',
               }}
@@ -1026,8 +1032,8 @@ function ProjectDetailPage() {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '8px',
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                border: '1px solid rgba(255,255,255,0.14)',
+                backgroundColor: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
                 padding: '10px 14px',
                 borderRadius: '12px',
                 width: 'fit-content',

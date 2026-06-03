@@ -1,6 +1,6 @@
 import React from 'react';
 
-const CircularProgress = ({ value, max, size = 80, strokeWidth = 8, color = '#8a76fa', bgColor = '#f4f2ff' }) => {
+const CircularProgress = ({ value, max, size = 80, strokeWidth = 8, color = '#4f6f64', bgColor = '#c7eadc' }) => {
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * 2 * Math.PI;
   const percentage = max > 0 ? Math.min(value / max, 1) : 0;

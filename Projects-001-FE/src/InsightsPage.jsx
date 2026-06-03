@@ -70,8 +70,8 @@ const buttonStyle = {
 
 const activeButtonStyle = {
   ...buttonStyle,
-  backgroundColor: '#111827',
-  borderColor: '#111827',
+  backgroundColor: 'var(--primary)',
+  borderColor: 'var(--primary)',
   color: 'white',
 };
 
@@ -130,13 +130,13 @@ function SummaryCard({ card }) {
       style={{
         backgroundColor: tone.background,
         border: `1px solid ${tone.border}`,
-        borderRadius: '24px',
+        borderRadius: '12px',
         padding: '22px',
         minHeight: '146px',
         display: 'flex',
         flexDirection: 'column',
         gap: '14px',
-        boxShadow: '0 8px 30px rgba(15, 23, 42, 0.04)',
+        boxShadow: 'none',
         flex: '1 1 240px',
       }}
     >
@@ -427,7 +427,7 @@ const InsightsPage = () => {
           textAlign: 'center',
           color: '#ef4444',
           backgroundColor: 'white',
-          borderRadius: '24px',
+          borderRadius: '12px',
           margin: '40px',
         }}
       >
@@ -497,11 +497,11 @@ const InsightsPage = () => {
       <div
         style={{
           backgroundColor: 'white',
-          borderRadius: '24px',
+          borderRadius: '12px',
           padding: '24px',
           border: '1px solid #f1f5f9',
           marginBottom: '24px',
-          boxShadow: '0 10px 30px rgba(15, 23, 42, 0.04)',
+          boxShadow: 'none',
           position: 'sticky',
           top: '18px',
           zIndex: 5,
@@ -623,10 +623,10 @@ const InsightsPage = () => {
       <div
         style={{
           backgroundColor: 'white',
-          borderRadius: '24px',
+          borderRadius: '12px',
           padding: '28px',
           border: '1px solid #f1f5f9',
-          boxShadow: '0 10px 30px rgba(15, 23, 42, 0.04)',
+          boxShadow: 'none',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>

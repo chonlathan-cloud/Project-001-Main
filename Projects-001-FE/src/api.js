@@ -1037,7 +1037,7 @@ export async function adminLogin(payload) {
   return apiRequest('/api/v1/auth/admin-login', {
     method: 'POST',
     body: JSON.stringify({
-      firebase_id_token: payload.firebaseIdToken,
+      firebase_id_token: payload.firebaseIdToken || payload.idToken,
       email: payload.email,
       display_name: payload.displayName,
     }),

@@ -1,16 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
-  AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
-  Clock3,
-  TrendingDown,
-  TrendingUp,
-  Wallet,
 } from 'lucide-react';
 import {
   Bar,
-  BarChart,
   CartesianGrid,
   ComposedChart,
   Legend,
@@ -22,6 +16,10 @@ import {
 } from 'recharts';
 import { getDashboardData } from './api';
 import Loading from './components/Loading';
+import DashboardCashflowCard from './components/DashboardCashflowCard';
+import DashboardHeroSummary from './components/DashboardHeroSummary';
+import DashboardKpiCard from './components/DashboardKpiCard';
+import DashboardPanel from './components/DashboardPanel';
 
 const currencyFormatter = new Intl.NumberFormat('th-TH', {
   style: 'currency',
@@ -40,43 +38,41 @@ const toneStyles = {
   neutral: {
     background: '#ffffff',
     border: '#e7e0d4',
-    text: '#1f2937',
-    subtle: '#6b7280',
-    accent: '#c4a470',
+    text: '#2f2e2c',
+    subtle: 'rgba(47, 46, 44, 0.6)',
+    accent: '#c2a878',
+    soft: 'rgba(194, 168, 120, 0.14)',
   },
   positive: {
-    background: '#f3fbf7',
-    border: '#b6e3ca',
+    background: '#ffffff',
+    border: '#e7e0d4',
     text: '#166534',
-    subtle: '#2f855a',
-    accent: '#27a57a',
+    subtle: 'rgba(47, 46, 44, 0.6)',
+    accent: '#4f6f64',
+    soft: 'rgba(79, 111, 100, 0.12)',
   },
   warning: {
-    background: '#fff8ec',
-    border: '#f1d19a',
+    background: '#ffffff',
+    border: '#e7e0d4',
     text: '#9a6700',
-    subtle: '#b7791f',
-    accent: '#d0a24c',
+    subtle: 'rgba(47, 46, 44, 0.6)',
+    accent: '#c2a878',
+    soft: 'rgba(194, 168, 120, 0.16)',
   },
   danger: {
-    background: '#fef2f2',
-    border: '#f0b6b6',
+    background: '#ffffff',
+    border: '#e7e0d4',
     text: '#9f1239',
-    subtle: '#be123c',
+    subtle: 'rgba(47, 46, 44, 0.6)',
     accent: '#de5b52',
+    soft: 'rgba(222, 91, 82, 0.12)',
   },
 };
 
-const sectionTitleStyle = {
-  fontSize: '20px',
-  fontWeight: '700',
-  color: '#1f2937',
-};
-
-const sectionDescriptionStyle = {
-  fontSize: '13px',
-  lineHeight: 1.6,
-  color: '#6b7280',
+const chartTooltipStyle = {
+  borderRadius: '14px',
+  border: '1px solid #e5e7eb',
+  boxShadow: '0 18px 40px rgba(15, 23, 42, 0.08)',
 };
 
 function formatMetric(value, kind) {
@@ -105,54 +101,18 @@ function formatDateTime(value) {
   });
 }
 
-function truncateLabel(value, limit = 18) {
-  const label = String(value || '').trim();
-  if (label.length <= limit) return label || '-';
-  return `${label.slice(0, limit - 1)}…`;
+function getMaxCashflowItem(items, key) {
+  if (!items.length) return null;
+  return items.reduce((winner, item) => (
+    Number(item?.[key] || 0) > Number(winner?.[key] || 0) ? item : winner
+  ), items[0]);
 }
 
-function KpiCard({ card }) {
-  const tone = toneStyles[card.tone] || toneStyles.neutral;
-
-  return (
-    <div
-      className="dashboard-kpi-card"
-      style={{
-        background: tone.background,
-        border: `1px solid ${tone.border}`,
-      }}
-    >
-      <div
-        style={{
-          width: '42px',
-          height: '42px',
-          borderRadius: '14px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'rgba(255,255,255,0.75)',
-          color: tone.accent,
-        }}
-      >
-        {card.kind === 'percent' ? <TrendingUp size={18} /> : <Wallet size={18} />}
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div>
-          <div style={{ fontSize: '13px', fontWeight: '700', color: tone.subtle }}>
-            {card.label}
-          </div>
-          <div style={{ marginTop: '8px', fontSize: '29px', fontWeight: '800', color: tone.text }}>
-            {formatMetric(card.value, card.kind)}
-          </div>
-        </div>
-
-        <div style={{ fontSize: '12px', lineHeight: 1.6, color: tone.subtle }}>
-          {card.description}
-        </div>
-      </div>
-    </div>
-  );
+function getCashflowInsightTone(value) {
+  const amount = Number(value || 0);
+  if (amount < 0) return 'danger';
+  if (amount > 0) return 'positive';
+  return 'neutral';
 }
 
 function BudgetRow({ item }) {
@@ -160,43 +120,27 @@ function BudgetRow({ item }) {
 
   return (
     <div
+      className="dashboard-budget-row"
       style={{
-        padding: '16px 18px',
-        borderRadius: '16px',
-        background: tone.background,
-        border: `1px solid ${tone.border}`,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '10px',
+        '--row-accent': tone.accent,
+        '--row-bg': tone.soft,
+        '--row-text': tone.text,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-        <div style={{ fontSize: '14px', fontWeight: '700', color: tone.text }}>{item.label}</div>
-        <div style={{ fontSize: '13px', fontWeight: '700', color: tone.text }}>
-          {formatMetric(item.value, 'currency')}
-        </div>
+      <div className="dashboard-budget-row-head">
+        <span>{item.label}</span>
+        <strong>{formatMetric(item.value, 'currency')}</strong>
       </div>
 
-      <div
-        style={{
-          width: '100%',
-          height: '10px',
-          borderRadius: '999px',
-          background: '#ede8df',
-          overflow: 'hidden',
-        }}
-      >
+      <div className="dashboard-budget-track">
         <div
           style={{
             width: `${Math.max(0, Math.min(Number(item.ratio || 0), 100))}%`,
-            height: '100%',
-            borderRadius: '999px',
-            background: tone.accent,
           }}
         />
       </div>
 
-      <div style={{ fontSize: '12px', color: tone.subtle }}>
+      <div className="dashboard-budget-note">
         {percentFormatter.format(Number(item.ratio || 0))}% ของงบรวม
       </div>
     </div>
@@ -208,24 +152,73 @@ function AttentionItem({ item }) {
 
   return (
     <div
+      className="dashboard-attention-row"
       style={{
-        padding: '16px 18px',
-        borderRadius: '16px',
-        border: `1px solid ${tone.border}`,
-        background: tone.background,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
+        '--row-accent': tone.accent,
+        '--row-bg': tone.soft,
+        '--row-text': tone.text,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-        <div style={{ fontSize: '14px', fontWeight: '700', color: tone.text }}>{item.label}</div>
-        <div style={{ fontSize: '16px', fontWeight: '800', color: tone.text }}>
-          {formatMetric(item.value, item.kind)}
+      <div className="dashboard-attention-row-head">
+        <span>{item.label}</span>
+        <strong>{formatMetric(item.value, item.kind)}</strong>
+      </div>
+      <p>{item.description}</p>
+    </div>
+  );
+}
+
+function RiskProjectRow({ item, index, maxAmount }) {
+  const overdueAmount = Number(item?.overdueAmount || 0);
+  const pendingAmount = Number(item?.pendingRequestAmount || 0);
+  const totalAmount = Number(item?.totalRiskAmount || overdueAmount + pendingAmount);
+  const totalWidth = maxAmount > 0 ? Math.max(5, Math.min(100, (totalAmount / maxAmount) * 100)) : 0;
+  const overdueWidth = totalAmount > 0 ? (overdueAmount / totalAmount) * 100 : 0;
+  const pendingWidth = totalAmount > 0 ? (pendingAmount / totalAmount) * 100 : 0;
+  const severity = overdueAmount > 0 ? 'critical' : 'watch';
+
+  return (
+    <article className={`dashboard-risk-row dashboard-risk-row-${severity}`}>
+      <div className="dashboard-risk-rank">{index + 1}</div>
+
+      <div className="dashboard-risk-body">
+        <div className="dashboard-risk-row-head">
+          <div className="dashboard-risk-project">
+            <strong title={item.name}>{item.name || 'Unknown project'}</strong>
+            <span>
+              {formatMetric(item.overdueCount, 'number')} overdue · {formatMetric(item.pendingRequestCount, 'number')} pending
+            </span>
+          </div>
+
+          <div className="dashboard-risk-total">
+            <strong>{formatMetric(totalAmount, 'currency')}</strong>
+            <span>{severity === 'critical' ? 'Critical exposure' : 'Admin queue'}</span>
+          </div>
+        </div>
+
+        <div className="dashboard-risk-track" aria-label={`${item.name} risk amount`}>
+          <div className="dashboard-risk-track-fill" style={{ width: `${totalWidth}%` }}>
+            {overdueAmount > 0 ? (
+              <span className="overdue" style={{ width: `${overdueWidth}%` }} />
+            ) : null}
+            {pendingAmount > 0 ? (
+              <span className="pending" style={{ width: `${pendingWidth}%` }} />
+            ) : null}
+          </div>
+        </div>
+
+        <div className="dashboard-risk-breakdown">
+          <span>
+            <i className="overdue" />
+            Overdue {formatMetric(overdueAmount, 'currency')}
+          </span>
+          <span>
+            <i className="pending" />
+            Pending {formatMetric(pendingAmount, 'currency')}
+          </span>
         </div>
       </div>
-      <div style={{ fontSize: '12px', lineHeight: 1.6, color: tone.subtle }}>{item.description}</div>
-    </div>
+    </article>
   );
 }
 
@@ -262,139 +255,155 @@ function DashboardPage() {
   }
 
   const latestMonth = data?.cashflow?.[data.cashflow.length - 1] || null;
+  const cashflowRows = Array.isArray(data?.cashflow) ? data.cashflow : [];
+  const strongestIncomeMonth = getMaxCashflowItem(cashflowRows, 'income');
+  const highestExpenseMonth = getMaxCashflowItem(cashflowRows, 'expense');
+  const positiveCashflowMonths = cashflowRows.filter((item) => Number(item?.balance || 0) > 0).length;
+  const maxCashflowAmount = Math.max(
+    ...cashflowRows.flatMap((item) => [
+      Math.abs(Number(item?.income || 0)),
+      Math.abs(Number(item?.expense || 0)),
+      Math.abs(Number(item?.balance || 0)),
+    ]),
+    1
+  );
+  const cashflowInsights = [
+    {
+      key: 'income-peak',
+      label: 'Strongest income',
+      value: strongestIncomeMonth?.month || '-',
+      detail: formatMetric(strongestIncomeMonth?.income || 0, 'currency'),
+      tone: 'positive',
+    },
+    {
+      key: 'expense-peak',
+      label: 'Highest expense',
+      value: highestExpenseMonth?.month || '-',
+      detail: formatMetric(highestExpenseMonth?.expense || 0, 'currency'),
+      tone: 'warning',
+    },
+    {
+      key: 'positive-months',
+      label: 'Positive months',
+      value: `${positiveCashflowMonths}/${cashflowRows.length || 0}`,
+      detail: `Net ${formatMetric(data?.kpis?.netCashflow, 'currency')}`,
+      tone: getCashflowInsightTone(data?.kpis?.netCashflow),
+    },
+  ];
+  const riskyRows = Array.isArray(data?.riskyProjects) ? data.riskyProjects : [];
+  const maxRiskAmount = Math.max(
+    ...riskyRows.map((item) => Number(item?.totalRiskAmount || 0)),
+    1
+  );
+  const riskOverdueTotal = riskyRows.reduce((sum, item) => sum + Number(item?.overdueAmount || 0), 0);
+  const riskPendingTotal = riskyRows.reduce((sum, item) => sum + Number(item?.pendingRequestAmount || 0), 0);
+  const topRiskProject = riskyRows[0] || null;
   const utilizationTone = (data?.kpis?.budgetUtilization || 0) > 85 ? toneStyles.warning : toneStyles.positive;
   const cashflowIsNegative = (data?.kpis?.netCashflow || 0) < 0;
+  const balanceTolerance = Math.max(
+    Math.abs(data?.kpis?.totalIncome || 0),
+    Math.abs(data?.kpis?.totalExpense || 0),
+    1
+  ) * 0.03;
+  const cashflowBalanceText = Math.abs(data?.kpis?.netCashflow || 0) <= balanceTolerance
+    ? 'Balanced'
+    : cashflowIsNegative
+      ? 'Deficit'
+      : 'Surplus';
+  const visibleStatCards = (data?.statCards || []).filter(
+    (card) => card?.key !== 'profit-margin' && card?.key !== 'profitMargin' && card?.label !== 'Profit Margin'
+  );
+  const dashboardStatCards = visibleStatCards.map((card) => {
+    if (card.key === 'actual-cost') {
+      return {
+        ...card,
+        badge: (data?.kpis?.budgetUtilization || 0) > 85 ? 'Watch' : 'Healthy',
+        progress: data?.kpis?.budgetUtilization,
+        progressLabel: 'Budget used',
+      };
+    }
+
+    if (card.key === 'pending-approvals') {
+      const pendingCount = Number(data?.kpis?.pendingApprovalCount || 0);
+      return {
+        ...card,
+        badge: pendingCount > 0 ? 'Action' : 'Clear',
+        progress: pendingCount > 0 ? Math.min((pendingCount / Math.max(pendingCount, 8)) * 100, 100) : 0,
+        progressLabel: 'Approval load',
+      };
+    }
+
+    if (card.key === 'total-budget') {
+      return {
+        ...card,
+        badge: 'Portfolio',
+      };
+    }
+
+    return card;
+  });
+  const portfolioSignals = [
+    {
+      title: 'Budget room',
+      value: formatMetric(data?.kpis?.remainingBudget, 'currency'),
+      detail: `จากงบรวม ${formatMetric(data?.kpis?.totalBudget, 'currency')}`,
+      tone: (data?.kpis?.remainingBudget || 0) < 0 ? 'danger' : 'positive',
+    },
+    {
+      title: 'Cashflow state',
+      value: cashflowBalanceText,
+      detail: `Balance ${formatMetric(data?.kpis?.netCashflow, 'currency')}`,
+      tone: cashflowIsNegative ? 'danger' : 'positive',
+    },
+    {
+      title: 'Blocked work',
+      value: formatMetric(data?.kpis?.pendingApprovalCount, 'number'),
+      detail: `ยอดค้างชำระ ${formatMetric(data?.kpis?.overdueAmount, 'currency')}`,
+      tone: (data?.kpis?.pendingApprovalCount || 0) > 0 ? 'warning' : 'positive',
+    },
+  ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      <section
-        className="dashboard-hero"
-        style={{
-          background:
-            'linear-gradient(135deg, rgba(61,64,58,1) 0%, rgba(92,97,86,1) 46%, rgba(196,164,112,0.92) 100%)',
-          color: 'white',
-          borderRadius: '28px',
-          padding: '28px',
-          boxShadow: '0 24px 60px rgba(49, 46, 38, 0.18)',
-        }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 12px',
-              borderRadius: '999px',
-              background: 'rgba(255,255,255,0.14)',
-              fontSize: '12px',
-              fontWeight: '700',
-              width: 'fit-content',
-            }}
-          >
-            <Clock3 size={14} />
-            Live summary from project, installment, transaction, and input request data
-          </div>
-
-          <div>
-            <h1 style={{ fontSize: '34px', lineHeight: 1.15, marginBottom: '10px' }}>
-              Dashboard ที่ควรตอบคำถามว่าเงินอยู่ตรงไหน และงานติดตรงไหน
-            </h1>
-            <p style={{ maxWidth: '720px', fontSize: '15px', lineHeight: 1.7, color: 'rgba(255,255,255,0.82)' }}>
-              หน้าเดิมใช้ชื่อกราฟแบบ generic จนตีความยาก หน้าใหม่นี้เปลี่ยนเป็นภาษาธุรกิจตรง ๆ:
-              งบรวม, ต้นทุนจริง, ค้างชำระ, cashflow และกิจกรรมล่าสุด
-            </p>
-          </div>
-        </div>
-
-        <div className="dashboard-hero-metrics">
-          <div
-            style={{
-              borderRadius: '22px',
-              padding: '20px',
-              background: 'rgba(255,255,255,0.12)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              backdropFilter: 'blur(6px)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-              {cashflowIsNegative ? <TrendingDown size={18} /> : <TrendingUp size={18} />}
-              <span style={{ fontSize: '13px', fontWeight: '700' }}>Net Cashflow</span>
-            </div>
-            <div style={{ fontSize: '30px', fontWeight: '800' }}>
-              {formatMetric(data?.kpis?.netCashflow, 'currency')}
-            </div>
-            <div style={{ marginTop: '8px', fontSize: '12px', color: 'rgba(255,255,255,0.8)' }}>
-              รายรับรวม {formatMetric(data?.kpis?.totalIncome, 'currency')} เทียบกับรายจ่ายรวม{' '}
-              {formatMetric(data?.kpis?.totalExpense, 'currency')}
-            </div>
-          </div>
-
-          <div
-            style={{
-              borderRadius: '22px',
-              padding: '20px',
-              background: 'rgba(255,255,255,0.12)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              backdropFilter: 'blur(6px)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-              <AlertTriangle size={18} />
-              <span style={{ fontSize: '13px', fontWeight: '700' }}>Budget Utilization</span>
-            </div>
-            <div style={{ fontSize: '30px', fontWeight: '800' }}>
-              {formatMetric(data?.kpis?.budgetUtilization, 'percent')}
-            </div>
-            <div style={{ marginTop: '8px', fontSize: '12px', color: 'rgba(255,255,255,0.8)' }}>
-              งบคงเหลือ {formatMetric(data?.kpis?.remainingBudget, 'currency')}
-            </div>
-          </div>
-
-          <div
-            style={{
-              borderRadius: '22px',
-              padding: '20px',
-              background: 'rgba(255,255,255,0.12)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              backdropFilter: 'blur(6px)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-              <Clock3 size={18} />
-              <span style={{ fontSize: '13px', fontWeight: '700' }}>Latest Period</span>
-            </div>
-            <div style={{ fontSize: '30px', fontWeight: '800' }}>
-              {latestMonth?.month || '-'}
-            </div>
-            <div style={{ marginTop: '8px', fontSize: '12px', color: 'rgba(255,255,255,0.8)' }}>
-              ล่าสุดรับ {formatMetric(latestMonth?.income, 'currency')} จ่าย{' '}
-              {formatMetric(latestMonth?.expense, 'currency')}
-            </div>
-          </div>
-        </div>
-      </section>
+    <div className="dashboard-page">
+      <DashboardHeroSummary
+        balance={data?.kpis?.netCashflow}
+        budgetUtilization={data?.kpis?.budgetUtilization}
+        cashflowLabel={cashflowBalanceText}
+        latestMonth={latestMonth?.month}
+        pendingApprovals={data?.kpis?.pendingApprovalCount}
+        totalBudget={data?.kpis?.totalBudget}
+        formatCurrency={(value) => formatMetric(value, 'currency')}
+        formatPercent={(value) => formatMetric(value, 'percent')}
+        formatNumber={(value) => formatMetric(value, 'number')}
+      />
 
       <section className="dashboard-kpi-grid">
-        {data?.statCards?.map((card) => (
-          <KpiCard key={card.key} card={card} />
+        <DashboardCashflowCard
+          balance={data?.kpis?.netCashflow}
+          totalIncome={data?.kpis?.totalIncome}
+          totalExpense={data?.kpis?.totalExpense}
+          cashflow={data?.cashflow}
+          latestMonth={latestMonth?.month}
+          formatCurrency={(value) => formatMetric(value, 'currency')}
+        />
+        {dashboardStatCards.map((card) => (
+          <DashboardKpiCard key={card.key} card={card} formatMetric={formatMetric} />
         ))}
       </section>
 
-      <section className="dashboard-main-grid">
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={sectionTitleStyle}>Monthly Cashflow</div>
-            <div style={sectionDescriptionStyle}>
-              เปรียบเทียบรายรับจาก installments กับรายจ่ายที่อนุมัติแล้วในแต่ละเดือน
-            </div>
-          </div>
-
-          <div style={{ height: '340px' }}>
+      <section className="dashboard-main-grid dashboard-flow-grid">
+        <div className="dashboard-primary-stack">
+          <DashboardPanel
+            title="Monthly Cashflow"
+            description="เปรียบเทียบรายรับจาก installments กับรายจ่ายที่อนุมัติแล้วในแต่ละเดือน"
+            action={<span className="dashboard-panel-pill">Income / Expense / Balance</span>}
+            className="dashboard-chart-panel"
+          >
+          <div className="dashboard-chart-height">
             {data?.cashflow?.length ? (
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={data.cashflow} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" />
+                <ComposedChart data={data.cashflow} margin={{ top: 18, right: 20, left: 0, bottom: 6 }}>
+                  <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" vertical={false} />
                   <XAxis
                     dataKey="month"
                     axisLine={false}
@@ -413,321 +422,197 @@ function DashboardPage() {
                       name === 'income' ? 'Income' : name === 'expense' ? 'Expense' : 'Balance',
                     ]}
                     labelStyle={{ color: '#111827', fontWeight: 700 }}
-                    contentStyle={{
-                      borderRadius: '14px',
-                      border: '1px solid #e5e7eb',
-                      boxShadow: '0 18px 40px rgba(15, 23, 42, 0.08)',
-                    }}
+                    contentStyle={chartTooltipStyle}
                   />
-                  <Bar dataKey="income" name="income" fill="#27a57a" radius={[8, 8, 0, 0]} barSize={26} />
-                  <Bar dataKey="expense" name="expense" fill="#de5b52" radius={[8, 8, 0, 0]} barSize={18} />
+                  <Legend
+                    verticalAlign="top"
+                    align="right"
+                    iconType="circle"
+                    wrapperStyle={{ fontSize: '12px', color: '#6b7280', paddingBottom: '12px' }}
+                    formatter={(value) => (value === 'income' ? 'Income' : value === 'expense' ? 'Expense' : 'Balance')}
+                  />
+                  <Bar dataKey="income" name="income" fill="#4f6f64" radius={[8, 8, 0, 0]} barSize={24} />
+                  <Bar dataKey="expense" name="expense" fill="#c2a878" radius={[8, 8, 0, 0]} barSize={18} />
                   <Line
                     type="monotone"
                     dataKey="balance"
                     name="balance"
-                    stroke="#3d403a"
+                    stroke="#2f2e2c"
                     strokeWidth={3}
-                    dot={{ r: 4, strokeWidth: 0, fill: '#3d403a' }}
+                    dot={{ r: 4, strokeWidth: 0, fill: '#2f2e2c' }}
+                    activeDot={{ r: 6, strokeWidth: 2, stroke: '#ffffff', fill: '#2f2e2c' }}
                   />
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (
-              <div
-                style={{
-                  height: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: '18px',
-                  background: '#faf7f2',
-                  color: '#6b7280',
-                  fontSize: '14px',
-                }}
-              >
-                ยังไม่มีข้อมูล cashflow สำหรับแสดงผล
-              </div>
+              <div className="dashboard-empty-state">ยังไม่มีข้อมูล cashflow สำหรับแสดงผล</div>
             )}
           </div>
 
-          <div
-            style={{
-              borderTop: '1px solid #f1ecdf',
-              paddingTop: '18px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '12px',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div style={{ ...sectionTitleStyle, fontSize: '18px' }}>Top Risky Projects</div>
-                <div style={sectionDescriptionStyle}>
-                  เรียงตามยอดค้างชำระรวมกับยอด input request ที่ยังรอ Pending Admin เพื่อชี้ว่าโปรเจกต์ไหนควรเข้าไปแก้ก่อน
-                </div>
+          {cashflowRows.length ? (
+            <>
+              <div className="dashboard-cashflow-insight-grid">
+                {cashflowInsights.map((item) => (
+                  <article key={item.key} className={`dashboard-cashflow-insight dashboard-cashflow-insight-${item.tone}`}>
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                    <p>{item.detail}</p>
+                  </article>
+                ))}
               </div>
-              <div
-                style={{
-                  flexShrink: 0,
-                  padding: '8px 12px',
-                  borderRadius: '999px',
-                  background: '#faf7f2',
-                  color: '#8b7355',
-                  fontSize: '12px',
-                  fontWeight: '700',
-                }}
-              >
-                Top 5 by risk amount
-              </div>
-            </div>
 
-            <div style={{ height: '250px' }}>
-              {data?.riskyProjects?.length ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={data.riskyProjects}
-                    layout="vertical"
-                    margin={{ top: 8, right: 12, left: 8, bottom: 0 }}
-                    barCategoryGap={18}
-                  >
-                    <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" horizontal={false} />
-                    <XAxis
-                      type="number"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fontSize: 12, fill: '#6b7280' }}
-                      tickFormatter={(value) => `${Math.round(Number(value || 0) / 1000)}k`}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="name"
-                      axisLine={false}
-                      tickLine={false}
-                      width={120}
-                      tick={{ fontSize: 12, fill: '#4b5563' }}
-                      tickFormatter={(value) => truncateLabel(value, 18)}
-                    />
-                    <Tooltip
-                      formatter={(value, name, payload) => {
-                        if (name === 'pendingRequestAmount') {
-                          return [
-                            `${formatMetric(value, 'currency')} (${formatMetric(payload?.payload?.pendingRequestCount, 'number')} รายการ)`,
-                            'Pending Admin',
-                          ];
-                        }
-                        return [
-                          `${formatMetric(value, 'currency')} (${formatMetric(payload?.payload?.overdueCount, 'number')} รายการ)`,
-                          'Overdue',
-                        ];
-                      }}
-                      labelFormatter={(label) => `Project: ${label}`}
-                      labelStyle={{ color: '#111827', fontWeight: 700 }}
-                      contentStyle={{
-                        borderRadius: '14px',
-                        border: '1px solid #e5e7eb',
-                        boxShadow: '0 18px 40px rgba(15, 23, 42, 0.08)',
-                      }}
-                    />
-                    <Legend
-                      wrapperStyle={{ fontSize: '12px', color: '#6b7280', paddingTop: '8px' }}
-                      formatter={(value) => (value === 'overdueAmount' ? 'Overdue' : 'Pending Admin')}
-                    />
-                    <Bar
-                      dataKey="overdueAmount"
-                      name="overdueAmount"
-                      stackId="risk"
-                      fill="#de5b52"
-                      radius={[0, 6, 6, 0]}
-                      barSize={18}
-                    />
-                    <Bar
-                      dataKey="pendingRequestAmount"
-                      name="pendingRequestAmount"
-                      stackId="risk"
-                      fill="#d0a24c"
-                      radius={[0, 6, 6, 0]}
-                      barSize={18}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
+              <div className="dashboard-cashflow-month-strip" aria-label="Monthly cashflow quick scan">
+                {cashflowRows.map((item) => {
+                  const balance = Number(item?.balance || 0);
+                  const incomeWidth = Math.max(6, Math.min(100, (Math.abs(Number(item?.income || 0)) / maxCashflowAmount) * 100));
+                  const expenseWidth = Math.max(6, Math.min(100, (Math.abs(Number(item?.expense || 0)) / maxCashflowAmount) * 100));
+
+                  return (
+                    <div key={item.month} className="dashboard-cashflow-month">
+                      <div className="dashboard-cashflow-month-label">
+                        <span>{item.month}</span>
+                        <strong className={balance < 0 ? 'is-negative' : 'is-positive'}>
+                          {formatMetric(balance, 'currency')}
+                        </strong>
+                      </div>
+                      <div className="dashboard-cashflow-mini-bars">
+                        <div className="income" style={{ width: `${incomeWidth}%` }} />
+                        <div className="expense" style={{ width: `${expenseWidth}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+          </DashboardPanel>
+
+          <DashboardPanel
+            title="Top Risky Projects"
+            description="เรียงตามยอดค้างชำระรวมกับยอด input request ที่ยังรอ Pending Admin"
+            action={<span className="dashboard-panel-pill">Top 5 by risk amount</span>}
+            className="dashboard-chart-panel"
+          >
+            <div className="dashboard-risk-board">
+              {riskyRows.length ? (
+                <>
+                  <div className="dashboard-risk-summary-grid">
+                    <div className="dashboard-risk-summary-card">
+                      <span>Highest exposure</span>
+                      <strong>{topRiskProject?.name || '-'}</strong>
+                      <p>{formatMetric(topRiskProject?.totalRiskAmount, 'currency')}</p>
+                    </div>
+                    <div className="dashboard-risk-summary-card danger">
+                      <span>Total overdue</span>
+                      <strong>{formatMetric(riskOverdueTotal, 'currency')}</strong>
+                      <p>เงินค้างชำระที่ควรเร่งจัดการ</p>
+                    </div>
+                    <div className="dashboard-risk-summary-card warning">
+                      <span>Pending admin</span>
+                      <strong>{formatMetric(riskPendingTotal, 'currency')}</strong>
+                      <p>ยอดที่รอการตรวจจาก admin</p>
+                    </div>
+                  </div>
+
+                  <div className="dashboard-risk-legend">
+                    <span><i className="overdue" /> Overdue</span>
+                    <span><i className="pending" /> Pending Admin</span>
+                  </div>
+
+                  <div className="dashboard-risk-list">
+                    {riskyRows.map((item, index) => (
+                      <RiskProjectRow
+                        key={item.projectId || item.name}
+                        item={item}
+                        index={index}
+                        maxAmount={maxRiskAmount}
+                      />
+                    ))}
+                  </div>
+                </>
               ) : (
-                <div
-                  style={{
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: '18px',
-                    background: '#faf7f2',
-                    color: '#6b7280',
-                    fontSize: '14px',
-                  }}
-                >
+                <div className="dashboard-empty-state">
                   ยังไม่มีโปรเจกต์ที่มียอด overdue หรือ pending admin ให้จัดอันดับ
                 </div>
               )}
             </div>
-          </div>
+          </DashboardPanel>
         </div>
 
         <div className="dashboard-side-stack">
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div style={sectionTitleStyle}>Budget Health</div>
-              <div style={sectionDescriptionStyle}>
-                สัดส่วนการใช้งบและจุดเสี่ยงที่ควรจับตาในภาพรวม
-              </div>
-            </div>
-
+          <DashboardPanel
+            title="Budget Health"
+            description="สัดส่วนการใช้งบและจุดเสี่ยงที่ควรจับตาในภาพรวม"
+          >
             <div
+              className="dashboard-budget-status"
               style={{
-                borderRadius: '18px',
-                padding: '18px',
-                background: utilizationTone.background,
-                border: `1px solid ${utilizationTone.border}`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
+                '--status-bg': utilizationTone.soft,
+                '--status-color': utilizationTone.text,
+                '--status-accent': utilizationTone.accent,
               }}
             >
               <div>
-                <div style={{ fontSize: '12px', fontWeight: '700', color: utilizationTone.subtle }}>
-                  Spending status
-                </div>
-                <div style={{ marginTop: '8px', fontSize: '26px', fontWeight: '800', color: utilizationTone.text }}>
-                  {formatMetric(data?.kpis?.budgetUtilization, 'percent')}
-                </div>
+                <span>Spending status</span>
+                <strong>{formatMetric(data?.kpis?.budgetUtilization, 'percent')}</strong>
               </div>
 
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  color: utilizationTone.text,
-                  fontSize: '13px',
-                  fontWeight: '700',
-                }}
-              >
+              <div className="dashboard-budget-status-label">
                 {(data?.kpis?.budgetUtilization || 0) > 85 ? <ArrowUpRight size={18} /> : <ArrowDownRight size={18} />}
                 {(data?.kpis?.budgetUtilization || 0) > 85 ? 'ควรตรวจสอบงบใกล้เต็ม' : 'ยังอยู่ในกรอบใช้งบ'}
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div className="dashboard-row-stack">
               {data?.budgetBreakdown?.map((item) => (
                 <BudgetRow key={item.key} item={item} />
               ))}
             </div>
-          </div>
+          </DashboardPanel>
 
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div style={sectionTitleStyle}>Attention Today</div>
-              <div style={sectionDescriptionStyle}>
-                จุดที่ควรเปิดไปจัดการต่อทันทีจากข้อมูล summary ชุดนี้
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <DashboardPanel
+            title="Attention Today"
+            description="จุดที่ควรเปิดไปจัดการต่อทันทีจากข้อมูล summary ชุดนี้"
+          >
+            <div className="dashboard-row-stack">
               {data?.attentionItems?.map((item) => (
                 <AttentionItem key={item.key} item={item} />
               ))}
             </div>
-          </div>
+          </DashboardPanel>
+
+          <DashboardPanel
+            title="Recent Actions"
+            description="เหตุการณ์ล่าสุดจากการอนุมัติ transaction และ input request"
+          >
+            <div className="dashboard-timeline">
+              {data?.recentActions?.length ? (
+                data.recentActions.map((item, index) => (
+                  <div key={item.id} className="dashboard-timeline-item">
+                    <div className="dashboard-timeline-marker" data-active={index === 0 ? 'true' : undefined} />
+
+                    <div className="dashboard-timeline-content">
+                      <time>{formatDateTime(item.time)}</time>
+                      <p>{item.action || '-'}</p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="dashboard-empty-state">ยังไม่มีกิจกรรมล่าสุดให้แสดง</div>
+              )}
+            </div>
+          </DashboardPanel>
         </div>
       </section>
 
-      <section className="dashboard-bottom-grid">
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={sectionTitleStyle}>Recent Actions</div>
-            <div style={sectionDescriptionStyle}>
-              เหตุการณ์ล่าสุดจากการอนุมัติ transaction และ input request
-            </div>
-          </div>
-
-          <div className="dashboard-timeline">
-            {data?.recentActions?.length ? (
-              data.recentActions.map((item, index) => (
-                <div key={item.id} className="dashboard-timeline-item">
-                  <div
-                    style={{
-                      width: '12px',
-                      height: '12px',
-                      borderRadius: '999px',
-                      background: index === 0 ? '#27a57a' : '#c4a470',
-                      marginTop: '6px',
-                      flexShrink: 0,
-                    }}
-                  />
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: '700', color: '#8b7355' }}>
-                      {formatDateTime(item.time)}
-                    </div>
-                    <div style={{ fontSize: '14px', lineHeight: 1.7, color: '#1f2937' }}>
-                      {item.action || '-'}
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div
-                style={{
-                  padding: '18px',
-                  borderRadius: '16px',
-                  background: '#faf7f2',
-                  color: '#6b7280',
-                  fontSize: '14px',
-                }}
-              >
-                ยังไม่มีกิจกรรมล่าสุดให้แสดง
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={sectionTitleStyle}>What This Dashboard Means</div>
-            <div style={sectionDescriptionStyle}>
-              หากต้องการให้หน้า dashboard ชัดขึ้นกว่าเดิม ควรตอบ 3 คำถามนี้ให้ได้ใน 5 วินาที
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {[
-              {
-                title: 'เรามีงบเหลือเท่าไร',
-                detail: `ตอนนี้งบคงเหลือ ${formatMetric(data?.kpis?.remainingBudget, 'currency')} จากงบรวม ${formatMetric(data?.kpis?.totalBudget, 'currency')}`,
-              },
-              {
-                title: 'เงินเข้าออกสมดุลไหม',
-                detail: `Net cashflow ปัจจุบันอยู่ที่ ${formatMetric(data?.kpis?.netCashflow, 'currency')}`,
-              },
-              {
-                title: 'มีอะไรติดค้างต้องรีบเคลียร์',
-                detail: `มี ${formatMetric(data?.kpis?.pendingApprovalCount, 'number')} รายการรออนุมัติ และยอดค้างชำระ ${formatMetric(data?.kpis?.overdueAmount, 'currency')}`,
-              },
-            ].map((item) => (
-              <div
-                key={item.title}
-                style={{
-                  padding: '16px 18px',
-                  borderRadius: '16px',
-                  background: '#faf7f2',
-                  border: '1px solid #eee5d7',
-                }}
-              >
-                <div style={{ fontSize: '14px', fontWeight: '700', color: '#1f2937' }}>{item.title}</div>
-                <div style={{ marginTop: '8px', fontSize: '13px', lineHeight: 1.7, color: '#6b7280' }}>
-                  {item.detail}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+      <section className="dashboard-signal-grid" aria-label="Portfolio signals">
+        {portfolioSignals.map((item) => (
+          <article key={item.title} className={`dashboard-signal-card dashboard-signal-${item.tone}`}>
+            <span>{item.title}</span>
+            <strong>{item.value}</strong>
+            <p>{item.detail}</p>
+          </article>
+        ))}
       </section>
     </div>
   );

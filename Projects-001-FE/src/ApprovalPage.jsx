@@ -11,6 +11,7 @@ import {
   rejectAdminInputRequest,
   updateAdminInputRequest,
 } from './api';
+import { canMutateAdminData, getStoredAuthUser } from './auth';
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All Statuses' },
@@ -401,10 +402,11 @@ function ApprovalPage() {
   }
 
   const projectOptions = [{ project_id: '', name: 'ทุกโครงการ' }, ...projects];
-  const canEdit = selectedRequest ? isReviewableStatus(selectedRequest.status) : false;
+  const canMutateApprovals = canMutateAdminData(getStoredAuthUser());
+  const canEdit = canMutateApprovals && selectedRequest ? isReviewableStatus(selectedRequest.status) : false;
   const canApprove = canEdit;
   const canReject = canEdit;
-  const canMarkPaid = selectedRequest?.status === 'APPROVED';
+  const canMarkPaid = canMutateApprovals && selectedRequest?.status === 'APPROVED';
   const canPreviewReceipt = Boolean(receiptPreview?.signed_url);
   const isPreviewImage = (receiptPreview?.content_type || '').startsWith('image/');
   const isPreviewPdf = (receiptPreview?.content_type || '') === 'application/pdf';
@@ -784,7 +786,7 @@ function ApprovalPage() {
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Payment Reference</span>
-                  <input style={inputStyle} value={editor.payment_reference} onChange={handleEditorChange('payment_reference')} />
+                  <input style={inputStyle} value={editor.payment_reference} onChange={handleEditorChange('payment_reference')} disabled={!canMutateApprovals} />
                 </label>
               </div>
 
@@ -806,10 +808,12 @@ function ApprovalPage() {
                   style={{ ...inputStyle, resize: 'vertical', minHeight: '78px' }}
                   value={editor.review_note}
                   onChange={handleEditorChange('review_note')}
+                  disabled={!canMutateApprovals}
                 />
               </label>
 
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '6px' }}>
+              {canMutateApprovals ? (
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '6px' }}>
                 <button
                   type="button"
                   onClick={handleSave}
@@ -892,7 +896,12 @@ function ApprovalPage() {
                   <CircleDollarSign size={16} />
                   {busyAction === 'mark-paid' ? 'Marking Paid...' : 'Mark Paid'}
                 </button>
-              </div>
+                </div>
+              ) : (
+                <div style={{ marginTop: '6px', padding: '12px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '13px', lineHeight: 1.5 }}>
+                  Read-only admin access. Owner permission is required to edit, approve, reject, or mark requests as paid.
+                </div>
+              )}
 
               <div style={{ marginTop: '8px', padding: '14px', borderRadius: '16px', backgroundColor: '#f7f4ef' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>

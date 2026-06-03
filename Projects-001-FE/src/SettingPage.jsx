@@ -9,13 +9,14 @@ import {
   updateSettingAdmin,
   updateSettingSubcontractor,
 } from './api';
+import { canMutateAdminData, getStoredAuthUser } from './auth';
 import Loading from './components/Loading';
 
 const sectionCardStyle = {
   backgroundColor: 'var(--card-bg)',
-  borderRadius: '24px',
+  borderRadius: '12px',
   border: '1px solid var(--border-color)',
-  boxShadow: '0 8px 24px rgba(15, 23, 42, 0.04)',
+  boxShadow: 'none',
 };
 
 const inputStyle = {
@@ -39,10 +40,10 @@ const labelStyle = {
 };
 
 const buttonStyle = (tone = 'primary') => ({
-  border: tone === 'ghost' ? '1px solid var(--border-color)' : 'none',
-  backgroundColor: tone === 'primary' ? 'var(--accent-gold)' : tone === 'danger' ? '#e85d4d' : '#fff',
-  color: tone === 'ghost' ? 'var(--text-main)' : '#fff',
-  borderRadius: '12px',
+  border: tone === 'ghost' ? '1px solid var(--secondary)' : 'none',
+  backgroundColor: tone === 'primary' ? 'var(--primary)' : tone === 'danger' ? '#de5b52' : '#fff',
+  color: tone === 'ghost' ? 'var(--secondary)' : '#fff',
+  borderRadius: '8px',
   padding: '12px 14px',
   fontWeight: '700',
   cursor: 'pointer',
@@ -117,6 +118,7 @@ function SettingPage() {
     display_name: '',
     is_active: true,
   });
+  const canMutateSettings = canMutateAdminData(getStoredAuthUser());
 
   const loadPage = async () => {
     setLoading(true);
@@ -210,10 +212,12 @@ function SettingPage() {
   const selectedAdmin = admins.find((item) => item.id === selectedAdminId);
 
   const updateSubField = (field, value) => {
+    if (!canMutateSettings) return;
     setSubForm((current) => ({ ...current, [field]: value }));
   };
 
   const toggleAssignedProject = (projectId) => {
+    if (!canMutateSettings) return;
     setSubForm((current) => {
       const currentIds = Array.isArray(current.assigned_project_ids) ? current.assigned_project_ids : [];
       return {
@@ -226,6 +230,7 @@ function SettingPage() {
   };
 
   const updateBankField = (field, value) => {
+    if (!canMutateSettings) return;
     setSubForm((current) => ({
       ...current,
       bank_account: {
@@ -236,7 +241,7 @@ function SettingPage() {
   };
 
   const handleSaveSubcontractor = async () => {
-    if (!selectedSubId) return;
+    if (!selectedSubId || !canMutateSettings) return;
     setSaving(true);
     setMessage('');
     setError('');
@@ -254,7 +259,7 @@ function SettingPage() {
   };
 
   const handleResetLine = async () => {
-    if (!selectedSubId) return;
+    if (!selectedSubId || !canMutateSettings) return;
     setSaving(true);
     setMessage('');
     setError('');
@@ -285,6 +290,7 @@ function SettingPage() {
   };
 
   const handleSaveAdmin = async () => {
+    if (!canMutateSettings) return;
     setSaving(true);
     setMessage('');
     setError('');
@@ -310,6 +316,7 @@ function SettingPage() {
   };
 
   const handleNewAdmin = () => {
+    if (!canMutateSettings) return;
     setSelectedAdminId('');
     setAdminForm({
       email: '',
@@ -392,35 +399,35 @@ function SettingPage() {
                 </div>
                 <div>
                   <span style={labelStyle}>Company / Name</span>
-                  <input value={subForm.name} onChange={(event) => updateSubField('name', event.target.value)} style={inputStyle} />
+                  <input value={subForm.name} onChange={(event) => updateSubField('name', event.target.value)} style={inputStyle} disabled={!canMutateSettings} />
                 </div>
                 <div>
                   <span style={labelStyle}>Default Contact Name</span>
-                  <input value={subForm.contact_name} onChange={(event) => updateSubField('contact_name', event.target.value)} style={inputStyle} />
+                  <input value={subForm.contact_name} onChange={(event) => updateSubField('contact_name', event.target.value)} style={inputStyle} disabled={!canMutateSettings} />
                 </div>
                 <div>
                   <span style={labelStyle}>Default Phone</span>
-                  <input value={subForm.phone} onChange={(event) => updateSubField('phone', event.target.value)} style={inputStyle} />
+                  <input value={subForm.phone} onChange={(event) => updateSubField('phone', event.target.value)} style={inputStyle} disabled={!canMutateSettings} />
                 </div>
                 <div>
                   <span style={labelStyle}>Tax ID</span>
-                  <input value={subForm.tax_id} onChange={(event) => updateSubField('tax_id', event.target.value)} style={inputStyle} />
+                  <input value={subForm.tax_id} onChange={(event) => updateSubField('tax_id', event.target.value)} style={inputStyle} disabled={!canMutateSettings} />
                 </div>
                 <div>
                   <span style={labelStyle}>VAT Rate</span>
-                  <input type="number" step="0.01" value={subForm.vat_rate} onChange={(event) => updateSubField('vat_rate', Number(event.target.value))} style={inputStyle} />
+                  <input type="number" step="0.01" value={subForm.vat_rate} onChange={(event) => updateSubField('vat_rate', Number(event.target.value))} style={inputStyle} disabled={!canMutateSettings} />
                 </div>
                 <div>
                   <span style={labelStyle}>WHT Rate</span>
-                  <input type="number" step="0.01" value={subForm.wht_rate} onChange={(event) => updateSubField('wht_rate', Number(event.target.value))} style={inputStyle} />
+                  <input type="number" step="0.01" value={subForm.wht_rate} onChange={(event) => updateSubField('wht_rate', Number(event.target.value))} style={inputStyle} disabled={!canMutateSettings} />
                 </div>
                 <div>
                   <span style={labelStyle}>Retention Rate</span>
-                  <input type="number" step="0.01" value={subForm.retention_rate} onChange={(event) => updateSubField('retention_rate', Number(event.target.value))} style={inputStyle} />
+                  <input type="number" step="0.01" value={subForm.retention_rate} onChange={(event) => updateSubField('retention_rate', Number(event.target.value))} style={inputStyle} disabled={!canMutateSettings} />
                 </div>
                 <div>
                   <span style={labelStyle}>Active</span>
-                  <select value={subForm.is_active ? 'active' : 'inactive'} onChange={(event) => updateSubField('is_active', event.target.value === 'active')} style={inputStyle}>
+                  <select value={subForm.is_active ? 'active' : 'inactive'} onChange={(event) => updateSubField('is_active', event.target.value === 'active')} style={inputStyle} disabled={!canMutateSettings}>
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
                   </select>
@@ -457,6 +464,7 @@ function SettingPage() {
                             type="checkbox"
                             checked={checked}
                             onChange={() => toggleAssignedProject(projectId)}
+                            disabled={!canMutateSettings}
                           />
                           <span style={{ fontSize: '14px', color: 'var(--text-main)', fontWeight: checked ? '700' : '500' }}>
                             {project.name}
@@ -473,27 +481,27 @@ function SettingPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '16px' }}>
                   <div>
                     <span style={labelStyle}>Bank Name</span>
-                    <input value={subForm.bank_account.bank_name} onChange={(event) => updateBankField('bank_name', event.target.value)} style={inputStyle} />
+                    <input value={subForm.bank_account.bank_name} onChange={(event) => updateBankField('bank_name', event.target.value)} style={inputStyle} disabled={!canMutateSettings} />
                   </div>
                   <div>
                     <span style={labelStyle}>Account No.</span>
-                    <input value={subForm.bank_account.account_no} onChange={(event) => updateBankField('account_no', event.target.value)} style={inputStyle} />
+                    <input value={subForm.bank_account.account_no} onChange={(event) => updateBankField('account_no', event.target.value)} style={inputStyle} disabled={!canMutateSettings} />
                   </div>
                   <div>
                     <span style={labelStyle}>Account Name</span>
-                    <input value={subForm.bank_account.account_name} onChange={(event) => updateBankField('account_name', event.target.value)} style={inputStyle} />
+                    <input value={subForm.bank_account.account_name} onChange={(event) => updateBankField('account_name', event.target.value)} style={inputStyle} disabled={!canMutateSettings} />
                   </div>
                 </div>
               </div>
 
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <button type="button" style={buttonStyle('primary')} onClick={handleSaveSubcontractor} disabled={saving}>
+                <button type="button" style={buttonStyle('primary')} onClick={handleSaveSubcontractor} disabled={saving || !canMutateSettings}>
                   Save Subcontractor
                 </button>
                 <button type="button" style={buttonStyle('ghost')} onClick={handleViewKyc} disabled={saving}>
                   View KYC
                 </button>
-                <button type="button" style={buttonStyle('danger')} onClick={handleResetLine} disabled={saving}>
+                <button type="button" style={buttonStyle('danger')} onClick={handleResetLine} disabled={saving || !canMutateSettings}>
                   Reset LINE Binding
                 </button>
               </div>
@@ -511,7 +519,7 @@ function SettingPage() {
                 bootstrap ด้วย domain ได้ แต่รายชื่อจริงจะจัดการผ่านหน้านี้
               </p>
             </div>
-            <button type="button" style={buttonStyle('ghost')} onClick={handleNewAdmin}>
+            <button type="button" style={buttonStyle('ghost')} onClick={handleNewAdmin} disabled={!canMutateSettings}>
               New Admin
             </button>
           </div>
@@ -546,7 +554,7 @@ function SettingPage() {
                     value={adminForm.email}
                     onChange={(event) => setAdminForm((current) => ({ ...current, email: event.target.value }))}
                     style={inputStyle}
-                    disabled={Boolean(selectedAdmin)}
+                    disabled={Boolean(selectedAdmin) || !canMutateSettings}
                   />
                 </div>
                 <div>
@@ -555,6 +563,7 @@ function SettingPage() {
                     value={adminForm.display_name}
                     onChange={(event) => setAdminForm((current) => ({ ...current, display_name: event.target.value }))}
                     style={inputStyle}
+                    disabled={!canMutateSettings}
                   />
                 </div>
                 <div>
@@ -563,6 +572,7 @@ function SettingPage() {
                     value={adminForm.is_active ? 'active' : 'inactive'}
                     onChange={(event) => setAdminForm((current) => ({ ...current, is_active: event.target.value === 'active' }))}
                     style={inputStyle}
+                    disabled={!canMutateSettings}
                   >
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
@@ -571,7 +581,7 @@ function SettingPage() {
                 <div style={{ fontSize: '13px', color: 'var(--text-muted)', minHeight: '20px' }}>
                   {selectedAdmin ? `Selected admin id: ${selectedAdmin.id}` : 'Create a new admin record using email.'}
                 </div>
-                <button type="button" style={buttonStyle('primary')} onClick={handleSaveAdmin} disabled={saving}>
+                <button type="button" style={buttonStyle('primary')} onClick={handleSaveAdmin} disabled={saving || !canMutateSettings}>
                   {selectedAdmin ? 'Save Admin' : 'Add Admin'}
                 </button>
               </div>

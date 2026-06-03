@@ -2,10 +2,12 @@ import React, { Suspense, lazy, useEffect, useState } from 'react'
 import { BrowserRouter as Router, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Loading from './components/Loading'
+import WorkspaceTopbar from './components/WorkspaceTopbar'
 import {
   getStoredAuthUser,
   getStoredSessionToken,
-  isAdminUser,
+  canAccessOwnerArea,
+  isAdminPortalUser,
   resolvePostLoginPath,
   subscribeToAuthChanges,
 } from './auth'
@@ -20,11 +22,12 @@ const ApprovalPage = lazy(() => import('./ApprovalPage'))
 const ChatAIPage = lazy(() => import('./ChatAIPage'))
 const SettingPage = lazy(() => import('./SettingPage'))
 const ProfilePage = lazy(() => import('./ProfilePage'))
+const SupportPage = lazy(() => import('./SupportPage'))
 const LoginPage = lazy(() => import('./LoginPage'))
 const SignUpPage = lazy(() => import('./SignUpPage'))
 const LineCallbackPage = lazy(() => import('./LineCallbackPage'))
 
-function ProtectedLayout({ adminOnly = false }) {
+function ProtectedLayout({ adminOnly = false, ownerOnly = false }) {
   const location = useLocation()
   const [authUser, setAuthUser] = useState(() => getStoredAuthUser())
   const [sessionToken, setSessionToken] = useState(() => getStoredSessionToken())
@@ -40,7 +43,11 @@ function ProtectedLayout({ adminOnly = false }) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />
   }
 
-  if (adminOnly && !isAdminUser(authUser)) {
+  if (adminOnly && !isAdminPortalUser(authUser)) {
+    return <Navigate to={resolvePostLoginPath(authUser)} replace />
+  }
+
+  if (ownerOnly && !canAccessOwnerArea(authUser)) {
     return <Navigate to={resolvePostLoginPath(authUser)} replace />
   }
 
@@ -48,6 +55,7 @@ function ProtectedLayout({ adminOnly = false }) {
     <>
       <Sidebar />
       <main className="main-content">
+        <WorkspaceTopbar authUser={authUser} pathname={location.pathname} />
         <Suspense fallback={<Loading />}>
           <Outlet />
         </Suspense>
@@ -84,16 +92,20 @@ function AppRoutes() {
         )}
       />
 
-      <Route element={<ProtectedLayout adminOnly />}>
+      <Route element={<ProtectedLayout adminOnly ownerOnly />}>
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/chat-ai" element={<ChatAIPage />} />
+      </Route>
+
+      <Route element={<ProtectedLayout adminOnly />}>
         <Route path="/project" element={<ProjectPage />} />
         <Route path="/project/detail" element={<ProjectDetailPage />} />
         <Route path="/project/detail/:projectId" element={<ProjectDetailPage />} />
         <Route path="/insights" element={<InsightsPage />} />
         <Route path="/approval" element={<ApprovalPage />} />
-        <Route path="/chat-ai" element={<ChatAIPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/setting" element={<SettingPage />} />
+        <Route path="/support" element={<SupportPage />} />
       </Route>
 
       <Route element={<ProtectedLayout />}>
