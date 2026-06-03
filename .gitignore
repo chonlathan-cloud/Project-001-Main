@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Logs
 logs
 *.log
@@ -30,3 +31,13 @@ cloudrun-frontend.build.env
 *.sw?
 backend-runtime-key.json
 .codex/config.toml
+=======
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+>>>>>>> 2f2250d2a1ee041321423a2c25fbcaab0d1935bf
