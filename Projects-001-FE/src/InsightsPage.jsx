@@ -2,12 +2,19 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
+  BadgeDollarSign,
+  CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Download,
   ExternalLink,
+  FileText,
   Filter as FilterIcon,
   RefreshCcw,
   Search,
+  SlidersHorizontal,
+  X,
 } from 'lucide-react';
 import {
   getInsightWarehouseFilters,
@@ -68,13 +75,6 @@ const buttonStyle = {
   fontWeight: '600',
 };
 
-const activeButtonStyle = {
-  ...buttonStyle,
-  backgroundColor: 'var(--primary)',
-  borderColor: 'var(--primary)',
-  color: 'white',
-};
-
 const pageInfoFallback = {
   page: 1,
   pageSize: 25,
@@ -124,50 +124,43 @@ const sourceTypeLabel = (value) => {
 
 function SummaryCard({ card }) {
   const tone = summaryToneStyles[card.tone] || summaryToneStyles.neutral;
+  const summaryText = `${card.key || ''} ${card.label || ''}`.toLowerCase();
+  const hasAmount = card.amount != null;
+  const hasCount = card.count != null;
+  const IconComponent =
+    summaryText.includes('overdue') || summaryText.includes('risk')
+      ? AlertTriangle
+      : summaryText.includes('amount') || summaryText.includes('paid') || summaryText.includes('cash')
+        ? BadgeDollarSign
+        : FileText;
 
   return (
     <div
+      className="insights-summary-card"
       style={{
-        backgroundColor: tone.background,
-        border: `1px solid ${tone.border}`,
-        borderRadius: '12px',
-        padding: '22px',
-        minHeight: '146px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '14px',
-        boxShadow: 'none',
-        flex: '1 1 240px',
+        '--summary-bg': tone.background,
+        '--summary-border': tone.border,
+        '--summary-text': tone.text,
+        '--summary-subtle': tone.subtle,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div
-          style={{
-            width: '38px',
-            height: '38px',
-            borderRadius: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'rgba(255,255,255,0.7)',
-            color: tone.text,
-          }}
-        >
-          <AlertTriangle size={18} />
+      <div className="insights-summary-card-head">
+        <div className="insights-summary-icon">
+          <IconComponent size={18} />
         </div>
         <div>
-          <div style={{ fontSize: '15px', fontWeight: '700', color: tone.text }}>{card.label}</div>
-          <div style={{ fontSize: '12px', color: tone.subtle }}>
-            {card.count == null ? 'Amount Focus' : `${card.count} รายการ`}
+          <div className="insights-summary-label">{card.label}</div>
+          <div className="insights-summary-count">
+            {hasCount ? `${card.count} รายการ` : 'Amount Focus'}
           </div>
         </div>
       </div>
 
-      <div style={{ marginTop: 'auto' }}>
-        <div style={{ fontSize: '26px', fontWeight: '800', color: tone.text }}>
-          {card.amount == null ? '-' : formatCurrency(card.amount)}
+      <div className="insights-summary-body">
+        <div className="insights-summary-value">
+          {hasAmount ? formatCurrency(card.amount) : hasCount ? card.count.toLocaleString('en-US') : '-'}
         </div>
-        <div style={{ marginTop: '8px', fontSize: '12px', color: tone.subtle }}>
+        <div className="insights-summary-description">
           {card.description || '-'}
         </div>
       </div>
@@ -177,11 +170,9 @@ function SummaryCard({ card }) {
 
 function FilterSelect({ label, value, onChange, options }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '180px' }}>
-      <span style={{ fontSize: '12px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase' }}>
-        {label}
-      </span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} style={inputStyle}>
+    <label className="insights-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="insights-input">
         <option value="">ทั้งหมด</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -220,11 +211,9 @@ function MultiSelectFilter({ label, value, onChange, options, size = 4 }) {
 
 function ColumnChooser({ columns, visibleColumns, onToggle }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      <div style={{ fontSize: '12px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase' }}>
-        Visible Columns
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+    <div className="insights-column-chooser">
+      <div className="insights-section-label">Visible Columns</div>
+      <div className="insights-column-buttons">
         {columns.map((column) => {
           const isVisible = visibleColumns.includes(column.key);
           return (
@@ -232,7 +221,7 @@ function ColumnChooser({ columns, visibleColumns, onToggle }) {
               key={column.key}
               type="button"
               onClick={() => onToggle(column.key)}
-              style={isVisible ? activeButtonStyle : buttonStyle}
+              className={isVisible ? 'insights-chip-button active' : 'insights-chip-button'}
             >
               {column.label}
             </button>
@@ -289,6 +278,7 @@ const InsightsPage = () => {
   const [exportFormat, setExportFormat] = useState('csv');
   const [duplicateOnly, setDuplicateOnly] = useState(false);
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(25);
   const [loadingMetadata, setLoadingMetadata] = useState(true);
@@ -467,309 +457,419 @@ const InsightsPage = () => {
     setPage(1);
   };
 
+  const getOptionLabel = (options, value) =>
+    options.find((option) => option.value === value || option.key === value)?.label || prettifyValue(value);
+
+  const activeQuickView = quickViews.find((item) => item.key === quickView);
+  const activeFilters = [
+    quickView && quickView !== 'all_records'
+      ? {
+          key: 'quick-view',
+          label: `View: ${activeQuickView?.label || prettifyValue(quickView)}`,
+          onRemove: () => {
+            setQuickView('all_records');
+            setPage(1);
+          },
+        }
+      : null,
+    searchQuery
+      ? {
+          key: 'search',
+          label: `Search: ${searchQuery}`,
+          onRemove: () => {
+            setSearchDraft('');
+            setSearchQuery('');
+            setPage(1);
+          },
+        }
+      : null,
+    projectId
+      ? {
+          key: 'project',
+          label: `Project: ${getOptionLabel(projects, projectId)}`,
+          onRemove: () => {
+            setProjectId('');
+            setPage(1);
+          },
+        }
+      : null,
+    sourceTypeFilter
+      ? {
+          key: 'source',
+          label: `Source: ${getOptionLabel(sourceTypes, sourceTypeFilter)}`,
+          onRemove: () => {
+            setSourceTypeFilter('');
+            setPage(1);
+          },
+        }
+      : null,
+    statusFilter
+      ? {
+          key: 'status',
+          label: `Status: ${getOptionLabel(statuses, statusFilter)}`,
+          onRemove: () => {
+            setStatusFilter('');
+            setPage(1);
+          },
+        }
+      : null,
+    entryTypeFilter
+      ? {
+          key: 'entry-type',
+          label: `Entry: ${getOptionLabel(entryTypes, entryTypeFilter)}`,
+          onRemove: () => {
+            setEntryTypeFilter('');
+            setPage(1);
+          },
+        }
+      : null,
+    flowDirectionFilter
+      ? {
+          key: 'flow',
+          label: `Flow: ${getOptionLabel(flowDirections, flowDirectionFilter)}`,
+          onRemove: () => {
+            setFlowDirectionFilter('');
+            setPage(1);
+          },
+        }
+      : null,
+    dateFrom
+      ? {
+          key: 'date-from',
+          label: `From: ${dateFrom}`,
+          onRemove: () => {
+            setDateFrom('');
+            setPage(1);
+          },
+        }
+      : null,
+    dateTo
+      ? {
+          key: 'date-to',
+          label: `To: ${dateTo}`,
+          onRemove: () => {
+            setDateTo('');
+            setPage(1);
+          },
+        }
+      : null,
+    duplicateOnly
+      ? {
+          key: 'duplicate',
+          label: 'Duplicate only',
+          onRemove: () => {
+            setDuplicateOnly(false);
+            setPage(1);
+          },
+        }
+      : null,
+    overdueOnly
+      ? {
+          key: 'overdue',
+          label: 'Overdue only',
+          onRemove: () => {
+            setOverdueOnly(false);
+            setPage(1);
+          },
+        }
+      : null,
+  ].filter(Boolean);
+
   return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', marginBottom: '28px', flexWrap: 'wrap' }}>
-        <div>
-          <h1 style={{ fontSize: '32px', fontWeight: '800', margin: '0 0 8px 0', color: '#111827' }}>
+    <div className="insights-page">
+      <section className="insights-hero">
+        <div className="insights-hero-copy">
+          <div className="insights-kicker">
+            <FileText size={15} />
             Insight Warehouse
-          </h1>
-          <p style={{ color: '#6B7280', margin: 0, fontSize: '14px', maxWidth: '720px' }}>
+          </div>
+          <h1>Insight Warehouse</h1>
+          <p>
             รวมข้อมูลจาก Input, Installment และ Transaction ไว้ในมุมมองเดียวเพื่อให้ admin ค้นหา กรอง และเปิดงานต่อได้ทันที
           </p>
-          <div style={{ marginTop: '10px', fontSize: '12px', color: '#9ca3af' }}>
+          <div className="insights-hero-meta">
+            <CalendarDays size={15} />
             {lastUpdatedAt ? `Last updated ${formatDateTime(lastUpdatedAt)}` : 'Last updated not available yet'}
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <a href={exportUrl} style={{ ...buttonStyle, textDecoration: 'none' }}>
-            <ExternalLink size={16} />
+        <div className="insights-actions">
+          <a href={exportUrl} className="insights-button insights-button-primary">
+            <Download size={16} />
             Export {exportFormat.toUpperCase()}
           </a>
-          <button type="button" onClick={resetFilters} style={buttonStyle}>
+          <button type="button" onClick={resetFilters} className="insights-button">
             <RefreshCcw size={16} />
-            Reset Filters
+            Reset
           </button>
         </div>
-      </div>
+      </section>
 
-      <div
-        style={{
-          backgroundColor: 'white',
-          borderRadius: '12px',
-          padding: '24px',
-          border: '1px solid #f1f5f9',
-          marginBottom: '24px',
-          boxShadow: 'none',
-          position: 'sticky',
-          top: '18px',
-          zIndex: 5,
-        }}
-      >
-        <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <label style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <span style={{ fontSize: '12px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase' }}>
-              Global Search
-            </span>
-            <div style={{ position: 'relative' }}>
+      <nav className="insights-quick-tabs" aria-label="Insight quick views">
+        {quickViews.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className={quickView === item.key ? 'active' : ''}
+            onClick={() => {
+              setQuickView(item.key || 'all_records');
+              setPage(1);
+            }}
+            title={item.description}
+          >
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      <section className="insights-filter-panel">
+        <form onSubmit={handleSearchSubmit} className="insights-search-form">
+          <label className="insights-search-field">
+            <span>Global Search</span>
+            <div className="insights-search-input-wrap">
+              <Search size={17} />
               <input
                 type="text"
                 value={searchDraft}
                 onChange={(event) => setSearchDraft(event.target.value)}
                 placeholder="ค้นหาเลขเอกสาร, project, actor, note"
-                style={{ ...inputStyle, paddingLeft: '40px' }}
-              />
-              <Search
-                size={18}
-                color="#9ca3af"
-                style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)' }}
               />
             </div>
           </label>
 
-          <button type="submit" style={buttonStyle}>
-            <Search size={16} />
-            Search
-          </button>
-        </form>
-
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '20px' }}>
-          <FilterSelect label="Quick View" value={quickView} onChange={(value) => { setQuickView(value || 'all_records'); setPage(1); }} options={quickViews.map((item) => ({ value: item.key, label: item.label }))} />
-          <FilterSelect label="Project" value={projectId} onChange={(value) => { setProjectId(value); setPage(1); }} options={projects} />
-          <FilterSelect label="Date Field" value={dateField} onChange={(value) => { setDateField(value || 'event_date'); setPage(1); }} options={dateFields} />
-          <FilterSelect label="Sort By" value={sortBy} onChange={(value) => setSortBy(value)} options={sortFields} />
           <FilterSelect
-            label="Sort Order"
-            value={sortOrder}
-            onChange={(value) => setSortOrder(value || 'desc')}
-            options={[
-              { value: 'desc', label: 'Newest First' },
-              { value: 'asc', label: 'Oldest First' },
-            ]}
+            label="Project"
+            value={projectId}
+            onChange={(value) => {
+              setProjectId(value);
+              setPage(1);
+            }}
+            options={projects}
           />
-          <FilterSelect
-            label="Export Format"
-            value={exportFormat}
-            onChange={(value) => setExportFormat(value || 'csv')}
-            options={exportFormats}
-          />
-        </div>
 
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '18px', alignItems: 'flex-start' }}>
-          <FilterSelect label="Source" value={sourceTypeFilter} onChange={(value) => { setSourceTypeFilter(value); setPage(1); }} options={sourceTypes} />
-          <FilterSelect label="Status" value={statusFilter} onChange={(value) => { setStatusFilter(value); setPage(1); }} options={statuses} />
-          <FilterSelect label="Entry Type" value={entryTypeFilter} onChange={(value) => { setEntryTypeFilter(value); setPage(1); }} options={entryTypes} />
-          <FilterSelect label="Flow Direction" value={flowDirectionFilter} onChange={(value) => { setFlowDirectionFilter(value); setPage(1); }} options={flowDirections} />
-        </div>
-
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '18px' }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '180px' }}>
-            <span style={{ fontSize: '12px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase' }}>
-              Date From
-            </span>
+          <label className="insights-field">
+            <span>Date From</span>
             <input
               type="date"
               value={dateFrom}
-              onChange={(event) => { setDateFrom(event.target.value); setPage(1); }}
-              style={inputStyle}
+              onChange={(event) => {
+                setDateFrom(event.target.value);
+                setPage(1);
+              }}
+              className="insights-input"
             />
           </label>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '180px' }}>
-            <span style={{ fontSize: '12px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase' }}>
-              Date To
-            </span>
+
+          <label className="insights-field">
+            <span>Date To</span>
             <input
               type="date"
               value={dateTo}
-              onChange={(event) => { setDateTo(event.target.value); setPage(1); }}
-              style={inputStyle}
+              onChange={(event) => {
+                setDateTo(event.target.value);
+                setPage(1);
+              }}
+              className="insights-input"
             />
           </label>
-        </div>
 
-        <div style={{ marginTop: '18px' }}>
-          <ColumnChooser
-            columns={columns}
-            visibleColumns={visibleColumns}
-            onToggle={(columnKey) =>
-              setVisibleColumns((current) =>
-                current.includes(columnKey)
-                  ? (current.length > 1 ? current.filter((item) => item !== columnKey) : current)
-                  : [...current, columnKey]
-              )
-            }
-          />
-        </div>
-
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '18px' }}>
-          <button type="button" onClick={() => { setDuplicateOnly((current) => !current); setPage(1); }} style={duplicateOnly ? activeButtonStyle : buttonStyle}>
-            <FilterIcon size={15} />
-            Duplicate Only
+          <button type="submit" className="insights-button insights-search-button">
+            <Search size={16} />
+            Search
           </button>
-          <button type="button" onClick={() => { setOverdueOnly((current) => !current); setPage(1); }} style={overdueOnly ? activeButtonStyle : buttonStyle}>
-            <AlertTriangle size={15} />
-            Overdue Only
-          </button>
-        </div>
-      </div>
 
-      <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', marginBottom: '24px' }}>
+          <button
+            type="button"
+            onClick={() => setShowAdvancedFilters((current) => !current)}
+            className="insights-button insights-advanced-toggle"
+            aria-expanded={showAdvancedFilters}
+          >
+            <SlidersHorizontal size={16} />
+            Advanced
+            <ChevronDown size={16} className={showAdvancedFilters ? 'open' : ''} />
+          </button>
+        </form>
+
+        {activeFilters.length ? (
+          <div className="insights-active-filters" aria-label="Active filters">
+            {activeFilters.map((filter) => (
+              <button key={filter.key} type="button" onClick={filter.onRemove}>
+                {filter.label}
+                <X size={13} />
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {showAdvancedFilters ? (
+          <div className="insights-advanced-panel">
+            <div className="insights-filter-grid">
+              <FilterSelect label="Date Field" value={dateField} onChange={(value) => { setDateField(value || 'event_date'); setPage(1); }} options={dateFields} />
+              <FilterSelect label="Source" value={sourceTypeFilter} onChange={(value) => { setSourceTypeFilter(value); setPage(1); }} options={sourceTypes} />
+              <FilterSelect label="Status" value={statusFilter} onChange={(value) => { setStatusFilter(value); setPage(1); }} options={statuses} />
+              <FilterSelect label="Entry Type" value={entryTypeFilter} onChange={(value) => { setEntryTypeFilter(value); setPage(1); }} options={entryTypes} />
+              <FilterSelect label="Flow Direction" value={flowDirectionFilter} onChange={(value) => { setFlowDirectionFilter(value); setPage(1); }} options={flowDirections} />
+              <FilterSelect label="Sort By" value={sortBy} onChange={(value) => setSortBy(value)} options={sortFields} />
+              <FilterSelect
+                label="Sort Order"
+                value={sortOrder}
+                onChange={(value) => setSortOrder(value || 'desc')}
+                options={[
+                  { value: 'desc', label: 'Newest First' },
+                  { value: 'asc', label: 'Oldest First' },
+                ]}
+              />
+              <FilterSelect
+                label="Export Format"
+                value={exportFormat}
+                onChange={(value) => setExportFormat(value || 'csv')}
+                options={exportFormats}
+              />
+            </div>
+
+            <div className="insights-toggle-row">
+              <button type="button" onClick={() => { setDuplicateOnly((current) => !current); setPage(1); }} className={duplicateOnly ? 'insights-chip-button active' : 'insights-chip-button'}>
+                <FilterIcon size={15} />
+                Duplicate Only
+              </button>
+              <button type="button" onClick={() => { setOverdueOnly((current) => !current); setPage(1); }} className={overdueOnly ? 'insights-chip-button active' : 'insights-chip-button'}>
+                <AlertTriangle size={15} />
+                Overdue Only
+              </button>
+            </div>
+
+            <ColumnChooser
+              columns={columns}
+              visibleColumns={visibleColumns}
+              onToggle={(columnKey) =>
+                setVisibleColumns((current) =>
+                  current.includes(columnKey)
+                    ? (current.length > 1 ? current.filter((item) => item !== columnKey) : current)
+                    : [...current, columnKey]
+                )
+              }
+            />
+          </div>
+        ) : null}
+      </section>
+
+      <section className="insights-summary-grid">
         {(summary.cards || []).map((card) => (
           <SummaryCard key={card.key} card={card} />
         ))}
-      </div>
+      </section>
 
-      <div
-        style={{
-          backgroundColor: 'white',
-          borderRadius: '12px',
-          padding: '28px',
-          border: '1px solid #f1f5f9',
-          boxShadow: 'none',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
+      {error ? (
+        <div className="insights-error">
+          {error}
+        </div>
+      ) : null}
+
+      <section className="insights-records-panel">
+        <div className="insights-records-header">
           <div>
-            <h2 style={{ fontSize: '20px', fontWeight: '800', margin: 0, color: '#111827' }}>
-              Warehouse Records
-            </h2>
-            <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#6b7280' }}>
-              {pageInfo.totalItems} records found{loadingWarehouse ? ' • refreshing…' : ''}
+            <h2>Warehouse Records</h2>
+            <p>
+              {pageInfo.totalItems} records found{loadingWarehouse ? ' • refreshing...' : ''}
             </p>
           </div>
-          <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+          <div className="insights-page-count">
             Page {pageInfo.page} of {Math.max(pageInfo.totalPages, 1)}
           </div>
         </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: '0 8px', textAlign: 'left' }}>
+        <div className="insights-table-wrap">
+          <table className="insights-table">
             <thead>
-              <tr style={{ color: '#9ca3af', fontSize: '12px', textTransform: 'uppercase' }}>
-                {visibleColumnSet.has('source_type') ? <th style={{ padding: '0 16px 10px 16px', fontWeight: '700' }}>Source</th> : null}
-                {visibleColumnSet.has('reference_no') ? <th style={{ padding: '0 16px 10px 16px', fontWeight: '700' }}>Record</th> : null}
-                {visibleColumnSet.has('project_name') ? <th style={{ padding: '0 16px 10px 16px', fontWeight: '700' }}>Project / Actor</th> : null}
-                {visibleColumnSet.has('status') ? <th style={{ padding: '0 16px 10px 16px', fontWeight: '700' }}>Status</th> : null}
-                {visibleColumnSet.has('amount') ? <th style={{ padding: '0 16px 10px 16px', fontWeight: '700' }}>Amount</th> : null}
-                {visibleColumnSet.has('event_date') ? <th style={{ padding: '0 16px 10px 16px', fontWeight: '700' }}>Event</th> : null}
-                {visibleColumnSet.has('due_date') ? <th style={{ padding: '0 16px 10px 16px', fontWeight: '700' }}>Due Date</th> : null}
-                {visibleColumnSet.has('flags') ? <th style={{ padding: '0 16px 10px 16px', fontWeight: '700' }}>Flags</th> : null}
-                <th style={{ padding: '0 16px 10px 16px', fontWeight: '700' }}>Action</th>
+              <tr>
+                {visibleColumnSet.has('source_type') ? <th>Source</th> : null}
+                {visibleColumnSet.has('reference_no') ? <th>Record</th> : null}
+                {visibleColumnSet.has('project_name') ? <th>Project / Actor</th> : null}
+                {visibleColumnSet.has('status') ? <th>Status</th> : null}
+                {visibleColumnSet.has('amount') ? <th className="numeric">Amount</th> : null}
+                {visibleColumnSet.has('event_date') ? <th>Event</th> : null}
+                {visibleColumnSet.has('due_date') ? <th>Due Date</th> : null}
+                {visibleColumnSet.has('flags') ? <th>Flags</th> : null}
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {rows.length > 0 ? (
                 rows.map((row) => (
-                  <tr key={row.id} style={{ backgroundColor: '#fafaf9', color: '#111827' }}>
+                  <tr
+                    key={row.id}
+                    className={`${row.isOverdue ? 'is-overdue' : ''} ${row.isDuplicateFlag ? 'is-duplicate' : ''}`}
+                  >
                     {visibleColumnSet.has('source_type') ? (
-                      <td style={{ padding: '16px', borderTopLeftRadius: '16px', borderBottomLeftRadius: '16px', verticalAlign: 'top' }}>
-                        <div style={{ fontSize: '12px', fontWeight: '800', color: '#374151', letterSpacing: '0.04em' }}>
-                          {sourceTypeLabel(row.sourceType)}
-                        </div>
-                        <div style={{ marginTop: '8px', fontSize: '12px', color: '#9ca3af' }}>
-                          {row.flowDirection === 'INFLOW' ? 'Cash In' : row.flowDirection === 'OUTFLOW' ? 'Cash Out' : prettifyValue(row.flowDirection)}
+                      <td>
+                        <div className="insights-source-cell">
+                          <strong>{sourceTypeLabel(row.sourceType)}</strong>
+                          <span>
+                            {row.flowDirection === 'INFLOW' ? 'Cash In' : row.flowDirection === 'OUTFLOW' ? 'Cash Out' : prettifyValue(row.flowDirection)}
+                          </span>
                         </div>
                       </td>
                     ) : null}
                     {visibleColumnSet.has('reference_no') ? (
-                      <td style={{ padding: '16px', verticalAlign: 'top', minWidth: '260px' }}>
-                        <div style={{ fontSize: '14px', fontWeight: '700' }}>{row.title || '-'}</div>
-                        <div style={{ marginTop: '6px', fontSize: '12px', color: '#6b7280' }}>
-                          Ref: {row.referenceNo || '-'}
-                        </div>
-                        {row.description ? (
-                          <div style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280', lineHeight: 1.5 }}>
-                            {row.description}
-                          </div>
-                        ) : null}
+                      <td className="insights-record-title-cell">
+                        <strong>{row.title || '-'}</strong>
+                        <span>Ref: {row.referenceNo || '-'}</span>
+                        {row.description ? <p>{row.description}</p> : null}
                       </td>
                     ) : null}
                     {visibleColumnSet.has('project_name') ? (
-                      <td style={{ padding: '16px', verticalAlign: 'top', minWidth: '220px' }}>
-                        <div style={{ fontSize: '13px', fontWeight: '700' }}>{row.projectName || '-'}</div>
-                        <div style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280' }}>
-                          {row.actorName || row.actorId || '-'}
-                        </div>
-                        <div style={{ marginTop: '8px', fontSize: '12px', color: '#9ca3af' }}>
-                          {prettifyValue(row.requestType || row.entryType || '-')}
-                        </div>
+                      <td className="insights-project-cell">
+                        <strong>{row.projectName || '-'}</strong>
+                        <span>{row.actorName || row.actorId || '-'}</span>
+                        <small>{prettifyValue(row.requestType || row.entryType || '-')}</small>
                       </td>
                     ) : null}
                     {visibleColumnSet.has('status') ? (
-                      <td style={{ padding: '16px', verticalAlign: 'top' }}>
-                        <div
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            padding: '6px 10px',
-                            borderRadius: '999px',
-                            backgroundColor: row.isOverdue ? '#fee2e2' : '#f3f4f6',
-                            color: row.isOverdue ? '#b91c1c' : '#374151',
-                            fontSize: '12px',
-                            fontWeight: '700',
-                          }}
-                        >
+                      <td>
+                        <span className={row.isOverdue ? 'insights-status-pill danger' : 'insights-status-pill'}>
                           {prettifyValue(row.status)}
-                        </div>
+                        </span>
                       </td>
                     ) : null}
                     {visibleColumnSet.has('amount') ? (
-                      <td style={{ padding: '16px', verticalAlign: 'top', minWidth: '150px' }}>
-                        <div style={{ fontSize: '14px', fontWeight: '800' }}>
-                          {row.amount == null ? '-' : formatCurrency(row.amount)}
-                        </div>
-                        <div style={{ marginTop: '8px', fontSize: '12px', color: '#9ca3af' }}>
-                          {row.currency || 'THB'}
-                        </div>
+                      <td className="numeric insights-amount-cell">
+                        <strong>{row.amount == null ? '-' : formatCurrency(row.amount)}</strong>
+                        <span>{row.currency || 'THB'}</span>
                       </td>
                     ) : null}
                     {visibleColumnSet.has('event_date') ? (
-                      <td style={{ padding: '16px', verticalAlign: 'top', minWidth: '160px' }}>
-                        <div style={{ fontSize: '13px', fontWeight: '700' }}>{formatDate(row.eventDate)}</div>
-                      </td>
+                      <td className="insights-date-cell">{formatDate(row.eventDate)}</td>
                     ) : null}
                     {visibleColumnSet.has('due_date') ? (
-                      <td style={{ padding: '16px', verticalAlign: 'top', minWidth: '160px' }}>
-                        <div style={{ fontSize: '13px', fontWeight: '700' }}>{formatDate(row.dueDate)}</div>
-                      </td>
+                      <td className="insights-date-cell">{formatDate(row.dueDate)}</td>
                     ) : null}
                     {visibleColumnSet.has('flags') ? (
-                      <td style={{ padding: '16px', verticalAlign: 'top', minWidth: '180px' }}>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                          {row.flags.length > 0 ? row.flags.map((flag) => <FlagPill key={`${row.id}-${flag.key}`} flag={flag} />) : <FlagPill flag={{ label: 'Normal', tone: 'neutral' }} />}
+                      <td>
+                        <div className="insights-flag-list">
+                          {row.flags.length > 0
+                            ? row.flags.map((flag) => <FlagPill key={`${row.id}-${flag.key}`} flag={flag} />)
+                            : <FlagPill flag={{ label: 'Normal', tone: 'neutral' }} />}
                         </div>
                       </td>
                     ) : null}
-                    <td style={{ padding: '16px', borderTopRightRadius: '16px', borderBottomRightRadius: '16px', verticalAlign: 'top' }}>
+                    <td>
                       {row.navigationTarget?.path ? (
-                        <Link
-                          to={row.navigationTarget.path}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            color: '#0f766e',
-                            fontSize: '13px',
-                            fontWeight: '700',
-                            textDecoration: 'none',
-                          }}
-                        >
+                        <Link to={row.navigationTarget.path} className="insights-open-link">
                           {row.navigationTarget.label || 'Open'}
                           <ExternalLink size={14} />
                         </Link>
                       ) : (
-                        <span style={{ fontSize: '12px', color: '#9ca3af' }}>No action</span>
+                        <span className="insights-no-action">No action</span>
                       )}
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={visibleColumns.length + 1} style={{ textAlign: 'center', padding: '56px 20px', color: '#9ca3af' }}>
-                    <Search size={42} strokeWidth={1.5} style={{ marginBottom: '16px' }} />
-                    <div style={{ fontSize: '15px', fontWeight: '700', color: '#6b7280' }}>
-                      {rowsData.emptyStateMessage || 'ไม่พบข้อมูลในขณะนี้'}
+                  <td colSpan={visibleColumns.length + 1}>
+                    <div className="insights-empty-state">
+                      <Search size={38} strokeWidth={1.5} />
+                      <strong>{rowsData.emptyStateMessage || 'ไม่พบข้อมูลในขณะนี้'}</strong>
                     </div>
                   </td>
                 </tr>
@@ -778,21 +878,70 @@ const InsightsPage = () => {
           </table>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginTop: '24px', flexWrap: 'wrap' }}>
-          <div style={{ fontSize: '12px', color: '#6b7280' }}>
+        {rows.length > 0 ? (
+          <div className="insights-mobile-records">
+            {rows.map((row) => (
+              <article
+                key={row.id}
+                className={`${row.isOverdue ? 'is-overdue' : ''} ${row.isDuplicateFlag ? 'is-duplicate' : ''}`}
+              >
+                <div className="insights-mobile-record-head">
+                  <div>
+                    <span>{sourceTypeLabel(row.sourceType)}</span>
+                    <strong>{row.title || '-'}</strong>
+                  </div>
+                  <span className={row.isOverdue ? 'insights-status-pill danger' : 'insights-status-pill'}>
+                    {prettifyValue(row.status)}
+                  </span>
+                </div>
+                <p>{row.description || `Ref: ${row.referenceNo || '-'}`}</p>
+                <dl>
+                  <div>
+                    <dt>Project</dt>
+                    <dd>{row.projectName || '-'}</dd>
+                  </div>
+                  <div>
+                    <dt>Amount</dt>
+                    <dd>{row.amount == null ? '-' : formatCurrency(row.amount)}</dd>
+                  </div>
+                  <div>
+                    <dt>Event</dt>
+                    <dd>{formatDate(row.eventDate)}</dd>
+                  </div>
+                  <div>
+                    <dt>Due</dt>
+                    <dd>{formatDate(row.dueDate)}</dd>
+                  </div>
+                </dl>
+                <div className="insights-mobile-record-foot">
+                  <div className="insights-flag-list">
+                    {row.flags.length > 0
+                      ? row.flags.map((flag) => <FlagPill key={`${row.id}-mobile-${flag.key}`} flag={flag} />)
+                      : <FlagPill flag={{ label: 'Normal', tone: 'neutral' }} />}
+                  </div>
+                  {row.navigationTarget?.path ? (
+                    <Link to={row.navigationTarget.path} className="insights-open-link">
+                      {row.navigationTarget.label || 'Open'}
+                      <ExternalLink size={14} />
+                    </Link>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="insights-pagination">
+          <div>
             Showing {(pageInfo.page - 1) * pageInfo.pageSize + (rows.length ? 1 : 0)}-{(pageInfo.page - 1) * pageInfo.pageSize + rows.length} of {pageInfo.totalItems}
           </div>
 
-          <div style={{ display: 'flex', gap: '10px' }}>
+          <div className="insights-pagination-actions">
             <button
               type="button"
               onClick={() => setPage((current) => Math.max(1, current - 1))}
               disabled={!pageInfo.hasPrevious}
-              style={{
-                ...buttonStyle,
-                opacity: pageInfo.hasPrevious ? 1 : 0.5,
-                cursor: pageInfo.hasPrevious ? 'pointer' : 'not-allowed',
-              }}
+              className="insights-button"
             >
               <ChevronLeft size={16} />
               Previous
@@ -801,19 +950,15 @@ const InsightsPage = () => {
               type="button"
               onClick={() => setPage((current) => current + 1)}
               disabled={!pageInfo.hasNext}
-              style={{
-                ...buttonStyle,
-                opacity: pageInfo.hasNext ? 1 : 0.5,
-                cursor: pageInfo.hasNext ? 'pointer' : 'not-allowed',
-              }}
+              className="insights-button"
             >
               Next
               <ChevronRight size={16} />
             </button>
           </div>
         </div>
-      </div>
-    </>
+      </section>
+    </div>
   );
 };
 
