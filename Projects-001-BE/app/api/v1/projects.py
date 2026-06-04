@@ -89,6 +89,55 @@ def _normalize_compare_text(value: Any) -> str:
     return cleaned
 
 
+def _has_budget_amount(material: Any, labor: Any, total: Any) -> bool:
+    return any(
+        abs(_to_float(value)) > 0.00001
+        for value in (material, labor, total)
+    )
+
+
+def _is_total_like_node(node: dict[str, Any]) -> bool:
+    description = _normalize_compare_text(node.get("description"))
+    item_no = _normalize_compare_text(node.get("item_no"))
+    text = f"{item_no} {description}".strip()
+    return text.startswith("total") or " total " in f" {text} " or text.startswith("รวม")
+
+
+def _budget_value(node: dict[str, Any], key: str, fallback_key: str) -> float:
+    if node.get(key) is not None:
+        return _to_float(node.get(key))
+    return _to_float(node.get(fallback_key))
+
+
+def _rollup_budget_from_children(children: list[dict[str, Any]]) -> dict[str, float]:
+    total_children = [
+        child
+        for child in children
+        if _is_total_like_node(child)
+        and _has_budget_amount(
+            child.get("display_material_budget"),
+            child.get("display_labor_budget"),
+            child.get("display_total_budget"),
+        )
+    ]
+    source_children = total_children or children
+
+    return {
+        "material": sum(
+            _budget_value(child, "display_material_budget", "material_budget")
+            for child in source_children
+        ),
+        "labor": sum(
+            _budget_value(child, "display_labor_budget", "labor_budget")
+            for child in source_children
+        ),
+        "total": sum(
+            _budget_value(child, "display_total_budget", "total_budget")
+            for child in source_children
+        ),
+    }
+
+
 def _build_boq_tree_payload(items: list[BOQItem], parent_id: UUID | None = None) -> list[dict[str, Any]]:
     nodes: list[dict[str, Any]] = []
     for item in items:
@@ -96,6 +145,21 @@ def _build_boq_tree_payload(items: list[BOQItem], parent_id: UUID | None = None)
             continue
 
         children = _build_boq_tree_payload(items, parent_id=item.id)
+        own_material_budget = _to_float(item.total_material)
+        own_labor_budget = _to_float(item.total_labor)
+        own_total_budget = _to_float(item.grand_total)
+        rollup_budget = _rollup_budget_from_children(children)
+        has_own_budget = _has_budget_amount(
+            own_material_budget,
+            own_labor_budget,
+            own_total_budget,
+        )
+        display_material_budget = (
+            own_material_budget if has_own_budget else rollup_budget["material"]
+        )
+        display_labor_budget = own_labor_budget if has_own_budget else rollup_budget["labor"]
+        display_total_budget = own_total_budget if has_own_budget else rollup_budget["total"]
+
         nodes.append(
             {
                 "sheet_name": item.sheet_name,
@@ -105,11 +169,20 @@ def _build_boq_tree_payload(items: list[BOQItem], parent_id: UUID | None = None)
                 "item_no": item.item_no,
                 "qty": _to_float(item.qty) if item.qty is not None else None,
                 "unit": item.unit,
-                "total_budget": _to_float(item.grand_total),
+                "total_budget": own_total_budget,
+                "own_total_budget": own_total_budget,
+                "rollup_total_budget": rollup_budget["total"],
+                "display_total_budget": display_total_budget,
                 "actual_spent": None,
                 "variance": None,
-                "material_budget": _to_float(item.total_material),
-                "labor_budget": _to_float(item.total_labor),
+                "material_budget": own_material_budget,
+                "labor_budget": own_labor_budget,
+                "own_material_budget": own_material_budget,
+                "own_labor_budget": own_labor_budget,
+                "rollup_material_budget": rollup_budget["material"],
+                "rollup_labor_budget": rollup_budget["labor"],
+                "display_material_budget": display_material_budget,
+                "display_labor_budget": display_labor_budget,
                 "customer_price": None,
                 "subcontractor_price": None,
                 "margin_per_unit": None,
@@ -181,9 +254,39 @@ def _build_compare_tree(
             else:
                 match_status = MATCH_STATUS_SUBCONTRACTOR_ONLY
 
-            customer_total_budget = _to_float(customer_node.get("total_budget")) if customer_node else 0.0
+            customer_total_budget = (
+                _budget_value(customer_node, "display_total_budget", "total_budget")
+                if customer_node
+                else 0.0
+            )
             subcontractor_total_budget = (
-                _to_float(subcontractor_node.get("total_budget")) if subcontractor_node else 0.0
+                _budget_value(subcontractor_node, "display_total_budget", "total_budget")
+                if subcontractor_node
+                else 0.0
+            )
+            customer_material_budget = (
+                _budget_value(customer_node, "display_material_budget", "material_budget")
+                if customer_node
+                else 0.0
+            )
+            subcontractor_material_budget = (
+                _budget_value(
+                    subcontractor_node,
+                    "display_material_budget",
+                    "material_budget",
+                )
+                if subcontractor_node
+                else 0.0
+            )
+            customer_labor_budget = (
+                _budget_value(customer_node, "display_labor_budget", "labor_budget")
+                if customer_node
+                else 0.0
+            )
+            subcontractor_labor_budget = (
+                _budget_value(subcontractor_node, "display_labor_budget", "labor_budget")
+                if subcontractor_node
+                else 0.0
             )
             variance = customer_total_budget - subcontractor_total_budget
             margin_percent = (
@@ -222,18 +325,10 @@ def _build_compare_tree(
                     "subcontractor_qty": subcontractor_node.get("qty") if subcontractor_node else None,
                     "customer_total_budget": customer_total_budget,
                     "subcontractor_total_budget": subcontractor_total_budget,
-                    "customer_material_budget": (
-                        _to_float(customer_node.get("material_budget")) if customer_node else 0.0
-                    ),
-                    "subcontractor_material_budget": (
-                        _to_float(subcontractor_node.get("material_budget")) if subcontractor_node else 0.0
-                    ),
-                    "customer_labor_budget": (
-                        _to_float(customer_node.get("labor_budget")) if customer_node else 0.0
-                    ),
-                    "subcontractor_labor_budget": (
-                        _to_float(subcontractor_node.get("labor_budget")) if subcontractor_node else 0.0
-                    ),
+                    "customer_material_budget": customer_material_budget,
+                    "subcontractor_material_budget": subcontractor_material_budget,
+                    "customer_labor_budget": customer_labor_budget,
+                    "subcontractor_labor_budget": subcontractor_labor_budget,
                     "variance": variance,
                     "margin_percent": margin_percent,
                     "match_status": match_status,
@@ -294,11 +389,6 @@ def _execution_summary_items(
     transactions: list[Transaction],
     input_requests: list[InputRequest],
 ) -> list[dict[str, Any]]:
-    pending_installments = [
-        item
-        for item in installments
-        if str(item.status or "").upper() in {"PENDING", "PENDING_ADMIN", "ADVANCE"}
-    ]
     overdue_installments = [
         item
         for item in installments
@@ -310,24 +400,47 @@ def _execution_summary_items(
         for item in input_requests
         if str(item.status or "").upper() == "PENDING_ADMIN"
     ]
+    approved_input_requests = [
+        item for item in input_requests if str(item.status or "").upper() == "APPROVED"
+    ]
+    rejected_input_requests = [
+        item for item in input_requests if str(item.status or "").upper() == "REJECTED"
+    ]
     paid_input_requests = [
         item for item in input_requests if str(item.status or "").upper() == "PAID"
     ]
+
+    def _input_request_approved_amount(item: InputRequest) -> float:
+        return _to_float(
+            item.approved_amount if item.approved_amount is not None else item.amount
+        )
 
     return [
         {
             "key": "approved_transactions",
             "label": "Approved Transactions",
-            "amount": sum(_to_float(item.net_payable or item.base_amount) for item in transactions),
+            "amount": sum(
+                _to_float(item.net_payable or item.base_amount)
+                for item in transactions
+            ),
             "count": len(transactions),
             "tone": "positive",
         },
         {
-            "key": "pending_installments",
-            "label": "Pending Installments",
-            "amount": sum(_to_float(item.amount) for item in pending_installments),
-            "count": len(pending_installments),
-            "tone": "warning",
+            "key": "approved_input_requests",
+            "label": "Approved Input Requests",
+            "amount": sum(
+                _input_request_approved_amount(item) for item in approved_input_requests
+            ),
+            "count": len(approved_input_requests),
+            "tone": "positive",
+        },
+        {
+            "key": "rejected_input_requests",
+            "label": "Rejected Input Requests",
+            "amount": sum(_to_float(item.amount) for item in rejected_input_requests),
+            "count": len(rejected_input_requests),
+            "tone": "danger",
         },
         {
             "key": "overdue_installments",
@@ -347,8 +460,7 @@ def _execution_summary_items(
             "key": "paid_input_requests",
             "label": "Paid Input Requests",
             "amount": sum(
-                _to_float(item.approved_amount if item.approved_amount is not None else item.amount)
-                for item in paid_input_requests
+                _input_request_approved_amount(item) for item in paid_input_requests
             ),
             "count": len(paid_input_requests),
             "tone": "positive",
@@ -566,10 +678,12 @@ async def get_project_boq(
         wbs_summary = [_to_wbs_summary_item(node) for node in compare_tree]
 
         customer_total_budget = sum(
-            _to_float(node.get("total_budget")) for node in customer_tree
+            _budget_value(node, "display_total_budget", "total_budget")
+            for node in customer_tree
         )
         subcontractor_total_budget = sum(
-            _to_float(node.get("total_budget")) for node in subcontractor_tree
+            _budget_value(node, "display_total_budget", "total_budget")
+            for node in subcontractor_tree
         )
         total_variance = customer_total_budget - subcontractor_total_budget
         compare_counts = _count_compare_statuses(compare_tree)

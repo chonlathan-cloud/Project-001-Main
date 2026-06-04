@@ -51,10 +51,11 @@ def _clean_sheet_names(sheet_names: list[str]) -> list[str]:
     seen_sheet_names: set[str] = set()
     for sheet_name in sheet_names:
         normalized = str(sheet_name or "").strip()
-        if not normalized or normalized in seen_sheet_names:
+        sheet_key = normalized.lower()
+        if not normalized or sheet_key in seen_sheet_names:
             continue
         cleaned_sheet_names.append(normalized)
-        seen_sheet_names.add(normalized)
+        seen_sheet_names.add(sheet_key)
 
     if not cleaned_sheet_names:
         raise HTTPException(

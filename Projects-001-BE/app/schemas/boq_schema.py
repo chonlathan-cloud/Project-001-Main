@@ -89,6 +89,15 @@ class BOQTreeNode(BaseModel):
     variance: Optional[str] = None
     material_budget: Optional[float] = None
     labor_budget: Optional[float] = None
+    own_total_budget: Optional[float] = None
+    own_material_budget: Optional[float] = None
+    own_labor_budget: Optional[float] = None
+    rollup_total_budget: Optional[float] = None
+    rollup_material_budget: Optional[float] = None
+    rollup_labor_budget: Optional[float] = None
+    display_total_budget: Optional[float] = None
+    display_material_budget: Optional[float] = None
+    display_labor_budget: Optional[float] = None
 
     # Leaf-level pricing
     customer_price: Optional[float] = None

@@ -22,6 +22,15 @@ export function getStoredAuthUser() {
   return parseJson(window.localStorage.getItem(SESSION_USER_KEY), null);
 }
 
+export function updateStoredAuthUser(patch) {
+  if (typeof window === 'undefined') return null;
+  const current = getStoredAuthUser() || {};
+  const nextUser = { ...current, ...(patch || {}) };
+  window.localStorage.setItem(SESSION_USER_KEY, JSON.stringify(nextUser));
+  emitAuthChanged();
+  return nextUser;
+}
+
 export function getStoredPendingLineAuth() {
   if (typeof window === 'undefined') return null;
   return parseJson(window.localStorage.getItem(PENDING_LINE_AUTH_KEY), null);

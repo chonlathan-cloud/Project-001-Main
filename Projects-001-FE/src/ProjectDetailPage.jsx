@@ -4,8 +4,6 @@ import {
   ArrowLeftRight,
   Building2,
   Calculator,
-  ChevronDown,
-  ChevronRight,
   Layers3,
   TriangleAlert,
   Wallet,
@@ -22,6 +20,7 @@ import {
   YAxis,
 } from 'recharts';
 import { getInsightWarehouseRows, getProjectDetailData } from './api';
+import BoqWorkbench from './components/BoqWorkbench';
 import Loading from './components/Loading';
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
@@ -71,47 +70,6 @@ const shortenLabel = (value, maxLength = 26) => {
   if (!cleaned) return '-';
   if (cleaned.length <= maxLength) return cleaned;
   return `${cleaned.slice(0, maxLength - 1)}…`;
-};
-
-const compareToneByStatus = {
-  MATCHED: {
-    background: '#f8fafc',
-    border: '#e2e8f0',
-    subtle: '#64748b',
-    badgeBg: '#e2e8f0',
-    badgeText: '#334155',
-  },
-  CUSTOMER_ONLY: {
-    background: '#eff6ff',
-    border: '#bfdbfe',
-    subtle: '#1d4ed8',
-    badgeBg: '#dbeafe',
-    badgeText: '#1d4ed8',
-  },
-  SUBCONTRACTOR_ONLY: {
-    background: '#fff7ed',
-    border: '#fed7aa',
-    subtle: '#c2410c',
-    badgeBg: '#ffedd5',
-    badgeText: '#c2410c',
-  },
-};
-
-const rawToneByType = {
-  CUSTOMER: {
-    background: '#f8fafc',
-    border: '#dbe4f0',
-    text: '#0f172a',
-    badgeBg: '#e2e8f0',
-    badgeText: '#334155',
-  },
-  SUBCONTRACTOR: {
-    background: '#fcf7ed',
-    border: '#ecdab5',
-    text: '#7c5a10',
-    badgeBg: '#f5e8c8',
-    badgeText: '#8a6113',
-  },
 };
 
 const buildAnalyzePrompt = (row, projectName) => {
@@ -202,103 +160,6 @@ function SummaryCard({ icon, label, value, subtext, tone = 'neutral' }) {
   );
 }
 
-function ViewButton({ active, label, onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        border: '1px solid',
-        borderColor: active ? '#111827' : '#e5e7eb',
-        backgroundColor: active ? '#111827' : '#ffffff',
-        color: active ? '#ffffff' : '#374151',
-        borderRadius: '999px',
-        padding: '10px 14px',
-        cursor: 'pointer',
-        fontSize: '13px',
-        fontWeight: '700',
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-function SheetBadge({ label }) {
-  if (!label) return null;
-
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        padding: '4px 8px',
-        borderRadius: '999px',
-        backgroundColor: '#f3f4f6',
-        color: '#4b5563',
-        fontSize: '11px',
-        fontWeight: '700',
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-function MetricCell({ label, value, tone = 'neutral' }) {
-  const color =
-    tone === 'positive'
-      ? '#166534'
-      : tone === 'danger'
-        ? '#b91c1c'
-        : tone === 'warning'
-          ? '#9a3412'
-          : '#111827';
-
-  return (
-    <div
-      style={{
-        padding: '12px 14px',
-        borderRadius: '14px',
-        backgroundColor: '#ffffff',
-        border: '1px solid #edf2f7',
-      }}
-    >
-      <div style={{ fontSize: '11px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase' }}>
-        {label}
-      </div>
-      <div style={{ marginTop: '8px', fontSize: '16px', fontWeight: '800', color }}>{value}</div>
-    </div>
-  );
-}
-
-function MatchStatusBadge({ status }) {
-  const tone = compareToneByStatus[status] || compareToneByStatus.MATCHED;
-  const label =
-    status === 'CUSTOMER_ONLY'
-      ? 'Customer Only'
-      : status === 'SUBCONTRACTOR_ONLY'
-        ? 'Subcontractor Only'
-        : 'Matched';
-
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        padding: '4px 8px',
-        borderRadius: '999px',
-        backgroundColor: tone.badgeBg,
-        color: tone.badgeText,
-        fontSize: '11px',
-        fontWeight: '700',
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
 function ChartCard({ title, description, children }) {
   return (
     <div
@@ -340,212 +201,6 @@ function ChartEmptyState({ message }) {
       }}
     >
       {message}
-    </div>
-  );
-}
-
-function CompareNodeCard({ node, depth = 0 }) {
-  const [expanded, setExpanded] = useState(depth === 0);
-  const hasChildren = Array.isArray(node.children) && node.children.length > 0;
-  const tone = compareToneByStatus[node.matchStatus] || compareToneByStatus.MATCHED;
-  const varianceTone = node.variance > 0 ? 'positive' : node.variance < 0 ? 'danger' : 'neutral';
-
-  return (
-    <div
-      style={{
-        border: `1px solid ${tone.border}`,
-        backgroundColor: tone.background,
-        borderRadius: '20px',
-        padding: depth === 0 ? '20px' : '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '14px',
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-            <SheetBadge label={node.sheetName} />
-            <MatchStatusBadge status={node.matchStatus} />
-            {node.itemNo ? (
-              <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: '700' }}>
-                Item {node.itemNo}
-              </span>
-            ) : null}
-          </div>
-
-          <div>
-            <div style={{ fontSize: depth === 0 ? '18px' : '16px', fontWeight: '800', color: '#111827' }}>
-              {node.description || '-'}
-            </div>
-            <div style={{ marginTop: '6px', fontSize: '12px', color: tone.subtle }}>
-              WBS Level {node.wbsLevel} {node.unit ? `• Unit ${node.unit}` : ''}
-            </div>
-          </div>
-        </div>
-
-        {hasChildren ? (
-          <button
-            type="button"
-            onClick={() => setExpanded((current) => !current)}
-            style={{
-              border: '1px solid #d1d5db',
-              backgroundColor: 'white',
-              width: '34px',
-              height: '34px',
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              flexShrink: 0,
-            }}
-          >
-            {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-          </button>
-        ) : null}
-      </div>
-
-      <div className="project-detail-node-grid">
-        <MetricCell label="Customer" value={formatCurrency(node.customerTotalBudget)} />
-        <MetricCell label="Subcontractor" value={formatCurrency(node.subcontractorTotalBudget)} />
-        <MetricCell
-          label="Variance"
-          value={formatCurrency(node.variance)}
-          tone={varianceTone}
-        />
-        <MetricCell
-          label="Margin %"
-          value={node.marginPercent == null ? '-' : formatPercent(node.marginPercent)}
-          tone={varianceTone}
-        />
-        <MetricCell label="Customer Material" value={formatCurrency(node.customerMaterialBudget)} />
-        <MetricCell label="Sub Material" value={formatCurrency(node.subcontractorMaterialBudget)} />
-        <MetricCell label="Customer Labor" value={formatCurrency(node.customerLaborBudget)} />
-        <MetricCell label="Sub Labor" value={formatCurrency(node.subcontractorLaborBudget)} />
-      </div>
-
-      {node.customerQty != null || node.subcontractorQty != null ? (
-        <div style={{ fontSize: '12px', color: '#6b7280' }}>
-          Qty Compare: Customer {node.customerQty ?? '-'} / Subcontractor {node.subcontractorQty ?? '-'}
-        </div>
-      ) : null}
-
-      {hasChildren && expanded ? (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '12px',
-            paddingTop: '14px',
-            borderTop: '1px solid rgba(148, 163, 184, 0.18)',
-          }}
-        >
-          {node.children.map((child) => (
-            <CompareNodeCard key={child.key} node={child} depth={depth + 1} />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function RawNodeCard({ node, mode = 'CUSTOMER', depth = 0 }) {
-  const [expanded, setExpanded] = useState(depth === 0);
-  const hasChildren = Array.isArray(node.children) && node.children.length > 0;
-  const tone = rawToneByType[mode] || rawToneByType.CUSTOMER;
-
-  return (
-    <div
-      style={{
-        border: `1px solid ${tone.border}`,
-        backgroundColor: tone.background,
-        borderRadius: '20px',
-        padding: depth === 0 ? '20px' : '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '14px',
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-            <SheetBadge label={node.sheetName} />
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                padding: '4px 8px',
-                borderRadius: '999px',
-                backgroundColor: tone.badgeBg,
-                color: tone.badgeText,
-                fontSize: '11px',
-                fontWeight: '700',
-              }}
-            >
-              {mode}
-            </span>
-            {node.itemNo ? (
-              <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: '700' }}>
-                Item {node.itemNo}
-              </span>
-            ) : null}
-          </div>
-
-          <div>
-            <div style={{ fontSize: depth === 0 ? '18px' : '16px', fontWeight: '800', color: '#111827' }}>
-              {node.description || '-'}
-            </div>
-            <div style={{ marginTop: '6px', fontSize: '12px', color: '#6b7280' }}>
-              WBS Level {node.wbsLevel} {node.unit ? `• Unit ${node.unit}` : ''}
-            </div>
-          </div>
-        </div>
-
-        {hasChildren ? (
-          <button
-            type="button"
-            onClick={() => setExpanded((current) => !current)}
-            style={{
-              border: '1px solid #d1d5db',
-              backgroundColor: 'white',
-              width: '34px',
-              height: '34px',
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              flexShrink: 0,
-            }}
-          >
-            {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-          </button>
-        ) : null}
-      </div>
-
-      <div className="project-detail-node-grid">
-        <MetricCell label="Total" value={formatCurrency(node.totalBudget)} />
-        <MetricCell label="Material" value={formatCurrency(node.materialBudget)} />
-        <MetricCell label="Labor" value={formatCurrency(node.laborBudget)} />
-        <MetricCell label="Qty" value={node.qty == null ? '-' : `${node.qty}`} />
-      </div>
-
-      {hasChildren && expanded ? (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '12px',
-            paddingTop: '14px',
-            borderTop: '1px solid rgba(148, 163, 184, 0.18)',
-          }}
-        >
-          {node.children.map((child) => (
-            <RawNodeCard key={child.key} node={child} mode={mode} depth={depth + 1} />
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -858,15 +513,6 @@ function ProjectDetailPage() {
   const customerTree = Array.isArray(data?.customerTree) ? data.customerTree : [];
   const subcontractorTree = Array.isArray(data?.subcontractorTree) ? data.subcontractorTree : [];
   const compareTree = Array.isArray(data?.compareTree) ? data.compareTree : [];
-  const selectedTree =
-    activeView === 'compare'
-      ? compareTree
-      : activeView === 'customer'
-        ? customerTree
-        : subcontractorTree;
-  const filteredTree = sheetFilter === 'ALL'
-    ? selectedTree
-    : selectedTree.filter((node) => (node.sheetName || '') === sheetFilter);
   const hasCustomerBoq = customerTree.length > 0;
   const hasSubcontractorBoq = subcontractorTree.length > 0;
   const compareSummary = data?.compareSummary || {};
@@ -1230,7 +876,7 @@ function ProjectDetailPage() {
 
         <ChartCard
           title="Execution Status"
-          description="ดูผลกระทบด้าน execution ของโครงการจาก approved transactions, pending installments และ input requests"
+          description="ดูผลกระทบด้าน execution ของโครงการจาก approved transactions, rejected requests และ input requests"
         >
           {executionChartData.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
@@ -1299,74 +945,16 @@ function ProjectDetailPage() {
         </ChartCard>
       </section>
 
-      <section className="card" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '18px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <div>
-            <h2 style={{ fontSize: '24px', marginBottom: '8px' }}>BOQ Tree Views</h2>
-            <p style={{ color: '#6b7280', margin: 0, lineHeight: 1.6 }}>
-              Compare ใช้สำหรับเทียบสอง BOQ บน WBS เดียวกัน ส่วน Customer และ Subcontractor ใช้สำหรับดู tree ดิบของแต่ละฝั่ง
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-            <ViewButton active={activeView === 'compare'} label="Compare" onClick={() => setActiveView('compare')} />
-            <ViewButton active={activeView === 'customer'} label="Customer" onClick={() => setActiveView('customer')} />
-            <ViewButton active={activeView === 'subcontractor'} label="Subcontractor" onClick={() => setActiveView('subcontractor')} />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: '13px', fontWeight: '700', color: '#6b7280' }}>Sheet Filter</span>
-          <select
-            value={sheetFilter}
-            onChange={(event) => setSheetFilter(event.target.value)}
-            style={{
-              border: '1px solid #e5e7eb',
-              borderRadius: '12px',
-              padding: '10px 12px',
-              backgroundColor: 'white',
-              fontSize: '13px',
-              fontWeight: '600',
-              color: '#374151',
-            }}
-          >
-            <option value="ALL">All Sheets</option>
-            {sheetNames.map((sheetName) => (
-              <option key={sheetName} value={sheetName}>
-                {sheetName}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {filteredTree.length === 0 ? (
-          <div
-            style={{
-              borderRadius: '18px',
-              border: '1px dashed #d1d5db',
-              backgroundColor: '#fafafa',
-              padding: '22px',
-              color: '#6b7280',
-            }}
-          >
-            ไม่พบข้อมูลสำหรับมุมมอง {activeView} {sheetFilter !== 'ALL' ? `ใน sheet ${sheetFilter}` : ''}
-          </div>
-        ) : (
-          <div className="project-detail-tree-grid">
-            {filteredTree.map((node) =>
-              activeView === 'compare' ? (
-                <CompareNodeCard key={node.key} node={node} />
-              ) : (
-                <RawNodeCard
-                  key={node.key}
-                  node={node}
-                  mode={activeView === 'customer' ? 'CUSTOMER' : 'SUBCONTRACTOR'}
-                />
-              )
-            )}
-          </div>
-        )}
-      </section>
+      <BoqWorkbench
+        activeView={activeView}
+        onActiveViewChange={setActiveView}
+        sheetFilter={sheetFilter}
+        onSheetFilterChange={setSheetFilter}
+        sheetNames={sheetNames}
+        customerTree={customerTree}
+        subcontractorTree={subcontractorTree}
+        compareTree={compareTree}
+      />
 
       <div
         className="card"

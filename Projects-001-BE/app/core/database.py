@@ -9,7 +9,13 @@ from app.core.config import get_settings
 
 DATABASE_URL = get_settings().database_url
 
-engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
 
 AsyncSessionLocal = sessionmaker(
     bind=engine,

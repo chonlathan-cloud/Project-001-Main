@@ -103,6 +103,11 @@ class AdminDirectoryEntry:
     id: str
     email: str
     display_name: str | None
+    contact_name: str | None
+    phone: str | None
+    company: str | None
+    time: str | None
+    profile_image_storage_key: str | None
     role: str
     is_active: bool
     granted_by: str | None
@@ -141,6 +146,11 @@ def _admin_from_dict(doc_id: str, payload: dict[str, Any]) -> AdminDirectoryEntr
         id=doc_id,
         email=_normalize_email(str(payload.get("email") or "")),
         display_name=_normalize_optional_text(payload.get("display_name")),
+        contact_name=_normalize_optional_text(payload.get("contact_name")),
+        phone=_normalize_optional_text(payload.get("phone")),
+        company=_normalize_optional_text(payload.get("company")),
+        time=_normalize_optional_text(payload.get("time")),
+        profile_image_storage_key=_normalize_optional_text(payload.get("profile_image_storage_key")),
         # Existing managed admin records predate role support. Treat them as
         # owners so old full-access admins do not silently lose permissions.
         role=_normalize_admin_role(payload.get("role"), default=OWNER_ROLE),
@@ -415,6 +425,48 @@ def update_admin(doc_id: str, *, updates: dict[str, Any]) -> AdminDirectoryEntry
     _ensure_can_remove_owner(current, payload)
     client.collection(ADMINS_COLLECTION).document(doc_id).set(payload, merge=True)
     merged = asdict(current)
+    merged.update(payload)
+    return _admin_from_dict(doc_id, merged)
+
+
+def update_admin_profile(
+    email: str,
+    *,
+    updates: dict[str, Any],
+    role: str = ADMIN_ROLE,
+) -> AdminDirectoryEntry:
+    client = _ensure_firestore()
+    normalized_email = _normalize_email(email)
+    doc_id = _email_doc_id(normalized_email)
+    existing = get_admin_by_email(normalized_email)
+    now = _now_utc()
+    payload: dict[str, Any] = {"email": normalized_email, "updated_at": now}
+
+    if existing is None:
+        payload["role"] = _normalize_admin_role(role)
+        payload["is_active"] = True
+        payload["created_at"] = now
+
+    if "display_name" in updates:
+        payload["display_name"] = _normalize_optional_text(updates["display_name"])
+    if "contact_name" in updates:
+        payload["contact_name"] = _normalize_optional_text(updates["contact_name"])
+    if "phone" in updates:
+        payload["phone"] = _normalize_optional_text(updates["phone"])
+    if "company" in updates:
+        payload["company"] = _normalize_optional_text(updates["company"])
+    if "time" in updates:
+        payload["time"] = _normalize_optional_text(updates["time"])
+    if "profile_image_storage_key" in updates:
+        payload["profile_image_storage_key"] = _normalize_optional_text(
+            updates["profile_image_storage_key"]
+        )
+
+    client.collection(ADMINS_COLLECTION).document(doc_id).set(payload, merge=True)
+    if existing is None:
+        return _admin_from_dict(doc_id, payload)
+
+    merged = asdict(existing)
     merged.update(payload)
     return _admin_from_dict(doc_id, merged)
 

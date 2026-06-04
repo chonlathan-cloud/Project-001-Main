@@ -1,15 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Briefcase,
+  Camera,
   CheckCircle,
   Clock,
   DollarSign,
+  Edit3,
   IdCard,
   Landmark,
   Phone,
+  RotateCcw,
+  Save,
   TrendingUp,
   User,
   Users,
+  X,
 } from 'lucide-react';
 import {
   BarChart,
@@ -20,8 +25,11 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { fetchData, resetProfileAvatar, uploadProfileAvatar } from './api';
+import { fetchData, resetProfileAvatar, updateCurrentProfile, uploadProfileAvatar } from './api';
+import { updateStoredAuthUser } from './auth';
 import Loading from './components/Loading';
+
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 const cardStyle = {
   backgroundColor: 'var(--card-bg)',
@@ -29,6 +37,48 @@ const cardStyle = {
   padding: '24px',
   boxShadow: 'none',
   border: '1px solid var(--border-color)',
+};
+
+const labelStyle = {
+  display: 'block',
+  marginBottom: '8px',
+  fontSize: '12px',
+  fontWeight: '700',
+  color: 'var(--text-muted)',
+  textTransform: 'uppercase',
+};
+
+const inputStyle = {
+  width: '100%',
+  border: '1px solid var(--border-color)',
+  borderRadius: '8px',
+  padding: '11px 12px',
+  fontSize: '14px',
+  color: 'var(--text-main)',
+  backgroundColor: '#fff',
+  outlineColor: 'var(--primary)',
+  boxSizing: 'border-box',
+};
+
+const buttonStyle = (variant = 'secondary') => ({
+  minHeight: '40px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '8px',
+  padding: '10px 14px',
+  borderRadius: '8px',
+  border: variant === 'primary' ? '1px solid var(--primary)' : '1px solid var(--secondary)',
+  backgroundColor: variant === 'primary' ? 'var(--primary)' : 'var(--card-bg)',
+  color: variant === 'primary' ? '#fff' : 'var(--secondary)',
+  cursor: 'pointer',
+  fontWeight: '700',
+  fontSize: '13px',
+});
+
+const disabledButtonStyle = {
+  opacity: 0.62,
+  cursor: 'not-allowed',
 };
 
 const iconMap = {
@@ -47,6 +97,53 @@ const buildInitials = (value) => {
 };
 
 const findStat = (stats, id) => stats.find((stat) => stat.id === id);
+
+const buildProfileForm = (user = {}) => ({
+  displayName: user.display_name || user.name || user.contact_name || '',
+  contactName: user.contact_name || user.name || user.display_name || '',
+  phone: user.phone || '',
+  company: user.company || '',
+  time: user.time || 'Asia/Bangkok',
+  bankName: user.bank_account?.bank_name || '',
+  accountNo: user.bank_account?.account_no || '',
+  accountName: user.bank_account?.account_name || '',
+});
+
+const hasBankDetails = (user = {}) => {
+  const bankAccount = user.bank_account || {};
+  return Boolean(bankAccount.bank_name || bankAccount.account_no || bankAccount.account_name);
+};
+
+const resolveUpdatedUser = (currentUser, response, form) => {
+  const responseUser = response?.user || response?.profile || response || {};
+  return {
+    ...currentUser,
+    ...responseUser,
+    display_name: responseUser.display_name ?? form.displayName,
+    name: responseUser.name ?? form.displayName,
+    contact_name: responseUser.contact_name ?? form.contactName,
+    phone: responseUser.phone ?? form.phone,
+    company: responseUser.company ?? form.company,
+    time: responseUser.time ?? form.time,
+    bank_account: responseUser.bank_account ?? {
+      ...(currentUser.bank_account || {}),
+      bank_name: form.bankName,
+      account_no: form.accountNo,
+      account_name: form.accountName,
+    },
+  };
+};
+
+const syncStoredProfileUser = (user = {}) => {
+  updateStoredAuthUser({
+    display_name: user.display_name || user.name || user.contact_name || '',
+    email: user.email || '',
+    role: user.role_key || user.role || '',
+    profile_image_url: user.profile_image_url || '',
+    line_picture_url: user.line_picture_url || '',
+    avatar_url: user.avatar_url || '',
+  });
+};
 
 const StatCard = ({ value, label, subtext, icon }) => {
   const IconComponent = icon;
@@ -119,29 +216,72 @@ const DetailRow = ({ label, value }) => (
   </div>
 );
 
-const DetailPanel = ({ title, icon, children }) => {
+const DetailPanel = ({ title, icon, actions, children }) => {
   const IconComponent = icon;
 
   return (
     <div style={cardStyle}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '18px' }}>
-        <div style={{
-          width: '36px',
-          height: '36px',
-          borderRadius: '10px',
-          backgroundColor: 'rgba(79, 111, 100, 0.1)',
-          color: 'var(--primary)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
-          <IconComponent size={19} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+          <div style={{
+            width: '36px',
+            height: '36px',
+            borderRadius: '10px',
+            backgroundColor: 'rgba(79, 111, 100, 0.1)',
+            color: 'var(--primary)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flex: '0 0 auto',
+          }}>
+            <IconComponent size={19} />
+          </div>
+          <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--text-main)' }}>{title}</h2>
         </div>
-        <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--text-main)' }}>{title}</h2>
+        {actions ? <div style={{ flex: '0 0 auto' }}>{actions}</div> : null}
       </div>
       <div style={{ display: 'grid', gap: '16px' }}>
         {children}
       </div>
+    </div>
+  );
+};
+
+const EditableField = ({ label, value, onChange, type = 'text', readOnly = false }) => (
+  <label style={{ display: 'grid' }}>
+    <span style={labelStyle}>{label}</span>
+    <input
+      type={type}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      style={{
+        ...inputStyle,
+        backgroundColor: readOnly ? 'var(--bg-primary)' : '#fff',
+        color: readOnly ? 'var(--text-muted)' : 'var(--text-main)',
+      }}
+      readOnly={readOnly}
+    />
+  </label>
+);
+
+const StatusMessage = ({ tone = 'neutral', children }) => {
+  if (!children) return null;
+  const toneStyle = tone === 'danger'
+    ? { backgroundColor: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }
+    : { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0', color: '#166534' };
+
+  return (
+    <div
+      style={{
+        ...toneStyle,
+        border: `1px solid ${toneStyle.borderColor}`,
+        borderRadius: '8px',
+        padding: '10px 12px',
+        fontSize: '13px',
+        fontWeight: '700',
+      }}
+    >
+      {children}
     </div>
   );
 };
@@ -151,6 +291,11 @@ const ProfilePage = () => {
   const [loading, setLoading] = useState(true);
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [avatarError, setAvatarError] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
+  const [profileForm, setProfileForm] = useState(buildProfileForm());
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMessage, setProfileMessage] = useState('');
+  const [profileError, setProfileError] = useState('');
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -166,6 +311,11 @@ const ProfilePage = () => {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (!profileData?.user || isEditing) return;
+    setProfileForm(buildProfileForm(profileData.user));
+  }, [isEditing, profileData?.user]);
+
   const handlePickAvatar = () => {
     fileInputRef.current?.click();
   };
@@ -174,20 +324,34 @@ const ProfilePage = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    if (!file.type.startsWith('image/')) {
+      setAvatarError('Please choose an image file.');
+      event.target.value = '';
+      return;
+    }
+
+    if (file.size > MAX_AVATAR_BYTES) {
+      setAvatarError('Profile photo must be 5MB or smaller.');
+      event.target.value = '';
+      return;
+    }
+
     try {
       setAvatarSaving(true);
       setAvatarError('');
       const response = await uploadProfileAvatar(file);
       setProfileData((current) => {
         if (!current?.user) return current;
+        const updatedUser = {
+          ...current.user,
+          profile_image_url: response?.profile_image_url || '',
+          line_picture_url: response?.line_picture_url || current.user.line_picture_url || '',
+          avatar_url: response?.avatar_url || '',
+        };
+        syncStoredProfileUser(updatedUser);
         return {
           ...current,
-          user: {
-            ...current.user,
-            profile_image_url: response?.profile_image_url || '',
-            line_picture_url: response?.line_picture_url || current.user.line_picture_url || '',
-            avatar_url: response?.avatar_url || '',
-          },
+          user: updatedUser,
         };
       });
     } catch (error) {
@@ -207,20 +371,96 @@ const ProfilePage = () => {
       const response = await resetProfileAvatar();
       setProfileData((current) => {
         if (!current?.user) return current;
+        const updatedUser = {
+          ...current.user,
+          profile_image_url: '',
+          line_picture_url: response?.line_picture_url || current.user.line_picture_url || '',
+          avatar_url: response?.avatar_url || response?.line_picture_url || '',
+        };
+        syncStoredProfileUser(updatedUser);
         return {
           ...current,
-          user: {
-            ...current.user,
-            profile_image_url: '',
-            line_picture_url: response?.line_picture_url || current.user.line_picture_url || '',
-            avatar_url: response?.avatar_url || response?.line_picture_url || '',
-          },
+          user: updatedUser,
         };
       });
     } catch (error) {
       setAvatarError(error.message || 'Failed to reset profile avatar.');
     } finally {
       setAvatarSaving(false);
+    }
+  };
+
+  const updateProfileField = (field) => (value) => {
+    setProfileForm((current) => ({ ...current, [field]: value }));
+    setProfileMessage('');
+    setProfileError('');
+  };
+
+  const handleStartEditing = () => {
+    setProfileForm(buildProfileForm(profileData?.user));
+    setProfileMessage('');
+    setProfileError('');
+    setIsEditing(true);
+  };
+
+  const handleCancelEditing = () => {
+    setProfileForm(buildProfileForm(profileData?.user));
+    setProfileMessage('');
+    setProfileError('');
+    setIsEditing(false);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!profileData?.user) return;
+
+    const currentUser = profileData.user;
+    const includeBank = hasBankDetails(currentUser) || String(currentUser.role || '').toLowerCase() === 'subcontractor';
+    const payload = {
+      display_name: profileForm.displayName.trim(),
+      name: profileForm.displayName.trim(),
+      contact_name: profileForm.contactName.trim(),
+      phone: profileForm.phone.trim(),
+      company: profileForm.company.trim(),
+      time: profileForm.time.trim(),
+      ...(includeBank
+        ? {
+            bank_account: {
+              bank_name: profileForm.bankName.trim(),
+              account_no: profileForm.accountNo.trim(),
+              account_name: profileForm.accountName.trim(),
+            },
+          }
+        : {}),
+    };
+
+    try {
+      setProfileSaving(true);
+      setProfileMessage('');
+      setProfileError('');
+      const response = await updateCurrentProfile(payload);
+      const updatedUser = resolveUpdatedUser(currentUser, response, {
+        ...profileForm,
+        displayName: payload.display_name,
+        contactName: payload.contact_name,
+        phone: payload.phone,
+        company: payload.company,
+        time: payload.time,
+      });
+
+      setProfileData((current) => ({
+        ...current,
+        ...(response?.stats ? { stats: response.stats } : {}),
+        ...(response?.chartData ? { chartData: response.chartData } : {}),
+        user: updatedUser,
+      }));
+      setProfileForm(buildProfileForm(updatedUser));
+      syncStoredProfileUser(updatedUser);
+      setIsEditing(false);
+      setProfileMessage('Profile updated.');
+    } catch (error) {
+      setProfileError(error.message || 'Failed to update profile.');
+    } finally {
+      setProfileSaving(false);
     }
   };
 
@@ -245,9 +485,12 @@ const ProfilePage = () => {
   const assignedProjectIds = Array.isArray(user.assigned_project_ids)
     ? user.assigned_project_ids.filter(Boolean)
     : [];
-  const profileName = user.contact_name || user.name;
+  const profileName = user.display_name || user.contact_name || user.name;
   const avatarUrl = user.profile_image_url || user.line_picture_url || user.avatar_url;
-  const isSubcontractor = user.role === 'Subcontractor';
+  const roleLabel = user.role || 'User';
+  const normalizedRole = String(user.role || '').trim().toLowerCase();
+  const isSubcontractor = normalizedRole === 'subcontractor';
+  const shouldShowBankFields = isSubcontractor || hasBankDetails(user);
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
@@ -256,7 +499,7 @@ const ProfilePage = () => {
           My Profile
         </h1>
         <p style={{ margin: 0, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          Subcontractor identity, assigned work, and payment defaults used by input requests.
+          Account identity, work context, and profile defaults used across the portal.
         </p>
       </div>
 
@@ -266,62 +509,66 @@ const ProfilePage = () => {
 
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--primary)', marginBottom: '6px' }}>
-              {user.role || 'Subcontractor'}
+              {roleLabel}
             </div>
-            <h2 style={{ fontSize: '26px', margin: 0, color: 'var(--text-main)' }}>{user.name || 'Unknown'}</h2>
+            <h2 style={{ fontSize: '26px', margin: 0, color: 'var(--text-main)' }}>
+              {user.display_name || user.name || user.contact_name || 'Unknown'}
+            </h2>
             <div style={{ color: 'var(--text-muted)', marginTop: '8px', lineHeight: 1.5 }}>
-              {user.company || 'Subcontractor Portal'}
+              {user.company || (isSubcontractor ? 'Subcontractor Portal' : 'Manee Son Construction')}
             </div>
 
-            {isSubcontractor ? (
-              <>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  style={{ display: 'none' }}
-                  onChange={handleAvatarChange}
-                />
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '18px' }}>
-                  <button
-                    type="button"
-                    onClick={handlePickAvatar}
-                    disabled={avatarSaving}
-                    style={{
-                      padding: '10px 14px',
-                      borderRadius: '8px',
-                      border: '1px solid var(--primary)',
-                      backgroundColor: 'var(--primary)',
-                      color: '#fff',
-                      cursor: avatarSaving ? 'wait' : 'pointer',
-                      fontWeight: '700',
-                    }}
-                  >
-                    {avatarSaving ? 'Uploading...' : 'Change Photo'}
-                  </button>
-                  {user.profile_image_url ? (
-                    <button
-                      type="button"
-                      onClick={handleResetAvatar}
-                      disabled={avatarSaving}
-                      style={{
-                        padding: '10px 14px',
-                        borderRadius: '8px',
-                        border: '1px solid var(--secondary)',
-                        backgroundColor: 'var(--card-bg)',
-                        color: 'var(--secondary)',
-                        cursor: avatarSaving ? 'wait' : 'pointer',
-                        fontWeight: '700',
-                      }}
-                    >
-                      Use LINE Avatar
-                    </button>
-                  ) : null}
-                </div>
-                {avatarError ? (
-                  <div style={{ marginTop: '12px', fontSize: '13px', color: '#b42318' }}>{avatarError}</div>
-                ) : null}
-              </>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={handleAvatarChange}
+            />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '18px' }}>
+              <button
+                type="button"
+                onClick={handlePickAvatar}
+                disabled={avatarSaving}
+                style={{
+                  ...buttonStyle('primary'),
+                  ...(avatarSaving ? disabledButtonStyle : {}),
+                  cursor: avatarSaving ? 'wait' : 'pointer',
+                }}
+              >
+                <Camera size={16} />
+                {avatarSaving ? 'Uploading...' : 'Change Photo'}
+              </button>
+              {avatarUrl ? (
+                <button
+                  type="button"
+                  onClick={handleResetAvatar}
+                  disabled={avatarSaving}
+                  style={{
+                    ...buttonStyle('secondary'),
+                    ...(avatarSaving ? disabledButtonStyle : {}),
+                    cursor: avatarSaving ? 'wait' : 'pointer',
+                  }}
+                >
+                  <RotateCcw size={16} />
+                  {isSubcontractor ? 'Use LINE Avatar' : 'Remove Photo'}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={handleStartEditing}
+                disabled={profileSaving || isEditing}
+                style={{
+                  ...buttonStyle('secondary'),
+                  ...(profileSaving || isEditing ? disabledButtonStyle : {}),
+                }}
+              >
+                <Edit3 size={16} />
+                {isEditing ? 'Editing' : 'Edit Profile'}
+              </button>
+            </div>
+            {avatarError ? (
+              <div style={{ marginTop: '12px', fontSize: '13px', color: '#b42318' }}>{avatarError}</div>
             ) : null}
           </div>
         </div>
@@ -351,6 +598,11 @@ const ProfilePage = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      <div style={{ display: 'grid', gap: '10px', marginTop: '18px' }}>
+        <StatusMessage>{profileMessage}</StatusMessage>
+        <StatusMessage tone="danger">{profileError}</StatusMessage>
       </div>
 
       <div className="profile-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginTop: '24px' }}>
@@ -407,26 +659,111 @@ const ProfilePage = () => {
         </div>
 
         <div style={{ display: 'grid', gap: '24px' }}>
-          <DetailPanel title="Business Details" icon={IdCard}>
-            <DetailRow label="Contact Name" value={user.contact_name || user.name} />
-            <DetailRow label="Phone" value={user.phone} />
-            <DetailRow label="Email" value={user.email} />
-            <DetailRow label="LINE UID" value={user.line_uid} />
-            <DetailRow
-              label="Assigned Projects"
-              value={assignedProjectIds.length ? assignedProjectIds.join(', ') : '-'}
-            />
+          <DetailPanel
+            title="Profile Information"
+            icon={IdCard}
+            actions={
+              isEditing ? (
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={handleCancelEditing}
+                    disabled={profileSaving}
+                    style={{ ...buttonStyle('secondary'), ...(profileSaving ? disabledButtonStyle : {}) }}
+                  >
+                    <X size={16} />
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveProfile}
+                    disabled={profileSaving}
+                    style={{
+                      ...buttonStyle('primary'),
+                      ...(profileSaving ? disabledButtonStyle : {}),
+                      cursor: profileSaving ? 'wait' : 'pointer',
+                    }}
+                  >
+                    <Save size={16} />
+                    {profileSaving ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              ) : null
+            }
+          >
+            {isEditing ? (
+              <>
+                <EditableField
+                  label="Display Name"
+                  value={profileForm.displayName}
+                  onChange={updateProfileField('displayName')}
+                />
+                <EditableField
+                  label="Contact Name"
+                  value={profileForm.contactName}
+                  onChange={updateProfileField('contactName')}
+                />
+                <EditableField label="Phone" value={profileForm.phone} onChange={updateProfileField('phone')} />
+                <EditableField
+                  label="Company / Organization"
+                  value={profileForm.company}
+                  onChange={updateProfileField('company')}
+                />
+                <EditableField label="Timezone" value={profileForm.time} onChange={updateProfileField('time')} />
+                <EditableField label="Email" value={user.email || ''} onChange={() => {}} readOnly />
+              </>
+            ) : (
+              <>
+                <DetailRow label="Display Name" value={user.display_name || user.name} />
+                <DetailRow label="Contact Name" value={user.contact_name || user.name} />
+                <DetailRow label="Phone" value={user.phone} />
+                <DetailRow label="Email" value={user.email} />
+                {user.line_uid ? <DetailRow label="LINE UID" value={user.line_uid} /> : null}
+                <DetailRow
+                  label="Assigned Projects"
+                  value={assignedProjectIds.length ? assignedProjectIds.join(', ') : '-'}
+                />
+              </>
+            )}
           </DetailPanel>
 
-          <DetailPanel title="Bank Account" icon={Landmark}>
-            <DetailRow label="Bank Name" value={bankAccount.bank_name} />
-            <DetailRow label="Account Number" value={bankAccount.account_no} />
-            <DetailRow label="Account Name" value={bankAccount.account_name} />
-            <DetailRow label="Contact Phone" value={user.phone} />
-          </DetailPanel>
+          {shouldShowBankFields ? (
+            <DetailPanel title="Bank Account" icon={Landmark}>
+              {isEditing ? (
+                <>
+                  <EditableField
+                    label="Bank Name"
+                    value={profileForm.bankName}
+                    onChange={updateProfileField('bankName')}
+                  />
+                  <EditableField
+                    label="Account Number"
+                    value={profileForm.accountNo}
+                    onChange={updateProfileField('accountNo')}
+                  />
+                  <EditableField
+                    label="Account Name"
+                    value={profileForm.accountName}
+                    onChange={updateProfileField('accountName')}
+                  />
+                </>
+              ) : (
+                <>
+                  <DetailRow label="Bank Name" value={bankAccount.bank_name} />
+                  <DetailRow label="Account Number" value={bankAccount.account_no} />
+                  <DetailRow label="Account Name" value={bankAccount.account_name} />
+                  <DetailRow label="Contact Phone" value={user.phone} />
+                </>
+              )}
+            </DetailPanel>
+          ) : null}
 
-          <DetailPanel title="Contract Status" icon={Phone}>
-            <DetailRow label="KYC Status" value="Private signed-URL review" />
+          <DetailPanel title={isSubcontractor ? 'Contract Status' : 'Access Details'} icon={Phone}>
+            {isSubcontractor ? (
+              <DetailRow label="KYC Status" value="Private signed-URL review" />
+            ) : (
+              <DetailRow label="Portal Role" value={roleLabel} />
+            )}
             <DetailRow label="Timezone" value={user.time || 'Asia/Bangkok'} />
           </DetailPanel>
         </div>

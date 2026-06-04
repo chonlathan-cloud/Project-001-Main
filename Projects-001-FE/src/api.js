@@ -212,28 +212,46 @@ async function getProfileData() {
   return buildMockProfileData();
 }
 
-const sanitizeBoqTreeNode = (node, prefix = 'boq-node', index = 0) => ({
-  key: String(node?.key || `${prefix}-${index}`),
-  sheetName: String(node?.sheet_name || '').trim(),
-  boqType: String(node?.boq_type || '').trim(),
-  wbsLevel: toNumber(node?.wbs_level, 1),
-  description: String(node?.description || '').trim(),
-  itemNo: String(node?.item_no || '').trim(),
-  qty: node?.qty == null ? null : toNumber(node.qty),
-  unit: String(node?.unit || '').trim(),
-  totalBudget: toNumber(node?.total_budget),
-  actualSpent: node?.actual_spent == null ? null : toNumber(node.actual_spent),
-  variance: node?.variance == null ? null : String(node.variance).trim(),
-  materialBudget: toNumber(node?.material_budget),
-  laborBudget: toNumber(node?.labor_budget),
-  customerPrice: node?.customer_price == null ? null : toNumber(node.customer_price),
-  subcontractorPrice: node?.subcontractor_price == null ? null : toNumber(node.subcontractor_price),
-  marginPerUnit: node?.margin_per_unit == null ? null : toNumber(node.margin_per_unit),
-  children: Array.isArray(node?.children)
-    ? node.children.map((child, childIndex) =>
-        sanitizeBoqTreeNode(child, `${prefix}-${index}`, childIndex))
-    : [],
-});
+const toOptionalNumber = (value, fallback = 0) =>
+  value == null ? toNumber(fallback) : toNumber(value);
+
+const sanitizeBoqTreeNode = (node, prefix = 'boq-node', index = 0) => {
+  const totalBudget = toNumber(node?.total_budget);
+  const materialBudget = toNumber(node?.material_budget);
+  const laborBudget = toNumber(node?.labor_budget);
+
+  return {
+    key: String(node?.key || `${prefix}-${index}`),
+    sheetName: String(node?.sheet_name || '').trim(),
+    boqType: String(node?.boq_type || '').trim(),
+    wbsLevel: toNumber(node?.wbs_level, 1),
+    description: String(node?.description || '').trim(),
+    itemNo: String(node?.item_no || '').trim(),
+    qty: node?.qty == null ? null : toNumber(node.qty),
+    unit: String(node?.unit || '').trim(),
+    totalBudget,
+    ownTotalBudget: toOptionalNumber(node?.own_total_budget, totalBudget),
+    rollupTotalBudget: toOptionalNumber(node?.rollup_total_budget, 0),
+    displayTotalBudget: toOptionalNumber(node?.display_total_budget, totalBudget),
+    actualSpent: node?.actual_spent == null ? null : toNumber(node.actual_spent),
+    variance: node?.variance == null ? null : String(node.variance).trim(),
+    materialBudget,
+    laborBudget,
+    ownMaterialBudget: toOptionalNumber(node?.own_material_budget, materialBudget),
+    ownLaborBudget: toOptionalNumber(node?.own_labor_budget, laborBudget),
+    rollupMaterialBudget: toOptionalNumber(node?.rollup_material_budget, 0),
+    rollupLaborBudget: toOptionalNumber(node?.rollup_labor_budget, 0),
+    displayMaterialBudget: toOptionalNumber(node?.display_material_budget, materialBudget),
+    displayLaborBudget: toOptionalNumber(node?.display_labor_budget, laborBudget),
+    customerPrice: node?.customer_price == null ? null : toNumber(node.customer_price),
+    subcontractorPrice: node?.subcontractor_price == null ? null : toNumber(node.subcontractor_price),
+    marginPerUnit: node?.margin_per_unit == null ? null : toNumber(node.margin_per_unit),
+    children: Array.isArray(node?.children)
+      ? node.children.map((child, childIndex) =>
+          sanitizeBoqTreeNode(child, `${prefix}-${index}`, childIndex))
+      : [],
+  };
+};
 
 const sanitizeCompareBoqNode = (node, prefix = 'compare-node', index = 0) => ({
   key: String(node?.key || `${prefix}-${index}`),
@@ -1078,6 +1096,13 @@ export async function signUpSubcontractor(payload) {
 
 export async function getCurrentSessionUser() {
   return apiRequest('/api/v1/auth/me');
+}
+
+export async function updateCurrentProfile(payload) {
+  return apiRequest('/api/v1/profile/me', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function uploadProfileAvatar(file) {

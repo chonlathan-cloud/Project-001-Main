@@ -59,6 +59,16 @@ class UpdateSubcontractorProfileRequest(BaseModel):
     is_active: bool | None = None
 
 
+class UpdateMyProfileRequest(BaseModel):
+    display_name: str | None = None
+    name: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    company: str | None = None
+    time: str | None = None
+    bank_account: BankAccountInfo | None = None
+
+
 class AdminDirectoryItem(BaseModel):
     id: str
     email: str

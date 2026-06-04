@@ -17,14 +17,22 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.boq import Project
 from app.models.input_request import InputRequest
+from app.schemas.profile_schema import UpdateMyProfileRequest
 from app.schemas.responses import StandardResponse
 from app.services.gcs_storage_service import (
     generate_signed_url_for_storage_key,
     upload_profile_image_to_storage,
 )
-from app.services.identity_service import get_subcontractor, update_subcontractor_profile
+from app.services.identity_service import (
+    admin_doc_id_for_email,
+    get_admin_by_email,
+    get_subcontractor,
+    update_admin_profile,
+    update_subcontractor_profile,
+)
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
+ADMIN_ROLES = {"admin", "owner"}
 
 
 def _money_value(value: object) -> float:
@@ -220,16 +228,39 @@ async def _build_admin_profile(db: AsyncSession, user: AuthenticatedUser) -> dic
     total_count = await _count_input_requests(db, user)
     approved_total = await _sum_input_amounts(db, user, statuses={"APPROVED", "PAID"})
 
-    role_label = "Owner" if user.role == "owner" else "Admin / Project Manager"
+    admin_profile = get_admin_by_email(user.email) if user.email else None
+    role_key = admin_profile.role if admin_profile else user.role
+    role_label = "Owner" if role_key == "owner" else "Admin / Project Manager"
+    profile_image_url = None
+    if admin_profile and admin_profile.profile_image_storage_key:
+        profile_image_url = await generate_signed_url_for_storage_key(
+            storage_key=admin_profile.profile_image_storage_key,
+            expires_in_minutes=get_settings().signed_url_expires_minutes,
+        )
+    display_name = (
+        admin_profile.display_name
+        if admin_profile and admin_profile.display_name
+        else user.display_name
+    )
+    contact_name = admin_profile.contact_name if admin_profile else None
+    company = admin_profile.company if admin_profile and admin_profile.company else "Manee Son Construction"
+    timezone = admin_profile.time if admin_profile and admin_profile.time else "Asia/Bangkok"
+
     return {
         "user": {
-            "name": user.display_name or user.email or "Admin",
-            "company": "Manee Son Construction",
+            "id": admin_profile.id if admin_profile else None,
+            "name": display_name or user.email or "Admin",
+            "display_name": display_name,
+            "contact_name": contact_name or display_name,
+            "phone": admin_profile.phone if admin_profile else None,
+            "company": company,
             "role": role_label,
-            "role_key": user.role,
-            "permissions": role_permissions(user.role),
-            "time": "Asia/Bangkok",
+            "role_key": role_key,
+            "permissions": role_permissions(role_key),
+            "time": timezone,
             "email": user.email,
+            "profile_image_url": profile_image_url,
+            "avatar_url": profile_image_url,
         },
         "stats": [
             {
@@ -285,17 +316,79 @@ async def get_my_profile(
     return StandardResponse(data=await _build_admin_profile(db, user))
 
 
+@router.put("/me", response_model=StandardResponse[dict])
+async def update_my_profile(
+    request: UpdateMyProfileRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update editable profile fields for the current authenticated user."""
+    updates = request.model_dump(exclude_none=True)
+    if user.role == "subcontractor":
+        if not user.subcontractor_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Subcontractor session does not include subcontractor_id.",
+            )
+
+        subcontractor_updates = {}
+        display_name = updates.get("name") or updates.get("display_name")
+        if display_name is not None:
+            subcontractor_updates["name"] = display_name
+        for field in ("contact_name", "phone", "bank_account"):
+            if field in updates:
+                subcontractor_updates[field] = updates[field]
+
+        if subcontractor_updates:
+            update_subcontractor_profile(user.subcontractor_id, updates=subcontractor_updates)
+        return StandardResponse(data=await _build_subcontractor_profile(db, user))
+
+    if user.role in ADMIN_ROLES:
+        if not user.email:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin session is missing an email address.",
+            )
+
+        admin_updates = {}
+        display_name = updates.get("display_name") or updates.get("name")
+        if display_name is not None:
+            admin_updates["display_name"] = display_name
+        for field in ("contact_name", "phone", "company", "time"):
+            if field in updates:
+                admin_updates[field] = updates[field]
+
+        if admin_updates:
+            update_admin_profile(user.email, updates=admin_updates, role=user.role)
+        return StandardResponse(data=await _build_admin_profile(db, user))
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Profile updates are not available for this role.",
+    )
+
+
 @router.post("/me/avatar", response_model=StandardResponse[dict])
 async def upload_my_avatar(
     file: UploadFile = File(...),
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Upload a custom profile avatar for the authenticated subcontractor."""
+    """Upload a custom profile avatar for the authenticated user."""
     try:
-        if user.role != "subcontractor" or not user.subcontractor_id:
+        if user.role == "subcontractor" and not user.subcontractor_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Subcontractor access is required.",
+                detail="Subcontractor session does not include subcontractor_id.",
+            )
+        if user.role in ADMIN_ROLES and not user.email:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin session is missing an email address.",
+            )
+        if user.role not in ADMIN_ROLES and user.role != "subcontractor":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Profile avatar upload is not available for this role.",
             )
 
         file_bytes = await file.read()
@@ -312,25 +405,41 @@ async def upload_my_avatar(
                 detail="Avatar upload supports image files only.",
             )
 
+        entity_key = (
+            user.subcontractor_id
+            if user.role == "subcontractor"
+            else f"admins/{admin_doc_id_for_email(user.email or '')}"
+        )
         storage_key = await upload_profile_image_to_storage(
             file_bytes=file_bytes,
             file_name=file.filename,
             content_type=content_type,
-            entity_key=user.subcontractor_id,
-        )
-        profile = update_subcontractor_profile(
-            user.subcontractor_id,
-            updates={"profile_image_storage_key": storage_key},
+            entity_key=entity_key,
         )
         signed_url = await generate_signed_url_for_storage_key(
             storage_key=storage_key,
             expires_in_minutes=get_settings().signed_url_expires_minutes,
         )
+
+        line_picture_url = None
+        if user.role == "subcontractor":
+            profile = update_subcontractor_profile(
+                user.subcontractor_id or "",
+                updates={"profile_image_storage_key": storage_key},
+            )
+            line_picture_url = profile.line_picture_url
+        else:
+            update_admin_profile(
+                user.email or "",
+                updates={"profile_image_storage_key": storage_key},
+                role=user.role,
+            )
+
         return StandardResponse(
             data={
                 "profile_image_url": signed_url,
-                "line_picture_url": profile.line_picture_url,
-                "avatar_url": signed_url or profile.line_picture_url,
+                "line_picture_url": line_picture_url,
+                "avatar_url": signed_url or line_picture_url,
                 "message": "Profile avatar uploaded successfully.",
             }
         )
@@ -350,21 +459,41 @@ async def reset_my_avatar(
 ):
     """Remove the custom avatar and fall back to the LINE avatar/default initials."""
     try:
-        if user.role != "subcontractor" or not user.subcontractor_id:
+        if user.role == "subcontractor" and not user.subcontractor_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Subcontractor access is required.",
+                detail="Subcontractor session does not include subcontractor_id.",
+            )
+        if user.role in ADMIN_ROLES and not user.email:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin session is missing an email address.",
+            )
+        if user.role not in ADMIN_ROLES and user.role != "subcontractor":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Profile avatar reset is not available for this role.",
             )
 
-        profile = update_subcontractor_profile(
-            user.subcontractor_id,
-            updates={"profile_image_storage_key": None},
-        )
+        line_picture_url = None
+        if user.role == "subcontractor":
+            profile = update_subcontractor_profile(
+                user.subcontractor_id or "",
+                updates={"profile_image_storage_key": None},
+            )
+            line_picture_url = profile.line_picture_url
+        else:
+            update_admin_profile(
+                user.email or "",
+                updates={"profile_image_storage_key": None},
+                role=user.role,
+            )
+
         return StandardResponse(
             data={
                 "profile_image_url": None,
-                "line_picture_url": profile.line_picture_url,
-                "avatar_url": profile.line_picture_url,
+                "line_picture_url": line_picture_url,
+                "avatar_url": line_picture_url,
                 "message": "Profile avatar reset to LINE avatar/default initials.",
             }
         )
