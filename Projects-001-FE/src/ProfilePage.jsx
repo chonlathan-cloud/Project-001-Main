@@ -414,7 +414,6 @@ const ProfilePage = () => {
     if (!profileData?.user) return;
 
     const currentUser = profileData.user;
-    const includeBank = hasBankDetails(currentUser) || String(currentUser.role || '').toLowerCase() === 'subcontractor';
     const payload = {
       display_name: profileForm.displayName.trim(),
       name: profileForm.displayName.trim(),
@@ -422,15 +421,11 @@ const ProfilePage = () => {
       phone: profileForm.phone.trim(),
       company: profileForm.company.trim(),
       time: profileForm.time.trim(),
-      ...(includeBank
-        ? {
-            bank_account: {
-              bank_name: profileForm.bankName.trim(),
-              account_no: profileForm.accountNo.trim(),
-              account_name: profileForm.accountName.trim(),
-            },
-          }
-        : {}),
+      bank_account: {
+        bank_name: profileForm.bankName.trim(),
+        account_no: profileForm.accountNo.trim(),
+        account_name: profileForm.accountName.trim(),
+      },
     };
 
     try {
@@ -490,7 +485,7 @@ const ProfilePage = () => {
   const roleLabel = user.role || 'User';
   const normalizedRole = String(user.role || '').trim().toLowerCase();
   const isSubcontractor = normalizedRole === 'subcontractor';
-  const shouldShowBankFields = isSubcontractor || hasBankDetails(user);
+  const hasProfileBankDetails = hasBankDetails(user);
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
@@ -727,36 +722,37 @@ const ProfilePage = () => {
             )}
           </DetailPanel>
 
-          {shouldShowBankFields ? (
-            <DetailPanel title="Bank Account" icon={Landmark}>
-              {isEditing ? (
-                <>
-                  <EditableField
-                    label="Bank Name"
-                    value={profileForm.bankName}
-                    onChange={updateProfileField('bankName')}
-                  />
-                  <EditableField
-                    label="Account Number"
-                    value={profileForm.accountNo}
-                    onChange={updateProfileField('accountNo')}
-                  />
-                  <EditableField
-                    label="Account Name"
-                    value={profileForm.accountName}
-                    onChange={updateProfileField('accountName')}
-                  />
-                </>
-              ) : (
-                <>
-                  <DetailRow label="Bank Name" value={bankAccount.bank_name} />
-                  <DetailRow label="Account Number" value={bankAccount.account_no} />
-                  <DetailRow label="Account Name" value={bankAccount.account_name} />
-                  <DetailRow label="Contact Phone" value={user.phone} />
-                </>
-              )}
-            </DetailPanel>
-          ) : null}
+          <DetailPanel title="Banking Information" icon={Landmark}>
+            {isEditing ? (
+              <>
+                <EditableField
+                  label="Bank Name"
+                  value={profileForm.bankName}
+                  onChange={updateProfileField('bankName')}
+                />
+                <EditableField
+                  label="Account Number"
+                  value={profileForm.accountNo}
+                  onChange={updateProfileField('accountNo')}
+                />
+                <EditableField
+                  label="Account Name"
+                  value={profileForm.accountName}
+                  onChange={updateProfileField('accountName')}
+                />
+              </>
+            ) : (
+              <>
+                <DetailRow label="Bank Name" value={bankAccount.bank_name} />
+                <DetailRow label="Account Number" value={bankAccount.account_no} />
+                <DetailRow label="Account Name" value={bankAccount.account_name} />
+                <DetailRow
+                  label="Banking Status"
+                  value={hasProfileBankDetails ? 'Available for transfer records' : 'Not provided'}
+                />
+              </>
+            )}
+          </DetailPanel>
 
           <DetailPanel title={isSubcontractor ? 'Contract Status' : 'Access Details'} icon={Phone}>
             {isSubcontractor ? (

@@ -12,6 +12,7 @@ import {
   updateAdminInputRequest,
 } from './api';
 import { canMutateAdminData, getStoredAuthUser } from './auth';
+import ApprovalPaymentInstructions from './components/ApprovalPaymentInstructions';
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All Statuses' },
@@ -62,6 +63,9 @@ const emptyEditor = {
   request_type: '',
   note: '',
   vendor_name: '',
+  bank_name: '',
+  account_no: '',
+  account_name: '',
   receipt_no: '',
   amount: '',
   review_note: '',
@@ -158,6 +162,9 @@ function ApprovalPage() {
       request_type: request.request_type || '',
       note: request.note || '',
       vendor_name: request.vendor_name || '',
+      bank_name: request.bank_name || request.bank_account?.bank_name || '',
+      account_no: request.account_no || request.bank_account?.account_no || '',
+      account_name: request.account_name || request.bank_account?.account_name || '',
       receipt_no: request.receipt_no || '',
       amount: request.approved_amount ?? request.amount ?? '',
       review_note: request.review_note || '',
@@ -303,6 +310,11 @@ function ApprovalPage() {
         request_type: editor.request_type || null,
         note: editor.note.trim() || null,
         vendor_name: editor.vendor_name.trim() || null,
+        bank_account: {
+          bank_name: editor.bank_name.trim() || null,
+          account_no: editor.account_no.trim() || null,
+          account_name: editor.account_name.trim() || null,
+        },
         receipt_no: editor.receipt_no.trim() || null,
         amount: Number(editor.amount),
       });
@@ -577,6 +589,13 @@ function ApprovalPage() {
                   </div>
                 </div>
               ) : null}
+
+              <ApprovalPaymentInstructions
+                request={selectedRequest}
+                editor={editor}
+                onFieldChange={handleEditorChange}
+                canEdit={canEdit}
+              />
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
@@ -912,6 +931,9 @@ function ApprovalPage() {
                   <div>Requested Amount: {Number(selectedRequest.amount || 0).toLocaleString()} THB</div>
                   <div>Approved Amount: {Number(selectedRequest.approved_amount ?? selectedRequest.amount ?? 0).toLocaleString()} THB</div>
                   <div>Vendor: {selectedRequest.vendor_name || '-'}</div>
+                  <div>Bank: {selectedRequest.bank_name || selectedRequest.bank_account?.bank_name || '-'}</div>
+                  <div>Account No: {selectedRequest.account_no || selectedRequest.bank_account?.account_no || '-'}</div>
+                  <div>Account Name: {selectedRequest.account_name || selectedRequest.bank_account?.account_name || '-'}</div>
                   <div>Receipt No: {selectedRequest.receipt_no || '-'}</div>
                   <div>Document Date: {selectedRequest.document_date || '-'}</div>
                   <div>Receipt File: {selectedRequest.receipt_file_name || '-'}</div>
