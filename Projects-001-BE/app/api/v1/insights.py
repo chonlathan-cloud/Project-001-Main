@@ -21,6 +21,7 @@ from sqlalchemy.orm import noload
 from app.api.deps.auth import AuthenticatedUser, require_admin_user
 from app.core.database import get_db
 from app.models.boq import Project
+from app.models.input_request import InputOptionSuggestion, InputRequest
 from app.schemas.insight_schema import (
     InsightWarehouseColumnDefinition,
     InsightWarehouseExportQuery,
@@ -41,6 +42,8 @@ from app.services.insight_warehouse_service import (
 )
 
 router = APIRouter(prefix="/insights", tags=["Insight Warehouse"])
+
+OPTION_TYPE_TAG = "TAG"
 
 SOURCE_TYPE_OPTIONS = [
     InsightWarehouseFilterOptionItem(value="INPUT_REQUEST", label="Input Requests"),
@@ -134,8 +137,53 @@ COLUMN_OPTIONS = [
     InsightWarehouseColumnDefinition(key="amount", label="Amount", data_type="currency"),
     InsightWarehouseColumnDefinition(key="event_date", label="Event Date", data_type="date"),
     InsightWarehouseColumnDefinition(key="due_date", label="Due Date", data_type="date"),
+    InsightWarehouseColumnDefinition(key="tags", label="Tags", data_type="text", sortable=False),
     InsightWarehouseColumnDefinition(key="flags", label="Flags", data_type="flag", sortable=False),
 ]
+
+
+def _clean_unique_text_values(values: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+    return normalized
+
+
+def _request_tags(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return _clean_unique_text_values([str(item) for item in value if item is not None])
+
+
+async def _load_tag_options(db: AsyncSession) -> list[InsightWarehouseFilterOptionItem]:
+    suggestion_result = await db.execute(
+        select(InputOptionSuggestion.value)
+        .filter(InputOptionSuggestion.option_type == OPTION_TYPE_TAG)
+        .order_by(InputOptionSuggestion.value.asc())
+    )
+    tag_rows = await db.execute(select(InputRequest.tags).where(InputRequest.tags.is_not(None)))
+    values = _clean_unique_text_values(
+        [
+            *list(suggestion_result.scalars().all()),
+            *[
+                tag
+                for tags in tag_rows.scalars().all()
+                for tag in _request_tags(tags)
+            ],
+        ]
+    )
+    return [
+        InsightWarehouseFilterOptionItem(value=value, label=value)
+        for value in values
+    ]
 
 
 def _build_filter_set(
@@ -147,6 +195,7 @@ def _build_filter_set(
     statuses: list[str] | None,
     entry_types: list[str] | None,
     flow_directions: list[str] | None,
+    tags: list[str] | None,
     duplicate_only: bool,
     overdue_only: bool,
     date_field: str,
@@ -163,6 +212,7 @@ def _build_filter_set(
         statuses=statuses or [],
         entry_types=entry_types or [],
         flow_directions=flow_directions or [],
+        tags=tags or [],
         duplicate_only=duplicate_only,
         overdue_only=overdue_only,
         date_field=date_field,
@@ -182,6 +232,7 @@ def _build_rows_query(
     statuses: list[str] | None,
     entry_types: list[str] | None,
     flow_directions: list[str] | None,
+    tags: list[str] | None,
     duplicate_only: bool,
     overdue_only: bool,
     date_field: str,
@@ -202,6 +253,7 @@ def _build_rows_query(
         statuses=statuses or [],
         entry_types=entry_types or [],
         flow_directions=flow_directions or [],
+        tags=tags or [],
         duplicate_only=duplicate_only,
         overdue_only=overdue_only,
         date_field=date_field,
@@ -225,6 +277,7 @@ async def list_insight_warehouse_rows(
     statuses: list[str] | None = Query(default=None),
     entry_types: list[str] | None = Query(default=None),
     flow_directions: list[str] | None = Query(default=None),
+    tags: list[str] | None = Query(default=None),
     duplicate_only: bool = Query(default=False),
     overdue_only: bool = Query(default=False),
     date_field: str = Query(default="event_date"),
@@ -254,6 +307,7 @@ async def list_insight_warehouse_rows(
             statuses=statuses,
             entry_types=entry_types,
             flow_directions=flow_directions,
+            tags=tags,
             duplicate_only=duplicate_only,
             overdue_only=overdue_only,
             date_field=date_field,
@@ -286,6 +340,7 @@ async def get_insight_warehouse_summary(
     statuses: list[str] | None = Query(default=None),
     entry_types: list[str] | None = Query(default=None),
     flow_directions: list[str] | None = Query(default=None),
+    tags: list[str] | None = Query(default=None),
     duplicate_only: bool = Query(default=False),
     overdue_only: bool = Query(default=False),
     date_field: str = Query(default="event_date"),
@@ -308,6 +363,7 @@ async def get_insight_warehouse_summary(
             statuses=statuses,
             entry_types=entry_types,
             flow_directions=flow_directions,
+            tags=tags,
             duplicate_only=duplicate_only,
             overdue_only=overdue_only,
             date_field=date_field,
@@ -336,6 +392,7 @@ async def export_insight_warehouse(
     statuses: list[str] | None = Query(default=None),
     entry_types: list[str] | None = Query(default=None),
     flow_directions: list[str] | None = Query(default=None),
+    tags: list[str] | None = Query(default=None),
     duplicate_only: bool = Query(default=False),
     overdue_only: bool = Query(default=False),
     date_field: str = Query(default="event_date"),
@@ -361,6 +418,7 @@ async def export_insight_warehouse(
             statuses=statuses or [],
             entry_types=entry_types or [],
             flow_directions=flow_directions or [],
+            tags=tags or [],
             duplicate_only=duplicate_only,
             overdue_only=overdue_only,
             date_field=date_field,
@@ -424,6 +482,7 @@ async def get_insight_warehouse_filters(
             statuses=STATUS_OPTIONS,
             entry_types=ENTRY_TYPE_OPTIONS,
             flow_directions=FLOW_DIRECTION_OPTIONS,
+            tags=await _load_tag_options(db),
             quick_views=QUICK_VIEW_OPTIONS,
             columns=COLUMN_OPTIONS,
             date_fields=DATE_FIELD_OPTIONS,

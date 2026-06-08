@@ -85,6 +85,23 @@ def _combine_text_parts(*values: object) -> str:
     return " | ".join(parts)
 
 
+def _normalize_tags(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        cleaned = str(item or "").strip()
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+    return normalized
+
+
 def _make_flags(
     *,
     duplicate: bool = False,
@@ -146,6 +163,7 @@ def _normalize_input_request_rows(snapshot: ChatAnalyticsSnapshot) -> list[Wareh
         is_duplicate = bool(request.is_duplicate_flag)
         title = request.request_type or f"{entry_type or 'REQUEST'} Request"
         description = _combine_text_parts(request.work_type, request.vendor_name, request.note)
+        request_tags = _normalize_tags(getattr(request, "tags", None))
 
         row = InsightWarehouseRow(
             id=f"INPUT_REQUEST:{request.id}",
@@ -172,16 +190,7 @@ def _normalize_input_request_rows(snapshot: ChatAnalyticsSnapshot) -> list[Wareh
             updated_at=request.updated_at,
             is_duplicate_flag=is_duplicate,
             is_overdue=False,
-            tags=[
-                item
-                for item in [
-                    request.work_type,
-                    request.request_type,
-                    request.vendor_name,
-                    request.payment_reference,
-                ]
-                if item
-            ],
+            tags=request_tags,
             flags=_make_flags(
                 duplicate=is_duplicate,
                 low_confidence=bool(request.ocr_low_confidence_fields),
@@ -253,16 +262,7 @@ def _normalize_installment_rows(snapshot: ChatAnalyticsSnapshot) -> list[Warehou
             updated_at=None,
             is_duplicate_flag=False,
             is_overdue=is_overdue,
-            tags=[
-                item
-                for item in [
-                    installment.expense_category,
-                    installment.expense_type,
-                    installment.cost_type,
-                    boq_item.description if boq_item else None,
-                ]
-                if item
-            ],
+            tags=[],
             flags=_make_flags(overdue=is_overdue, flow_direction=flow_direction),
             navigation_target=InsightWarehouseNavigationTarget(
                 label="Open Project",
@@ -328,15 +328,7 @@ def _normalize_transaction_rows(snapshot: ChatAnalyticsSnapshot) -> list[Warehou
             updated_at=None,
             is_duplicate_flag=False,
             is_overdue=False,
-            tags=[
-                item
-                for item in [
-                    installment.expense_category if installment is not None else None,
-                    installment.expense_type if installment is not None else None,
-                    boq_item.description if boq_item else None,
-                ]
-                if item
-            ],
+            tags=[],
             flags=_make_flags(flow_direction="OUTFLOW"),
             navigation_target=InsightWarehouseNavigationTarget(
                 label="Open Project",
@@ -386,6 +378,11 @@ def _matches_filters(row: InsightWarehouseRow, filters: InsightWarehouseFilterSe
         return False
     if filters.flow_directions and row.flow_direction not in filters.flow_directions:
         return False
+    if filters.tags:
+        selected_tags = {tag.casefold() for tag in filters.tags}
+        row_tags = {tag.casefold() for tag in row.tags or []}
+        if not selected_tags.intersection(row_tags):
+            return False
     if filters.duplicate_only and not row.is_duplicate_flag:
         return False
     if filters.overdue_only and not row.is_overdue:

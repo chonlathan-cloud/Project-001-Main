@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, CheckCircle2, ExternalLink, LoaderCircle, ReceiptText, RotateCcw, TriangleAlert } from 'lucide-react';
+import { ArrowUp, CheckCircle2, ExternalLink, LoaderCircle, Plus, ReceiptText, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Loading from './components/Loading';
 import ConstructionAnimation from './components/ConstructionAnimation';
@@ -20,12 +20,23 @@ const ENTRY_TYPE_OPTIONS = [
   { value: 'INCOME', label: 'รายรับ' },
 ];
 
-const WORK_TYPE_OPTIONS = [
-  { value: 'งานโครงสร้าง', label: 'งานโครงสร้าง' },
-  { value: 'งานสถาปัตย์', label: 'งานสถาปัตย์' },
-  { value: 'งานระบบ', label: 'งานระบบ' },
-  { value: 'งานบริหารโครงการ', label: 'งานบริหารโครงการ' },
+const DEFAULT_WORK_TYPE_VALUES = [
+  'งานโครงสร้าง',
+  'งานสถาปัตย์',
+  'งานระบบ',
+  'งานบริหารโครงการ',
+  'งานตกแต่ง (Build in)',
 ];
+
+const OTHER_WORK_TYPE_VALUE = '__OTHER_WORK_TYPE__';
+const OTHER_WORK_TYPE_LABEL = 'งานอื่นๆ โปรดระบุ';
+
+const OTHER_WORK_TYPE_OPTION = {
+  value: OTHER_WORK_TYPE_VALUE,
+  label: OTHER_WORK_TYPE_LABEL,
+};
+
+const WORK_TYPE_OPTIONS = DEFAULT_WORK_TYPE_VALUES.map((value) => ({ value, label: value }));
 
 const REQUEST_TYPE_OPTIONS = [
   { value: 'ค่าวัสดุ', label: 'ค่าวัสดุ' },
@@ -56,7 +67,8 @@ const normalizeEntryType = (value) => {
 const normalizeWorkType = (value) => {
   const cleaned = String(value || '').trim();
   const normalized = WORK_TYPE_ALIAS_MAP[cleaned] || cleaned;
-  return WORK_TYPE_OPTIONS.some((option) => option.value === normalized) ? normalized : '';
+  if (normalized === OTHER_WORK_TYPE_VALUE || normalized === OTHER_WORK_TYPE_LABEL) return '';
+  return normalized;
 };
 
 const normalizeRequestType = (value) => {
@@ -89,7 +101,9 @@ const initialFormState = {
   requestDate: new Date().toISOString().slice(0, 10),
   documentDate: '',
   workType: '',
+  customWorkType: '',
   requestType: '',
+  tags: [],
   note: '',
   vendorName: '',
   receiptNo: '',
@@ -100,6 +114,27 @@ const initialFormState = {
 };
 
 const cleanText = (value) => String(value || '').trim();
+
+const mergeTextValues = (...groups) => {
+  const merged = [];
+  const seen = new Set();
+
+  groups.flat().forEach((item) => {
+    const cleaned = cleanText(item);
+    if (!cleaned || cleaned === OTHER_WORK_TYPE_VALUE || cleaned === OTHER_WORK_TYPE_LABEL) return;
+    const key = cleaned.toLocaleLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(cleaned);
+  });
+
+  return merged;
+};
+
+const buildWorkTypeOptions = (values = []) =>
+  mergeTextValues(DEFAULT_WORK_TYPE_VALUES, values).map((value) => ({ value, label: value }));
+
+const normalizeTags = (values = []) => mergeTextValues(Array.isArray(values) ? values : []);
 
 const pickFirstText = (...values) =>
   values.map(cleanText).find(Boolean) || '';
@@ -317,6 +352,131 @@ const TextAreaField = ({ label, placeholder, style = {}, value, onChange }) => (
   </div>
 );
 
+const TagInput = ({
+  label,
+  required = false,
+  selectedTags,
+  suggestions,
+  draftValue,
+  onDraftChange,
+  onAddTag,
+  onRemoveTag,
+}) => {
+  const selectedKeys = new Set(selectedTags.map((tag) => tag.toLocaleLowerCase()));
+  const availableSuggestions = suggestions.filter(
+    (tag) => !selectedKeys.has(tag.toLocaleLowerCase())
+  );
+
+  const handleKeyDown = (event) => {
+    if (event.key !== 'Enter' && event.key !== ',') return;
+    event.preventDefault();
+    onAddTag(draftValue);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <label style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>
+        {label}{required ? ' *' : ''}
+      </label>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '8px',
+          padding: '8px',
+          borderRadius: '8px',
+          border: '1px solid #e2e8f0',
+          backgroundColor: '#fff',
+        }}
+      >
+        {selectedTags.map((tag) => (
+          <button
+            key={tag}
+            type="button"
+            onClick={() => onRemoveTag(tag)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              minHeight: '30px',
+              padding: '0 9px',
+              borderRadius: '999px',
+              border: '1px solid rgba(79, 111, 100, 0.2)',
+              backgroundColor: 'rgba(79, 111, 100, 0.08)',
+              color: 'var(--primary)',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: '800',
+            }}
+          >
+            {tag}
+            <X size={13} />
+          </button>
+        ))}
+        <input
+          type="text"
+          value={draftValue}
+          onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="เพิ่ม tag"
+          style={{
+            flex: '1 1 160px',
+            minWidth: '120px',
+            minHeight: '32px',
+            border: 'none',
+            outline: 'none',
+            fontSize: '14px',
+            color: 'var(--text-main)',
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => onAddTag(draftValue)}
+          style={{
+            width: '32px',
+            height: '32px',
+            display: 'inline-grid',
+            placeItems: 'center',
+            borderRadius: '8px',
+            border: '1px solid var(--primary)',
+            backgroundColor: 'var(--primary)',
+            color: '#fff',
+            cursor: 'pointer',
+          }}
+          aria-label="Add tag"
+        >
+          <Plus size={16} />
+        </button>
+      </div>
+      {availableSuggestions.length ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          {availableSuggestions.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => onAddTag(tag)}
+              style={{
+                minHeight: '30px',
+                padding: '0 10px',
+                borderRadius: '999px',
+                border: '1px solid #e7decd',
+                backgroundColor: '#f7f3ef',
+                color: 'var(--text-main)',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: '750',
+              }}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const StatusBanner = ({ tone, text }) => {
   const palette =
     tone === 'error'
@@ -366,8 +526,11 @@ const formatOcrFieldLabel = (fieldName) => {
 const InputPage = () => {
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
+  const [workTypeOptions, setWorkTypeOptions] = useState(WORK_TYPE_OPTIONS);
+  const [tagOptions, setTagOptions] = useState([]);
   const [inputDefaults, setInputDefaults] = useState(() => buildDefaultedFormState());
   const [form, setForm] = useState(initialFormState);
+  const [tagDraft, setTagDraft] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [localReceiptPreviewUrl, setLocalReceiptPreviewUrl] = useState('');
   const [extractData, setExtractData] = useState(null);
@@ -395,6 +558,8 @@ const InputPage = () => {
           getInputDefaults(),
         ]);
         const resolvedDefaults = resolveInputDefaults(defaults);
+        setWorkTypeOptions(buildWorkTypeOptions(defaults.workTypes || []));
+        setTagOptions(mergeTextValues(defaults.tags || []));
         setProjects(items);
         setInputDefaults(buildDefaultedFormState(resolvedDefaults));
         setForm((current) => {
@@ -480,15 +645,34 @@ const InputPage = () => {
     setForm((current) => ({ ...current, [field]: nextValue }));
   };
 
+  const handleAddTag = (rawValue) => {
+    const [cleaned] = mergeTextValues([rawValue]);
+    if (!cleaned) return;
+    setForm((current) => ({
+      ...current,
+      tags: mergeTextValues(current.tags, [cleaned]),
+    }));
+    setTagDraft('');
+  };
+
+  const handleRemoveTag = (tagToRemove) => {
+    const removeKey = cleanText(tagToRemove).toLocaleLowerCase();
+    setForm((current) => ({
+      ...current,
+      tags: normalizeTags(current.tags).filter(
+        (tag) => tag.toLocaleLowerCase() !== removeKey
+      ),
+    }));
+  };
+
   const handleEntryTypeChange = (nextType) => {
     setEntryTypeTouched(true);
     setForm((current) => ({
       ...current,
       entryType: nextType,
-      requestType:
-        nextType === 'INCOME' && current.requestType === 'ค่าเบิกล่วงหน้า'
-          ? ''
-          : current.requestType,
+      workType: nextType === 'INCOME' ? '' : current.workType,
+      customWorkType: nextType === 'INCOME' ? '' : current.customWorkType,
+      requestType: nextType === 'INCOME' ? '' : current.requestType,
     }));
     setSubmitError('');
     setSubmitResult(null);
@@ -510,6 +694,7 @@ const InputPage = () => {
     setSubmitReceiptPreviewError('');
     setSubmitError('');
     setFlashMessage('');
+    setTagDraft('');
     setEntryTypeTouched(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -562,10 +747,9 @@ const InputPage = () => {
               ? ''
               : String(normalizedExtracted.total_amount),
           documentDate: current.documentDate || normalizeDateInputValue(normalizedExtracted.document_date),
-          requestType:
-            nextEntryType === 'INCOME' && nextRequestType === 'ค่าเบิกล่วงหน้า'
-              ? ''
-              : nextRequestType,
+          workType: nextEntryType === 'INCOME' ? '' : current.workType,
+          customWorkType: nextEntryType === 'INCOME' ? '' : current.customWorkType,
+          requestType: nextEntryType === 'INCOME' ? '' : nextRequestType,
           vendorName: current.vendorName || normalizedExtracted.vendor_name || '',
           receiptNo: current.receiptNo || normalizedExtracted.receipt_no || '',
           note: nextRequestDetail,
@@ -608,16 +792,26 @@ const InputPage = () => {
       return;
     }
 
-    const normalizedWorkType = normalizeWorkType(form.workType);
-    const normalizedRequestType = normalizeRequestType(form.requestType);
+    const isIncomeRequest = form.entryType === 'INCOME';
+    const normalizedTags = normalizeTags(form.tags);
+    const normalizedWorkType = isIncomeRequest
+      ? ''
+      : form.workType === OTHER_WORK_TYPE_VALUE
+        ? normalizeWorkType(form.customWorkType)
+        : normalizeWorkType(form.workType);
+    const normalizedRequestType = isIncomeRequest ? '' : normalizeRequestType(form.requestType);
     const normalizedDocumentDate = form.documentDate || form.requestDate;
     const numericAmount = Number(form.amount);
 
-    if (form.workType && !normalizedWorkType) {
-      setSubmitError('ประเภทงานไม่ถูกต้อง กรุณาเลือกใหม่');
+    if (isIncomeRequest && normalizedTags.length === 0) {
+      setSubmitError('รายการรายรับต้องมี tag อย่างน้อย 1 รายการ');
       return;
     }
-    if (form.requestType && !normalizedRequestType) {
+    if (!isIncomeRequest && form.workType === OTHER_WORK_TYPE_VALUE && !normalizedWorkType) {
+      setSubmitError('กรุณาระบุประเภทงานอื่นๆ');
+      return;
+    }
+    if (!isIncomeRequest && form.requestType && !normalizedRequestType) {
       setSubmitError('ประเภทการเบิกไม่ถูกต้อง กรุณาเลือกใหม่');
       return;
     }
@@ -646,8 +840,9 @@ const InputPage = () => {
         phone: form.phone.trim() || null,
         request_date: form.requestDate,
         document_date: normalizedDocumentDate,
-        work_type: normalizedWorkType || null,
-        request_type: normalizedRequestType || null,
+        work_type: isIncomeRequest ? null : normalizedWorkType || null,
+        request_type: isIncomeRequest ? null : normalizedRequestType || null,
+        tags: normalizedTags,
         note: form.note.trim() || null,
         vendor_name: form.vendorName.trim() || null,
         receipt_no: form.receiptNo.trim() || null,
@@ -667,6 +862,12 @@ const InputPage = () => {
       });
 
       setSubmitResult(response);
+      if (normalizedWorkType) {
+        setWorkTypeOptions((current) =>
+          buildWorkTypeOptions([...current.map((option) => option.value), normalizedWorkType])
+        );
+      }
+      setTagOptions((current) => mergeTextValues(current, response?.tags || normalizedTags));
       setFlashMessage('ส่งคำขอเรียบร้อยแล้ว');
       setForm(
         buildDefaultedFormState(inputDefaults, {
@@ -680,6 +881,7 @@ const InputPage = () => {
       setSelectedFile(null);
       setExtractData(null);
       setUploadedReceipt(null);
+      setTagDraft('');
       setEntryTypeTouched(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -713,9 +915,8 @@ const InputPage = () => {
     label: project.name,
   }));
   const hasAssignedProjects = projectOptions.length > 0;
-  const availableRequestTypeOptions = isIncome
-    ? REQUEST_TYPE_OPTIONS.filter((option) => option.value !== 'ค่าเบิกล่วงหน้า')
-    : REQUEST_TYPE_OPTIONS;
+  const workTypeSelectOptions = [...workTypeOptions, OTHER_WORK_TYPE_OPTION];
+  const selectedTags = normalizeTags(form.tags);
   const numericFormAmount = Number(form.amount);
   const isSubmitDisabled =
     isSubmitting ||
@@ -727,6 +928,8 @@ const InputPage = () => {
     !form.amount ||
     !Number.isFinite(numericFormAmount) ||
     numericFormAmount <= 0 ||
+    (isIncome && selectedTags.length === 0) ||
+    (!isIncome && form.workType === OTHER_WORK_TYPE_VALUE && !form.customWorkType.trim()) ||
     (!selectedFile && !uploadedReceipt);
 
   return (
@@ -933,22 +1136,46 @@ const InputPage = () => {
                 />
               </div>
 
-              <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                <SelectField
-                  label="ประเภทงาน"
-                  placeholder="กรุณาเลือก"
-                  options={WORK_TYPE_OPTIONS}
-                  value={form.workType}
-                  onChange={handleFieldChange('workType')}
-                />
-                <SelectField
-                  label="ประเภทการเบิก"
-                  placeholder="กรุณาเลือก"
-                  options={availableRequestTypeOptions}
-                  value={form.requestType}
-                  onChange={handleFieldChange('requestType')}
-                />
-              </div>
+              {!isIncome ? (
+                <>
+                  <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    <SelectField
+                      label="ประเภทงาน"
+                      placeholder="กรุณาเลือก"
+                      options={workTypeSelectOptions}
+                      value={form.workType}
+                      onChange={handleFieldChange('workType')}
+                    />
+                    <SelectField
+                      label="ประเภทการเบิก"
+                      placeholder="กรุณาเลือก"
+                      options={REQUEST_TYPE_OPTIONS}
+                      value={form.requestType}
+                      onChange={handleFieldChange('requestType')}
+                    />
+                  </div>
+
+                  {form.workType === OTHER_WORK_TYPE_VALUE ? (
+                    <InputField
+                      label="ระบุประเภทงาน"
+                      placeholder="กรุณาระบุประเภทงาน"
+                      value={form.customWorkType}
+                      onChange={handleFieldChange('customWorkType')}
+                    />
+                  ) : null}
+                </>
+              ) : null}
+
+              <TagInput
+                label="Tags"
+                required={isIncome}
+                selectedTags={selectedTags}
+                suggestions={tagOptions}
+                draftValue={tagDraft}
+                onDraftChange={setTagDraft}
+                onAddTag={handleAddTag}
+                onRemoveTag={handleRemoveTag}
+              />
 
               <TextAreaField
                 label="รายการ / ค่าอะไร"
@@ -1095,8 +1322,11 @@ const InputPage = () => {
                       <div><strong>Requester:</strong> {submitResult.requester_name}</div>
                       <div><strong>Vendor:</strong> {submitResult.vendor_name || '-'}</div>
                       <div><strong>Receipt No:</strong> {submitResult.receipt_no || '-'}</div>
+                      <div><strong>Work Type:</strong> {submitResult.work_type || '-'}</div>
+                      <div><strong>Request Type:</strong> {submitResult.request_type || '-'}</div>
                       <div><strong>Document Date:</strong> {submitResult.document_date || '-'}</div>
                       <div><strong>Amount:</strong> {Number(submitResult.amount || 0).toLocaleString()} THB</div>
+                      <div><strong>Tags:</strong> {normalizeTags(submitResult.tags).join(', ') || '-'}</div>
                       <div><strong>Status:</strong> {submitResult.status}</div>
                     </div>
                   </div>

@@ -253,6 +253,14 @@ function FlagPill({ flag }) {
   );
 }
 
+function TagPill({ tag }) {
+  return (
+    <span className="insights-tag-pill">
+      {tag}
+    </span>
+  );
+}
+
 const InsightsPage = () => {
   const [metadata, setMetadata] = useState(null);
   const [summary, setSummary] = useState({ cards: [], lastUpdatedAt: '' });
@@ -270,6 +278,7 @@ const InsightsPage = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [entryTypeFilter, setEntryTypeFilter] = useState('');
   const [flowDirectionFilter, setFlowDirectionFilter] = useState('');
+  const [tagFilters, setTagFilters] = useState([]);
   const [dateField, setDateField] = useState('event_date');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -330,6 +339,7 @@ const InsightsPage = () => {
       statuses: statusFilter ? [statusFilter] : [],
       entryTypes: entryTypeFilter ? [entryTypeFilter] : [],
       flowDirections: flowDirectionFilter ? [flowDirectionFilter] : [],
+      tags: tagFilters,
       dateField,
       dateFrom,
       dateTo,
@@ -369,7 +379,7 @@ const InsightsPage = () => {
     return () => {
       isMounted = false;
     };
-  }, [dateField, dateFrom, dateTo, duplicateOnly, entryTypeFilter, flowDirectionFilter, overdueOnly, page, pageSize, projectId, quickView, searchQuery, sortBy, sortOrder, sourceTypeFilter, statusFilter]);
+  }, [dateField, dateFrom, dateTo, duplicateOnly, entryTypeFilter, flowDirectionFilter, overdueOnly, page, pageSize, projectId, quickView, searchQuery, sortBy, sortOrder, sourceTypeFilter, statusFilter, tagFilters]);
 
   // ✓ Move hooks before early returns to satisfy React Rules of Hooks
   const visibleColumnSet = useMemo(() => new Set(visibleColumns), [visibleColumns]);
@@ -380,6 +390,7 @@ const InsightsPage = () => {
   const statuses = metadata?.statuses || [];
   const entryTypes = metadata?.entryTypes || [];
   const flowDirections = metadata?.flowDirections || [];
+  const tags = metadata?.tags || [];
   const dateFields = metadata?.dateFields || [];
   const sortFields = metadata?.sortFields || [];
   const exportFormats = metadata?.exportFormats || [];
@@ -395,6 +406,7 @@ const InsightsPage = () => {
     statuses: statusFilter ? [statusFilter] : [],
     entryTypes: entryTypeFilter ? [entryTypeFilter] : [],
     flowDirections: flowDirectionFilter ? [flowDirectionFilter] : [],
+    tags: tagFilters,
     dateField,
     dateFrom,
     dateTo,
@@ -446,6 +458,7 @@ const InsightsPage = () => {
     setStatusFilter('');
     setEntryTypeFilter('');
     setFlowDirectionFilter('');
+    setTagFilters([]);
     setDateField('event_date');
     setDateFrom('');
     setDateTo('');
@@ -533,6 +546,14 @@ const InsightsPage = () => {
           },
         }
       : null,
+    ...tagFilters.map((tag) => ({
+      key: `tag-${tag}`,
+      label: `Tag: ${getOptionLabel(tags, tag)}`,
+      onRemove: () => {
+        setTagFilters((current) => current.filter((item) => item !== tag));
+        setPage(1);
+      },
+    })),
     dateFrom
       ? {
           key: 'date-from',
@@ -709,6 +730,16 @@ const InsightsPage = () => {
               <FilterSelect label="Status" value={statusFilter} onChange={(value) => { setStatusFilter(value); setPage(1); }} options={statuses} />
               <FilterSelect label="Entry Type" value={entryTypeFilter} onChange={(value) => { setEntryTypeFilter(value); setPage(1); }} options={entryTypes} />
               <FilterSelect label="Flow Direction" value={flowDirectionFilter} onChange={(value) => { setFlowDirectionFilter(value); setPage(1); }} options={flowDirections} />
+              <MultiSelectFilter
+                label="Tags"
+                value={tagFilters}
+                onChange={(value) => {
+                  setTagFilters(value);
+                  setPage(1);
+                }}
+                options={tags}
+                size={4}
+              />
               <FilterSelect label="Sort By" value={sortBy} onChange={(value) => setSortBy(value)} options={sortFields} />
               <FilterSelect
                 label="Sort Order"
@@ -789,6 +820,7 @@ const InsightsPage = () => {
                 {visibleColumnSet.has('amount') ? <th className="numeric">Amount</th> : null}
                 {visibleColumnSet.has('event_date') ? <th>Event</th> : null}
                 {visibleColumnSet.has('due_date') ? <th>Due Date</th> : null}
+                {visibleColumnSet.has('tags') ? <th>Tags</th> : null}
                 {visibleColumnSet.has('flags') ? <th>Flags</th> : null}
                 <th>Action</th>
               </tr>
@@ -843,6 +875,15 @@ const InsightsPage = () => {
                     {visibleColumnSet.has('due_date') ? (
                       <td className="insights-date-cell">{formatDate(row.dueDate)}</td>
                     ) : null}
+                    {visibleColumnSet.has('tags') ? (
+                      <td>
+                        <div className="insights-tag-list">
+                          {row.tags.length > 0
+                            ? row.tags.map((tag) => <TagPill key={`${row.id}-${tag}`} tag={tag} />)
+                            : <span className="insights-muted-cell">-</span>}
+                        </div>
+                      </td>
+                    ) : null}
                     {visibleColumnSet.has('flags') ? (
                       <td>
                         <div className="insights-flag-list">
@@ -895,6 +936,11 @@ const InsightsPage = () => {
                   </span>
                 </div>
                 <p>{row.description || `Ref: ${row.referenceNo || '-'}`}</p>
+                {row.tags.length > 0 ? (
+                  <div className="insights-tag-list">
+                    {row.tags.map((tag) => <TagPill key={`${row.id}-mobile-tag-${tag}`} tag={tag} />)}
+                  </div>
+                ) : null}
                 <dl>
                   <div>
                     <dt>Project</dt>

@@ -30,6 +30,7 @@ class InputRequest(Base):
 
     work_type = Column(String, nullable=True)
     request_type = Column(String, nullable=True)
+    tags = Column(JSON, nullable=False, default=list)
     note = Column(Text, nullable=True)
     vendor_name = Column(String, nullable=True)
     receipt_no = Column(String, nullable=True)
@@ -66,3 +67,17 @@ class InputRequest(Base):
     )
 
     project = relationship("Project", back_populates="input_requests", lazy="selectin")
+
+
+class InputOptionSuggestion(Base):
+    __tablename__ = "input_option_suggestions"
+
+    option_type = Column(String, primary_key=True)
+    value = Column(String, primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

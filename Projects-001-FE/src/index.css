@@ -2914,6 +2914,32 @@ body {
   gap: 6px;
 }
 
+.insights-tag-list {
+  display: flex;
+  min-width: 150px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.insights-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid rgba(79, 111, 100, 0.18);
+  border-radius: 999px;
+  background: rgba(79, 111, 100, 0.08);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.insights-muted-cell {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .insights-open-link {
   display: inline-flex;
   align-items: center;
@@ -4737,6 +4763,10 @@ h3 {
   }
 
   .insights-flag-list {
+    min-width: 0;
+  }
+
+  .insights-tag-list {
     min-width: 0;
   }
 

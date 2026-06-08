@@ -13,7 +13,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
@@ -25,9 +25,10 @@ from app.api.deps.auth import (
 )
 from app.core.database import get_db
 from app.models.boq import Project
-from app.models.input_request import InputRequest
+from app.models.input_request import InputOptionSuggestion, InputRequest
 from app.schemas.input_schema import (
     BankAccountPayload,
+    DEFAULT_WORK_TYPE_OPTIONS,
     InputDefaultValuesResponse,
     InputRequestAdminSummaryResponse,
     InputRequestAdminUpdate,
@@ -55,6 +56,11 @@ from app.services.input_receipt_cleanup_service import cleanup_orphan_temp_recei
 
 router = APIRouter(prefix="/input", tags=["Input Requests"])
 
+COMPANY_PROJECT_NAME = "โครงการบริษัท"
+COMPANY_PROJECT_TYPE = "INTERNAL"
+OPTION_TYPE_TAG = "TAG"
+OPTION_TYPE_WORK_TYPE = "WORK_TYPE"
+
 
 def _clean_optional_text(value: str | None) -> str | None:
     return (value or "").strip() or None
@@ -78,6 +84,31 @@ def _money_value(value: object) -> float:
         return 0.0
 
 
+def _clean_unique_text_values(values: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        cleaned = _clean_optional_text(value)
+        if cleaned is None:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+    return normalized
+
+
+def _merge_option_values(*groups: list[str]) -> list[str]:
+    return _clean_unique_text_values([item for group in groups for item in group])
+
+
+def _request_tags(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return _clean_unique_text_values([str(item) for item in value if item is not None])
+
+
 def _validate_request_business_rules(*, entry_type: str, request_type: str | None) -> None:
     if request_type == "ค่าเบิกล่วงหน้า" and entry_type != "EXPENSE":
         raise HTTPException(
@@ -98,6 +129,7 @@ def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequ
         request_date=item.request_date,
         work_type=item.work_type,
         request_type=item.request_type,
+        tags=_request_tags(item.tags),
         note=item.note,
         vendor_name=item.vendor_name,
         receipt_no=item.receipt_no,
@@ -176,6 +208,57 @@ def _filter_input_requests_for_user(query, user: AuthenticatedUser):
         return query.filter(InputRequest.subcontractor_id == user.subcontractor_id)
 
     return query
+
+
+def _is_company_project(project: Project) -> bool:
+    return (
+        project.name == COMPANY_PROJECT_NAME
+        and str(project.project_type or "").upper() == COMPANY_PROJECT_TYPE
+    )
+
+
+async def _load_suggestion_values(db: AsyncSession, option_type: str) -> list[str]:
+    result = await db.execute(
+        select(InputOptionSuggestion.value)
+        .filter(InputOptionSuggestion.option_type == option_type)
+        .order_by(InputOptionSuggestion.value.asc())
+    )
+    return _clean_unique_text_values(list(result.scalars().all()))
+
+
+async def _load_work_type_options(db: AsyncSession) -> list[str]:
+    custom_values = await _load_suggestion_values(db, OPTION_TYPE_WORK_TYPE)
+    return _merge_option_values(DEFAULT_WORK_TYPE_OPTIONS, custom_values)
+
+
+async def _load_tag_options(db: AsyncSession) -> list[str]:
+    suggestion_values = await _load_suggestion_values(db, OPTION_TYPE_TAG)
+    tag_rows = await db.execute(select(InputRequest.tags).where(InputRequest.tags.is_not(None)))
+    stored_tags = [
+        tag
+        for tags in tag_rows.scalars().all()
+        for tag in _request_tags(tags)
+    ]
+    return _merge_option_values(suggestion_values, stored_tags)
+
+
+async def _upsert_option_suggestions(
+    db: AsyncSession,
+    option_type: str,
+    values: list[str],
+) -> None:
+    normalized_values = _clean_unique_text_values(values)
+    if not normalized_values:
+        return
+
+    existing_values = await _load_suggestion_values(db, option_type)
+    existing_keys = {value.casefold() for value in existing_values}
+    for value in normalized_values:
+        key = value.casefold()
+        if key in existing_keys:
+            continue
+        db.add(InputOptionSuggestion(option_type=option_type, value=value))
+        existing_keys.add(key)
 
 
 async def _apply_duplicate_detection(
@@ -277,9 +360,15 @@ async def list_input_projects(
         query = select(Project).options(noload("*")).order_by(Project.name)
         if user.role == "subcontractor":
             assigned_project_ids = _assigned_project_ids_for_subcontractor(user)
-            if not assigned_project_ids:
-                return StandardResponse(data=[])
-            query = query.filter(Project.id.in_(assigned_project_ids))
+            if assigned_project_ids:
+                query = query.filter(
+                    or_(
+                        Project.id.in_(assigned_project_ids),
+                        Project.name == COMPANY_PROJECT_NAME,
+                    )
+                )
+            else:
+                query = query.filter(Project.name == COMPANY_PROJECT_NAME)
 
         result = await db.execute(query)
         projects = result.scalars().all()
@@ -304,11 +393,17 @@ async def list_input_projects(
 @router.get("/defaults", response_model=StandardResponse[InputDefaultValuesResponse])
 async def get_input_defaults(
     user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Return default subcontractor values used to prefill the Input page."""
     try:
+        work_types = await _load_work_type_options(db)
+        tags = await _load_tag_options(db)
+
         if user.role != "subcontractor":
-            return StandardResponse(data=InputDefaultValuesResponse())
+            return StandardResponse(
+                data=InputDefaultValuesResponse(work_types=work_types, tags=tags)
+            )
 
         if not user.subcontractor_id:
             raise HTTPException(
@@ -326,6 +421,8 @@ async def get_input_defaults(
                     account_no=profile.bank_account.get("account_no"),
                     account_name=profile.bank_account.get("account_name"),
                 ),
+                work_types=work_types,
+                tags=tags,
             )
         )
 
@@ -563,7 +660,7 @@ async def create_input_request(
 
         if user.role == "subcontractor":
             assigned_project_ids = _assigned_project_ids_for_subcontractor(user)
-            if request.project_id not in assigned_project_ids:
+            if request.project_id not in assigned_project_ids and not _is_company_project(project):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="This subcontractor is not assigned to the selected project.",
@@ -574,6 +671,10 @@ async def create_input_request(
             request_type=request.request_type,
         )
 
+        stored_work_type = None if request.entry_type == "INCOME" else _clean_optional_text(request.work_type)
+        stored_request_type = None if request.entry_type == "INCOME" else _clean_optional_text(request.request_type)
+        stored_tags = _request_tags(request.tags)
+
         record = InputRequest(
             project_id=request.project_id,
             subcontractor_id=_resolve_subcontractor_id_for_create(request, user),
@@ -581,8 +682,9 @@ async def create_input_request(
             requester_name=request.requester_name.strip(),
             phone=_clean_optional_text(request.phone),
             request_date=request.request_date,
-            work_type=_clean_optional_text(request.work_type),
-            request_type=_clean_optional_text(request.request_type),
+            work_type=stored_work_type,
+            request_type=stored_request_type,
+            tags=stored_tags,
             note=_clean_optional_text(request.note),
             vendor_name=_clean_optional_text(request.vendor_name),
             receipt_no=_normalize_receipt_no(request.receipt_no),
@@ -601,6 +703,10 @@ async def create_input_request(
         db.add(record)
         await db.flush()
         await _apply_duplicate_detection(db, record, exclude_request_id=record.id)
+        if stored_work_type:
+            await _upsert_option_suggestions(db, OPTION_TYPE_WORK_TYPE, [stored_work_type])
+        if stored_tags:
+            await _upsert_option_suggestions(db, OPTION_TYPE_TAG, stored_tags)
         await db.commit()
         await db.refresh(record)
 
@@ -806,6 +912,8 @@ async def update_admin_input_request(
                 input_request.bank_name = _clean_optional_text(value.get("bank_name"))
                 input_request.account_no = _clean_optional_text(value.get("account_no"))
                 input_request.account_name = _clean_optional_text(value.get("account_name"))
+            elif field == "tags":
+                input_request.tags = _request_tags(value)
             elif field == "subcontractor_id":
                 input_request.subcontractor_id = _clean_optional_text(value)
             elif field == "amount":
@@ -817,12 +925,25 @@ async def update_admin_input_request(
             else:
                 setattr(input_request, field, value)
 
+        if input_request.entry_type == "INCOME":
+            input_request.work_type = None
+            input_request.request_type = None
+            if "tags" in updates and not _request_tags(input_request.tags):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INCOME requests require at least 1 tag.",
+                )
+
         _validate_request_business_rules(
             entry_type=input_request.entry_type,
             request_type=input_request.request_type,
         )
         input_request.reviewed_at = datetime.now(timezone.utc)
         await _apply_duplicate_detection(db, input_request, exclude_request_id=input_request.id)
+        if input_request.work_type:
+            await _upsert_option_suggestions(db, OPTION_TYPE_WORK_TYPE, [input_request.work_type])
+        if input_request.tags:
+            await _upsert_option_suggestions(db, OPTION_TYPE_TAG, _request_tags(input_request.tags))
         await db.commit()
         await db.refresh(input_request)
 

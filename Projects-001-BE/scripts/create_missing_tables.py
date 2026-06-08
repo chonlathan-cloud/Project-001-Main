@@ -21,7 +21,7 @@ if str(BACKEND_ROOT) not in sys.path:
 load_dotenv(BACKEND_ROOT / ".env")
 
 from app.core.database import engine, Base
-from app.models import BOQItem, ChatHistory, InputRequest, Installment, Project, Transaction  # noqa: F401
+from app.models import BOQItem, ChatHistory, InputOptionSuggestion, InputRequest, Installment, Project, Transaction  # noqa: F401
 
 
 async def main() -> None:
@@ -45,7 +45,17 @@ async def main() -> None:
                 ADD COLUMN IF NOT EXISTS duplicate_reason TEXT,
                 ADD COLUMN IF NOT EXISTS duplicate_of_request_id UUID,
                 ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ,
-                ADD COLUMN IF NOT EXISTS payment_reference VARCHAR
+                ADD COLUMN IF NOT EXISTS payment_reference VARCHAR,
+                ADD COLUMN IF NOT EXISTS tags JSON DEFAULT '[]'::json
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE input_requests
+                SET tags = '[]'::json
+                WHERE tags IS NULL
                 """
             )
         )

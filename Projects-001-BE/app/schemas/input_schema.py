@@ -10,12 +10,14 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ENTRY_TYPE_VALUES = {"EXPENSE", "INCOME"}
-WORK_TYPE_VALUES = {
+DEFAULT_WORK_TYPE_OPTIONS = [
     "งานโครงสร้าง",
     "งานสถาปัตย์",
     "งานระบบ",
     "งานบริหารโครงการ",
-}
+    "งานตกแต่ง (Build in)",
+]
+WORK_TYPE_VALUES = set(DEFAULT_WORK_TYPE_OPTIONS)
 WORK_TYPE_ALIASES = {
     "งานบริหาร": "งานบริหารโครงการ",
 }
@@ -53,6 +55,26 @@ def _normalize_request_type(value: str | None) -> str | None:
     if cleaned is None:
         return None
     return REQUEST_TYPE_ALIASES.get(cleaned, cleaned)
+
+
+def _normalize_tags(value: object) -> list[str]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise ValueError("tags must be a list.")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        cleaned = _clean_optional_text(str(item) if item is not None else None)
+        if cleaned is None:
+            raise ValueError("tags cannot contain empty values.")
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+    return normalized
 
 
 def _normalize_date_value(value: object) -> date | None:
@@ -103,9 +125,13 @@ class ProjectOptionItem(BaseModel):
 
 
 class InputDefaultValuesResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     requester_name: str | None = None
     phone: str | None = None
     bank_account: BankAccountPayload = Field(default_factory=BankAccountPayload)
+    work_types: list[str] = Field(default_factory=list, alias="workTypes")
+    tags: list[str] = Field(default_factory=list)
 
 
 class InputRequestCreate(BaseModel):
@@ -117,6 +143,7 @@ class InputRequestCreate(BaseModel):
     request_date: date
     work_type: str | None = None
     request_type: str | None = None
+    tags: list[str] = Field(default_factory=list)
     note: str | None = None
     vendor_name: str | None = None
     receipt_no: str | None = None
@@ -163,12 +190,7 @@ class InputRequestCreate(BaseModel):
     @field_validator("work_type", mode="before")
     @classmethod
     def validate_work_type(cls, value: str | None) -> str | None:
-        normalized = _normalize_work_type(value)
-        if normalized is None:
-            return None
-        if normalized not in WORK_TYPE_VALUES:
-            raise ValueError("Unsupported work_type.")
-        return normalized
+        return _normalize_work_type(value)
 
     @field_validator("request_type", mode="before")
     @classmethod
@@ -185,8 +207,20 @@ class InputRequestCreate(BaseModel):
     def validate_dates(cls, value: object) -> date | None:
         return _normalize_date_value(value)
 
+    @field_validator("tags", mode="before")
+    @classmethod
+    def validate_tags(cls, value: object) -> list[str]:
+        return _normalize_tags(value)
+
     @model_validator(mode="after")
     def validate_business_rules(self) -> "InputRequestCreate":
+        if self.entry_type == "INCOME":
+            self.work_type = None
+            self.request_type = None
+            if not self.tags:
+                raise ValueError("INCOME requests require at least 1 tag.")
+            return self
+
         if self.request_type == "ค่าเบิกล่วงหน้า" and self.entry_type != "EXPENSE":
             raise ValueError("ค่าเบิกล่วงหน้า ใช้ได้เฉพาะรายการรายจ่ายเท่านั้น.")
         return self
@@ -226,6 +260,7 @@ class InputRequestItem(BaseModel):
     request_date: date
     work_type: str | None = None
     request_type: str | None = None
+    tags: list[str] = Field(default_factory=list)
     note: str | None = None
     vendor_name: str | None = None
     receipt_no: str | None = None
@@ -275,6 +310,7 @@ class InputRequestAdminUpdate(BaseModel):
     request_date: date | None = None
     work_type: str | None = None
     request_type: str | None = None
+    tags: list[str] | None = None
     note: str | None = None
     vendor_name: str | None = None
     receipt_no: str | None = None
@@ -300,12 +336,7 @@ class InputRequestAdminUpdate(BaseModel):
     @field_validator("work_type", mode="before")
     @classmethod
     def validate_work_type(cls, value: str | None) -> str | None:
-        normalized = _normalize_work_type(value)
-        if normalized is None:
-            return None
-        if normalized not in WORK_TYPE_VALUES:
-            raise ValueError("Unsupported work_type.")
-        return normalized
+        return _normalize_work_type(value)
 
     @field_validator("request_type", mode="before")
     @classmethod
@@ -321,6 +352,13 @@ class InputRequestAdminUpdate(BaseModel):
     @classmethod
     def validate_dates(cls, value: object) -> date | None:
         return _normalize_date_value(value)
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def validate_tags(cls, value: object) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_tags(value)
 
 
 class InputRequestApproveAction(BaseModel):

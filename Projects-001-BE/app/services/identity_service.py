@@ -105,6 +105,7 @@ class AdminDirectoryEntry:
     display_name: str | None
     contact_name: str | None
     phone: str | None
+    bank_account: dict[str, str | None]
     company: str | None
     time: str | None
     profile_image_storage_key: str | None
@@ -148,6 +149,11 @@ def _admin_from_dict(doc_id: str, payload: dict[str, Any]) -> AdminDirectoryEntr
         display_name=_normalize_optional_text(payload.get("display_name")),
         contact_name=_normalize_optional_text(payload.get("contact_name")),
         phone=_normalize_optional_text(payload.get("phone")),
+        bank_account={
+            "bank_name": _normalize_optional_text((payload.get("bank_account") or {}).get("bank_name")),
+            "account_no": _normalize_optional_text((payload.get("bank_account") or {}).get("account_no")),
+            "account_name": _normalize_optional_text((payload.get("bank_account") or {}).get("account_name")),
+        },
         company=_normalize_optional_text(payload.get("company")),
         time=_normalize_optional_text(payload.get("time")),
         profile_image_storage_key=_normalize_optional_text(payload.get("profile_image_storage_key")),
@@ -453,6 +459,12 @@ def update_admin_profile(
         payload["contact_name"] = _normalize_optional_text(updates["contact_name"])
     if "phone" in updates:
         payload["phone"] = _normalize_optional_text(updates["phone"])
+    if "bank_account" in updates and isinstance(updates["bank_account"], dict):
+        payload["bank_account"] = {
+            "bank_name": _normalize_optional_text(updates["bank_account"].get("bank_name")),
+            "account_no": _normalize_optional_text(updates["bank_account"].get("account_no")),
+            "account_name": _normalize_optional_text(updates["bank_account"].get("account_name")),
+        }
     if "company" in updates:
         payload["company"] = _normalize_optional_text(updates["company"])
     if "time" in updates:

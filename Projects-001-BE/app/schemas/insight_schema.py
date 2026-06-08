@@ -54,6 +54,26 @@ def _clean_unique_uppercase_items(values: object) -> list[str]:
     return normalized
 
 
+def _clean_unique_text_items(values: object) -> list[str]:
+    if values in (None, ""):
+        return []
+    if not isinstance(values, list):
+        raise ValueError("Expected a list value.")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        cleaned = _clean_optional_text(str(item) if item is not None else None)
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+    return normalized
+
+
 class InsightWarehouseNavigationTarget(BaseModel):
     label: str
     path: str
@@ -143,6 +163,7 @@ class InsightWarehouseFilterSet(BaseModel):
     statuses: list[str] = Field(default_factory=list)
     entry_types: list[str] = Field(default_factory=list)
     flow_directions: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
     duplicate_only: bool = False
     overdue_only: bool = False
     date_field: str = "event_date"
@@ -175,6 +196,11 @@ class InsightWarehouseFilterSet(BaseModel):
                 f"{info.field_name} contains unsupported values: {', '.join(invalid_values)}."
             )
         return normalized
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def normalize_tags(cls, value: object) -> list[str]:
+        return _clean_unique_text_items(value)
 
     @field_validator("date_field")
     @classmethod
@@ -278,6 +304,7 @@ class InsightWarehouseFiltersResponse(BaseModel):
     statuses: list[InsightWarehouseFilterOptionItem] = Field(default_factory=list)
     entry_types: list[InsightWarehouseFilterOptionItem] = Field(default_factory=list)
     flow_directions: list[InsightWarehouseFilterOptionItem] = Field(default_factory=list)
+    tags: list[InsightWarehouseFilterOptionItem] = Field(default_factory=list)
     quick_views: list[InsightWarehouseQuickView] = Field(default_factory=list)
     columns: list[InsightWarehouseColumnDefinition] = Field(default_factory=list)
     date_fields: list[InsightWarehouseFilterOptionItem] = Field(default_factory=list)

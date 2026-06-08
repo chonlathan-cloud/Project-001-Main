@@ -253,6 +253,7 @@ async def _build_admin_profile(db: AsyncSession, user: AuthenticatedUser) -> dic
             "display_name": display_name,
             "contact_name": contact_name or display_name,
             "phone": admin_profile.phone if admin_profile else None,
+            "bank_account": admin_profile.bank_account if admin_profile else {},
             "company": company,
             "role": role_label,
             "role_key": role_key,
@@ -354,7 +355,7 @@ async def update_my_profile(
         display_name = updates.get("display_name") or updates.get("name")
         if display_name is not None:
             admin_updates["display_name"] = display_name
-        for field in ("contact_name", "phone", "company", "time"):
+        for field in ("contact_name", "phone", "bank_account", "company", "time"):
             if field in updates:
                 admin_updates[field] = updates[field]
 

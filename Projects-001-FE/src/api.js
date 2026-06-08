@@ -110,6 +110,7 @@ function buildInsightWarehouseQuery(filters = {}) {
   appendArrayParams(searchParams, 'statuses', filters.statuses);
   appendArrayParams(searchParams, 'entry_types', filters.entryTypes);
   appendArrayParams(searchParams, 'flow_directions', filters.flowDirections);
+  appendArrayParams(searchParams, 'tags', filters.tags);
 
   return searchParams.toString();
 }
@@ -730,15 +731,34 @@ export async function getInputProjectOptions() {
 }
 
 export async function getInputDefaults() {
-  const data = await apiRequest('/api/v1/input/defaults').catch(() => null);
-  const bankAccount = data?.bank_account || {};
+  const [data, profileData] = await Promise.all([
+    apiRequest('/api/v1/input/defaults').catch(() => null),
+    apiRequest('/api/v1/profile/me').catch(() => null),
+  ]);
+  const profileUser = profileData?.user || {};
+  const profileBankAccount = profileUser?.bank_account || {};
+  const inputBankAccount = data?.bank_account || {};
+  const workTypes = Array.isArray(data?.workTypes)
+    ? data.workTypes
+    : Array.isArray(data?.work_types)
+      ? data.work_types
+      : [];
+  const tags = Array.isArray(data?.tags) ? data.tags : [];
 
   return {
-    requesterName: String(data?.requester_name || '').trim(),
-    phone: String(data?.phone || '').trim(),
-    bankName: String(bankAccount?.bank_name || '').trim(),
-    accountNo: String(bankAccount?.account_no || '').trim(),
-    accountName: String(bankAccount?.account_name || '').trim(),
+    requesterName: String(
+      profileUser?.contact_name ||
+        profileUser?.name ||
+        profileUser?.display_name ||
+        data?.requester_name ||
+        ''
+    ).trim(),
+    phone: String(profileUser?.phone || data?.phone || '').trim(),
+    bankName: String(profileBankAccount?.bank_name || inputBankAccount?.bank_name || '').trim(),
+    accountNo: String(profileBankAccount?.account_no || inputBankAccount?.account_no || '').trim(),
+    accountName: String(profileBankAccount?.account_name || inputBankAccount?.account_name || '').trim(),
+    workTypes: workTypes.map((item) => String(item || '').trim()).filter(Boolean),
+    tags: tags.map((item) => String(item || '').trim()).filter(Boolean),
   };
 }
 
@@ -994,6 +1014,9 @@ export async function getInsightWarehouseFilters() {
       : [],
     flowDirections: Array.isArray(data?.flow_directions)
       ? data.flow_directions.map((item, index) => normalizeInsightFilterOption(item, index, 'flow'))
+      : [],
+    tags: Array.isArray(data?.tags)
+      ? data.tags.map((item, index) => normalizeInsightFilterOption(item, index, 'tag'))
       : [],
     quickViews: Array.isArray(data?.quick_views)
       ? data.quick_views.map((item, index) => ({
