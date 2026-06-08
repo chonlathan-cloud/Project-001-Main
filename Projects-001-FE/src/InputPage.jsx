@@ -20,6 +20,15 @@ const ENTRY_TYPE_OPTIONS = [
   { value: 'INCOME', label: 'รายรับ' },
 ];
 
+const STATUS_LABELS = {
+  DRAFT: 'แบบร่าง',
+  PENDING: 'รอตรวจสอบ',
+  PENDING_ADMIN: 'รอผู้ดูแลตรวจสอบ',
+  APPROVED: 'อนุมัติแล้ว',
+  PAID: 'จ่ายเงินแล้ว',
+  REJECTED: 'ไม่อนุมัติ',
+};
+
 const DEFAULT_WORK_TYPE_VALUES = [
   'งานโครงสร้าง',
   'งานสถาปัตย์',
@@ -195,8 +204,8 @@ const formatOcrItemDetail = (item) => {
   const price = Number(item?.price);
   const details = [];
 
-  if (Number.isFinite(qty) && qty > 0) details.push(`qty ${qty}`);
-  if (Number.isFinite(price) && price > 0) details.push(`${price.toLocaleString()} THB`);
+  if (Number.isFinite(qty) && qty > 0) details.push(`จำนวน ${qty}`);
+  if (Number.isFinite(price) && price > 0) details.push(`${price.toLocaleString()} บาท`);
 
   return details.length ? `${description} (${details.join(' x ')})` : description;
 };
@@ -419,7 +428,7 @@ const TagInput = ({
           value={draftValue}
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="เพิ่ม tag"
+          placeholder="เพิ่มแท็ก"
           style={{
             flex: '1 1 160px',
             minWidth: '120px',
@@ -444,7 +453,7 @@ const TagInput = ({
             color: '#fff',
             cursor: 'pointer',
           }}
-          aria-label="Add tag"
+          aria-label="เพิ่มแท็ก"
         >
           <Plus size={16} />
         </button>
@@ -509,6 +518,11 @@ const StatusBanner = ({ tone, text }) => {
 
 const formatEntryTypeLabel = (entryType) =>
   ENTRY_TYPE_OPTIONS.find((option) => option.value === entryType)?.label || '-';
+
+const formatStatusLabel = (status) => {
+  const normalized = String(status || '').trim().toUpperCase();
+  return STATUS_LABELS[normalized] || status || '-';
+};
 
 const formatOcrFieldLabel = (fieldName) => {
   const labels = {
@@ -576,7 +590,7 @@ const InputPage = () => {
           });
         });
       } catch (error) {
-        setPageError(error.message || 'Failed to load projects for the input form.');
+        setPageError(error.message || 'โหลดข้อมูลโครงการสำหรับฟอร์มไม่สำเร็จ');
       } finally {
         setLoading(false);
       }
@@ -611,7 +625,7 @@ const InputPage = () => {
       } catch (error) {
         if (!isActive) return;
         setSubmitReceiptPreview(null);
-        setSubmitReceiptPreviewError(error.message || 'Failed to load receipt preview.');
+        setSubmitReceiptPreviewError(error.message || 'โหลดตัวอย่างใบเสร็จไม่สำเร็จ');
       } finally {
         if (isActive) {
           setSubmitReceiptPreviewLoading(false);
@@ -757,7 +771,7 @@ const InputPage = () => {
       });
       setFlashMessage(`อ่านข้อมูลจาก ${file.name} สำเร็จแล้ว`);
     } catch (error) {
-      setSubmitError(error.message || 'Failed to extract receipt data.');
+      setSubmitError(error.message || 'อ่านข้อมูลจากใบเสร็จไม่สำเร็จ');
     } finally {
       setIsExtracting(false);
     }
@@ -804,7 +818,7 @@ const InputPage = () => {
     const numericAmount = Number(form.amount);
 
     if (isIncomeRequest && normalizedTags.length === 0) {
-      setSubmitError('รายการรายรับต้องมี tag อย่างน้อย 1 รายการ');
+      setSubmitError('รายการรายรับต้องมีแท็กอย่างน้อย 1 รายการ');
       return;
     }
     if (!isIncomeRequest && form.workType === OTHER_WORK_TYPE_VALUE && !normalizedWorkType) {
@@ -887,7 +901,7 @@ const InputPage = () => {
         fileInputRef.current.value = '';
       }
     } catch (error) {
-      setSubmitError(error.message || 'Failed to submit input request.');
+      setSubmitError(error.message || 'ส่งคำขอไม่สำเร็จ');
     } finally {
       setIsSubmitting(false);
     }
@@ -945,10 +959,10 @@ const InputPage = () => {
       >
         <div>
           <h1 style={{ fontSize: '32px', marginBottom: '8px', fontWeight: '700', color: 'var(--text-main)' }}>
-            Submit Request
+            ส่งคำขอ
           </h1>
           <p style={{ margin: 0, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            Upload the receipt first, review OCR values, then submit for admin approval.
+            อัปโหลดใบเสร็จ ตรวจข้อมูลที่ระบบอ่านได้ แล้วส่งให้ผู้ดูแลตรวจสอบ
           </p>
         </div>
         <button
@@ -970,7 +984,7 @@ const InputPage = () => {
           }}
         >
           <RotateCcw size={16} />
-          Clear Draft
+          ล้างแบบร่าง
         </button>
       </div>
 
@@ -1027,7 +1041,7 @@ const InputPage = () => {
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
-                    1. Upload Receipt File
+                    1. อัปโหลดไฟล์ใบเสร็จ
                   </div>
                   <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                     อัปโหลดรูปหรือ PDF ของบิล/ใบเสร็จก่อน เพื่อให้ระบบอ่านข้อมูลและช่วยกรอกฟอร์มให้
@@ -1068,7 +1082,7 @@ const InputPage = () => {
                   ) : (
                     <>
                       <span style={{ fontSize: '14px', fontWeight: '600' }}>
-                        {selectedFile ? selectedFile.name : 'Upload Receipt Image / PDF'}
+                        {selectedFile ? selectedFile.name : 'อัปโหลดรูปใบเสร็จ / PDF'}
                       </span>
                       <ArrowUp size={16} />
                     </>
@@ -1077,7 +1091,7 @@ const InputPage = () => {
               </div>
 
               <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
-                2. Request Details
+                2. รายละเอียดคำขอ
               </div>
 
               <EntryTypeSegment value={form.entryType} onChange={handleEntryTypeChange} />
@@ -1094,7 +1108,7 @@ const InputPage = () => {
               {!hasAssignedProjects ? (
                 <StatusBanner
                   tone="warning"
-                  text="ยังไม่มีโครงการที่ assign ให้บัญชีนี้ กรุณาให้ admin ตั้งค่า Assigned Projects ในหน้า Settings ก่อน"
+                  text="บัญชีนี้ยังไม่มีโครงการที่ได้รับมอบหมาย กรุณาติดต่อผู้ดูแลระบบให้ตั้งค่าโครงการให้ก่อน"
                 />
               ) : null}
 
@@ -1167,7 +1181,7 @@ const InputPage = () => {
               ) : null}
 
               <TagInput
-                label="Tags"
+                label="แท็ก"
                 required={isIncome}
                 selectedTags={selectedTags}
                 suggestions={tagOptions}
@@ -1193,7 +1207,7 @@ const InputPage = () => {
               />
 
               <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
-                3. Disbursement Account
+                3. บัญชีรับเงิน
               </div>
 
               <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
@@ -1245,7 +1259,7 @@ const InputPage = () => {
                     cursor: isExtracting || isSubmitting ? 'wait' : 'pointer',
                   }}
                 >
-                  Clear
+                  ล้างข้อมูล
                 </button>
                 <button
                   type="submit"
@@ -1264,7 +1278,7 @@ const InputPage = () => {
                     opacity: isSubmitDisabled ? 0.65 : 1,
                   }}
                 >
-                  {isSubmitting ? 'กำลังส่ง...' : 'ส่งให้ Admin ตรวจสอบ'}
+                  {isSubmitting ? 'กำลังส่ง...' : 'ส่งให้ผู้ดูแลตรวจสอบ'}
                 </button>
               </div>
             </div>
@@ -1299,12 +1313,12 @@ const InputPage = () => {
                 >
                   <StatusBanner
                     tone="success"
-                    text={`สร้างคำขอสำเร็จ สถานะ ${submitResult.status || 'PENDING_ADMIN'}`}
+                    text={`สร้างคำขอสำเร็จ สถานะ ${formatStatusLabel(submitResult.status || 'PENDING_ADMIN')}`}
                   />
                   {submitResult.is_duplicate_flag ? (
                     <StatusBanner
                       tone="warning"
-                      text={submitResult.duplicate_reason || 'พบรายการซ้ำตามกฎ Receipt No. + Date + Amount'}
+                      text={submitResult.duplicate_reason || 'พบรายการซ้ำตามกฎเลขที่ใบเสร็จ + วันที่ + จำนวนเงิน'}
                     />
                   ) : null}
                   {submitResult.ocr_low_confidence_fields?.length ? (
@@ -1314,26 +1328,26 @@ const InputPage = () => {
                     />
                   ) : null}
                   <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
-                    <h2 style={{ fontSize: '22px', marginBottom: '16px' }}>Submission Summary</h2>
+                    <h2 style={{ fontSize: '22px', marginBottom: '16px' }}>สรุปคำขอ</h2>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                      <div><strong>Request ID:</strong> {submitResult.request_id}</div>
-                      <div><strong>Project:</strong> {submitResult.project_name}</div>
-                      <div><strong>Type:</strong> {formatEntryTypeLabel(submitResult.entry_type)}</div>
-                      <div><strong>Requester:</strong> {submitResult.requester_name}</div>
-                      <div><strong>Vendor:</strong> {submitResult.vendor_name || '-'}</div>
-                      <div><strong>Receipt No:</strong> {submitResult.receipt_no || '-'}</div>
-                      <div><strong>Work Type:</strong> {submitResult.work_type || '-'}</div>
-                      <div><strong>Request Type:</strong> {submitResult.request_type || '-'}</div>
-                      <div><strong>Document Date:</strong> {submitResult.document_date || '-'}</div>
-                      <div><strong>Amount:</strong> {Number(submitResult.amount || 0).toLocaleString()} THB</div>
-                      <div><strong>Tags:</strong> {normalizeTags(submitResult.tags).join(', ') || '-'}</div>
-                      <div><strong>Status:</strong> {submitResult.status}</div>
+                      <div><strong>เลขคำขอ:</strong> {submitResult.request_id}</div>
+                      <div><strong>โครงการ:</strong> {submitResult.project_name}</div>
+                      <div><strong>ประเภทรายการ:</strong> {formatEntryTypeLabel(submitResult.entry_type)}</div>
+                      <div><strong>ผู้ส่งคำขอ:</strong> {submitResult.requester_name}</div>
+                      <div><strong>ผู้ขาย / ร้านค้า:</strong> {submitResult.vendor_name || '-'}</div>
+                      <div><strong>เลขที่ใบเสร็จ:</strong> {submitResult.receipt_no || '-'}</div>
+                      <div><strong>ประเภทงาน:</strong> {submitResult.work_type || '-'}</div>
+                      <div><strong>ประเภทการเบิก:</strong> {submitResult.request_type || '-'}</div>
+                      <div><strong>วันที่เอกสาร:</strong> {submitResult.document_date || '-'}</div>
+                      <div><strong>จำนวนเงิน:</strong> {Number(submitResult.amount || 0).toLocaleString()} บาท</div>
+                      <div><strong>แท็ก:</strong> {normalizeTags(submitResult.tags).join(', ') || '-'}</div>
+                      <div><strong>สถานะ:</strong> {formatStatusLabel(submitResult.status)}</div>
                     </div>
                   </div>
                   <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
                       <div>
-                        <h2 style={{ fontSize: '22px', margin: 0 }}>Receipt Preview</h2>
+                        <h2 style={{ fontSize: '22px', margin: 0 }}>ตัวอย่างใบเสร็จ</h2>
                         <div style={{ color: '#666', marginTop: '6px', fontSize: '13px' }}>
                           {submitResult.receipt_file_name || 'ไม่มีไฟล์แนบ'}
                         </div>
@@ -1358,14 +1372,14 @@ const InputPage = () => {
                           }}
                         >
                           <ExternalLink size={16} />
-                          <span>Open Receipt</span>
+                          <span>เปิดใบเสร็จ</span>
                         </a>
                       ) : null}
                     </div>
 
                     {submitReceiptPreviewLoading ? (
                       <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
-                        กำลังโหลดลิงก์ไฟล์จาก GCS...
+                        กำลังโหลดลิงก์ไฟล์...
                       </div>
                     ) : null}
 
@@ -1377,7 +1391,7 @@ const InputPage = () => {
 
                     {!submitResult.receipt_storage_key && !submitReceiptPreviewLoading ? (
                       <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
-                        คำขอนี้ไม่มีไฟล์ receipt ที่เก็บไว้
+                        คำขอนี้ไม่มีไฟล์ใบเสร็จที่เก็บไว้
                       </div>
                     ) : null}
 
@@ -1385,7 +1399,7 @@ const InputPage = () => {
                       <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
                         <img
                           src={submitReceiptPreview.signed_url}
-                          alt={submitReceiptPreview.file_name || 'Receipt preview'}
+                          alt={submitReceiptPreview.file_name || 'ตัวอย่างใบเสร็จ'}
                           style={{
                             width: '100%',
                             maxHeight: '360px',
@@ -1402,7 +1416,7 @@ const InputPage = () => {
                       <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
                         <iframe
                           src={submitReceiptPreview.signed_url}
-                          title={submitReceiptPreview.file_name || 'Receipt PDF preview'}
+                          title={submitReceiptPreview.file_name || 'ตัวอย่างใบเสร็จ PDF'}
                           style={{
                             width: '100%',
                             height: '520px',
@@ -1416,7 +1430,7 @@ const InputPage = () => {
 
                     {canPreviewSubmittedReceipt && !isSubmittedReceiptImage && !isSubmittedReceiptPdf ? (
                       <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
-                        ไฟล์นี้ไม่ใช่รูปภาพ ใช้ปุ่ม Open Receipt เพื่อเปิดไฟล์ต้นฉบับ
+                        ไฟล์นี้ไม่ใช่รูปภาพ ใช้ปุ่มเปิดใบเสร็จเพื่อเปิดไฟล์ต้นฉบับ
                       </div>
                     ) : null}
                   </div>
@@ -1438,16 +1452,16 @@ const InputPage = () => {
                   <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
                       <ReceiptText size={20} />
-                      <h2 style={{ fontSize: '22px', margin: 0 }}>OCR Preview</h2>
+                      <h2 style={{ fontSize: '22px', margin: 0 }}>ตัวอย่างข้อมูล OCR</h2>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '18px' }}>
-                      <strong>Uploaded Receipt</strong>
+                      <strong>ใบเสร็จที่อัปโหลด</strong>
 
                       {canPreviewLocalReceipt && isLocalReceiptImage ? (
                         <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
                           <img
                             src={localReceiptPreviewUrl}
-                            alt={selectedFile?.name || 'Uploaded receipt preview'}
+                            alt={selectedFile?.name || 'ตัวอย่างใบเสร็จที่อัปโหลด'}
                             style={{
                               width: '100%',
                               maxHeight: '360px',
@@ -1464,7 +1478,7 @@ const InputPage = () => {
                         <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
                           <iframe
                             src={localReceiptPreviewUrl}
-                            title={selectedFile?.name || 'Uploaded receipt PDF preview'}
+                            title={selectedFile?.name || 'ตัวอย่างใบเสร็จ PDF ที่อัปโหลด'}
                             style={{
                               width: '100%',
                               height: '520px',
@@ -1478,18 +1492,18 @@ const InputPage = () => {
 
                       {canPreviewLocalReceipt && !isLocalReceiptImage && !isLocalReceiptPdf ? (
                         <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
-                          ไฟล์นี้ไม่สามารถ preview ในเบราว์เซอร์ได้ แต่ระบบยังใช้ไฟล์นี้อ่าน OCR ได้
+                          ไฟล์นี้ไม่สามารถแสดงตัวอย่างในเบราว์เซอร์ได้ แต่ระบบยังใช้ไฟล์นี้อ่าน OCR ได้
                         </div>
                       ) : null}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '18px' }}>
-                      <div><strong>File:</strong> {extractData.file_name}</div>
-                      <div><strong>Vendor:</strong> {extractData.vendor_name || '-'}</div>
-                      <div><strong>Receipt No:</strong> {extractData.receipt_no || '-'}</div>
-                      <div><strong>Date:</strong> {extractData.document_date || '-'}</div>
-                      <div><strong>Suggested:</strong> {extractData.suggested_request_type || '-'}</div>
-                      <div><strong>Total:</strong> {Number(extractData.total_amount || 0).toLocaleString()} THB</div>
-                      <div><strong>Entry Type:</strong> {formatEntryTypeLabel(extractData.suggested_entry_type)}</div>
+                      <div><strong>ไฟล์:</strong> {extractData.file_name}</div>
+                      <div><strong>ผู้ขาย / ร้านค้า:</strong> {extractData.vendor_name || '-'}</div>
+                      <div><strong>เลขที่ใบเสร็จ:</strong> {extractData.receipt_no || '-'}</div>
+                      <div><strong>วันที่:</strong> {extractData.document_date || '-'}</div>
+                      <div><strong>ประเภทที่ระบบแนะนำ:</strong> {extractData.suggested_request_type || '-'}</div>
+                      <div><strong>ยอดรวม:</strong> {Number(extractData.total_amount || 0).toLocaleString()} บาท</div>
+                      <div><strong>ประเภทรายการ:</strong> {formatEntryTypeLabel(extractData.suggested_entry_type)}</div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       {extractData.items?.map((item, index) => (
@@ -1521,11 +1535,10 @@ const InputPage = () => {
                 >
                   <div>
                     <h2 style={{ fontSize: '24px', marginBottom: '10px', color: 'var(--text-main)' }}>
-                      Receipt Preview
+                      ตัวอย่างใบเสร็จ
                     </h2>
                     <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                      เลือกโครงการ อัปโหลดใบเสร็จหรือ PDF เพื่อให้ Gemini ช่วยอ่านข้อมูลและส่งคำขอเข้า backend ใหม่ที่ออกแบบตาม flow
-                      ของ subcontractor input และ admin review
+                      เลือกโครงการและอัปโหลดใบเสร็จหรือ PDF เพื่อให้ระบบช่วยอ่านข้อมูล แล้วส่งคำขอให้ผู้ดูแลตรวจสอบ
                     </p>
                   </div>
                   <ConstructionAnimation />

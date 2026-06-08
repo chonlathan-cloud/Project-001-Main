@@ -552,10 +552,6 @@ function ApprovalPage() {
                     <span>{selectedRequest.request_date}</span>
                   </div>
                 </div>
-                <div style={{ textAlign: 'right', color: '#666' }}>
-                  <div style={{ fontSize: '12px', marginBottom: '4px' }}>Request ID</div>
-                  <div style={{ fontSize: '13px' }}>{selectedRequest.request_id}</div>
-                </div>
               </div>
 
               {flashMessage ? (

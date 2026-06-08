@@ -45,22 +45,41 @@ const routeMeta = [
   },
 ];
 
-function formatDate() {
-  return new Intl.DateTimeFormat('en-US', {
+function formatDate(locale = 'en-US') {
+  return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   }).format(new Date());
 }
 
+function isSubcontractorUser(user) {
+  return String(user?.role_key || user?.role || '').trim().toLowerCase() === 'subcontractor';
+}
+
 function getProfilePath(user) {
-  return user?.role === 'subcontractor' ? '/profile/me' : '/profile';
+  return isSubcontractorUser(user) ? '/profile/me' : '/profile';
 }
 
 export default function WorkspaceTopbar({ authUser, pathname }) {
+  const isSubcontractor = isSubcontractorUser(authUser);
   const meta = useMemo(
-    () => routeMeta.find((item) => item.match(pathname)) || routeMeta[0],
-    [pathname],
+    () => {
+      if (isSubcontractor && pathname.startsWith('/input')) {
+        return {
+          title: 'ส่งคำขอ',
+          description: 'อัปโหลดใบเสร็จและส่งรายการรายรับหรือรายจ่ายให้ผู้ดูแลตรวจสอบ',
+        };
+      }
+      if (isSubcontractor && pathname.startsWith('/profile')) {
+        return {
+          title: 'โปรไฟล์ของฉัน',
+          description: 'ข้อมูลติดต่อ บัญชีธนาคาร และข้อมูลสำหรับใช้ในระบบ',
+        };
+      }
+      return routeMeta.find((item) => item.match(pathname)) || routeMeta[0];
+    },
+    [isSubcontractor, pathname],
   );
 
   return (
@@ -73,11 +92,11 @@ export default function WorkspaceTopbar({ authUser, pathname }) {
       <div className="workspace-actions">
         <div className="workspace-date-pill">
           <Calendar size={14} strokeWidth={2} />
-          <span>{formatDate()}</span>
+          <span>{formatDate(isSubcontractor ? 'th-TH' : 'en-US')}</span>
         </div>
         <NavLink to={getProfilePath(authUser)} className="workspace-profile-link">
           <UserRound size={16} strokeWidth={2} />
-          <span>{authUser?.display_name || authUser?.email || 'Profile'}</span>
+          <span>{authUser?.display_name || authUser?.email || (isSubcontractor ? 'โปรไฟล์' : 'Profile')}</span>
         </NavLink>
       </div>
     </header>

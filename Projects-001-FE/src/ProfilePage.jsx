@@ -90,6 +90,43 @@ const iconMap = {
   budget_managed: DollarSign,
 };
 
+const subcontractorStatCopy = {
+  active_projects: {
+    label: 'โครงการที่ใช้งานอยู่',
+    subtext: 'โครงการที่สามารถเลือกส่งรายการได้',
+  },
+  pending_approvals: {
+    label: 'รอตรวจสอบ',
+    subtext: 'คำขอที่ส่งแล้วและกำลังรอผู้ดูแลตรวจสอบ',
+  },
+  completed_tasks: {
+    label: 'รายการสำเร็จ',
+    subtext: 'คำขอที่อนุมัติหรือจ่ายเงินแล้ว',
+  },
+  team_members: {
+    label: 'คำขอของฉัน',
+    subtext: 'จำนวนคำขอทั้งหมดของบัญชีนี้',
+  },
+  reports_generated: {
+    label: 'อัตรา VAT',
+    subtext: 'อัตราภาษีที่บันทึกไว้ในโปรไฟล์',
+  },
+  budget_managed: {
+    label: 'ยอดที่อนุมัติแล้ว',
+    subtext: 'ยอดรวมของคำขอที่อนุมัติหรือจ่ายเงินแล้ว',
+  },
+};
+
+const localizeSubcontractorStats = (stats = []) =>
+  stats.map((stat) => ({
+    ...stat,
+    label: subcontractorStatCopy[stat.id]?.label || stat.label,
+    subtext: subcontractorStatCopy[stat.id]?.subtext || stat.subtext,
+  }));
+
+const isSubcontractorUser = (user = {}) =>
+  String(user?.role_key || user?.role || '').trim().toLowerCase() === 'subcontractor';
+
 const buildInitials = (value) => {
   const words = String(value || '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return 'U';
@@ -316,6 +353,8 @@ const ProfilePage = () => {
     setProfileForm(buildProfileForm(profileData.user));
   }, [isEditing, profileData?.user]);
 
+  const useThaiProfileCopy = isSubcontractorUser(profileData?.user);
+
   const handlePickAvatar = () => {
     fileInputRef.current?.click();
   };
@@ -325,13 +364,13 @@ const ProfilePage = () => {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      setAvatarError('Please choose an image file.');
+      setAvatarError(useThaiProfileCopy ? 'กรุณาเลือกไฟล์รูปภาพ' : 'Please choose an image file.');
       event.target.value = '';
       return;
     }
 
     if (file.size > MAX_AVATAR_BYTES) {
-      setAvatarError('Profile photo must be 5MB or smaller.');
+      setAvatarError(useThaiProfileCopy ? 'รูปโปรไฟล์ต้องมีขนาดไม่เกิน 5MB' : 'Profile photo must be 5MB or smaller.');
       event.target.value = '';
       return;
     }
@@ -355,7 +394,7 @@ const ProfilePage = () => {
         };
       });
     } catch (error) {
-      setAvatarError(error.message || 'Failed to upload profile avatar.');
+      setAvatarError(error.message || (useThaiProfileCopy ? 'อัปโหลดรูปโปรไฟล์ไม่สำเร็จ' : 'Failed to upload profile avatar.'));
     } finally {
       setAvatarSaving(false);
       if (event.target) {
@@ -384,7 +423,7 @@ const ProfilePage = () => {
         };
       });
     } catch (error) {
-      setAvatarError(error.message || 'Failed to reset profile avatar.');
+      setAvatarError(error.message || (useThaiProfileCopy ? 'รีเซ็ตรูปโปรไฟล์ไม่สำเร็จ' : 'Failed to reset profile avatar.'));
     } finally {
       setAvatarSaving(false);
     }
@@ -451,9 +490,9 @@ const ProfilePage = () => {
       setProfileForm(buildProfileForm(updatedUser));
       syncStoredProfileUser(updatedUser);
       setIsEditing(false);
-      setProfileMessage('Profile updated.');
+      setProfileMessage(useThaiProfileCopy ? 'บันทึกโปรไฟล์เรียบร้อยแล้ว' : 'Profile updated.');
     } catch (error) {
-      setProfileError(error.message || 'Failed to update profile.');
+      setProfileError(error.message || (useThaiProfileCopy ? 'บันทึกโปรไฟล์ไม่สำเร็จ' : 'Failed to update profile.'));
     } finally {
       setProfileSaving(false);
     }
@@ -473,8 +512,11 @@ const ProfilePage = () => {
   }
 
   const user = profileData.user;
-  const stats = Array.isArray(profileData.stats) ? profileData.stats : [];
+  const baseStats = Array.isArray(profileData.stats) ? profileData.stats : [];
   const bankAccount = user.bank_account || {};
+  const roleLabel = user.role || 'User';
+  const isSubcontractor = isSubcontractorUser(user);
+  const stats = isSubcontractor ? localizeSubcontractorStats(baseStats) : baseStats;
   const approvedStat = findStat(stats, 'budget_managed');
   const pendingStat = findStat(stats, 'pending_approvals');
   const assignedProjectIds = Array.isArray(user.assigned_project_ids)
@@ -482,19 +524,36 @@ const ProfilePage = () => {
     : [];
   const profileName = user.display_name || user.contact_name || user.name;
   const avatarUrl = user.profile_image_url || user.line_picture_url || user.avatar_url;
-  const roleLabel = user.role || 'User';
-  const normalizedRole = String(user.role || '').trim().toLowerCase();
-  const isSubcontractor = normalizedRole === 'subcontractor';
   const hasProfileBankDetails = hasBankDetails(user);
+  const displayRoleLabel = isSubcontractor ? 'ผู้รับเหมา' : roleLabel;
+  const fallbackCompany = isSubcontractor ? 'พื้นที่ผู้รับเหมา' : 'Manee Son Construction';
+  const displayCompany =
+    isSubcontractor && (!user.company || user.company === 'Subcontractor Portal')
+      ? fallbackCompany
+      : user.company || fallbackCompany;
+  const uploadPhotoLabel = avatarSaving
+    ? isSubcontractor ? 'กำลังอัปโหลด...' : 'Uploading...'
+    : isSubcontractor ? 'เปลี่ยนรูป' : 'Change Photo';
+  const editProfileLabel = isEditing
+    ? isSubcontractor ? 'กำลังแก้ไข' : 'Editing'
+    : isSubcontractor ? 'แก้ไขโปรไฟล์' : 'Edit Profile';
+  const saveProfileLabel = profileSaving
+    ? isSubcontractor ? 'กำลังบันทึก...' : 'Saving...'
+    : isSubcontractor ? 'บันทึก' : 'Save';
+  const bankingStatusText = hasProfileBankDetails
+    ? isSubcontractor ? 'พร้อมใช้สำหรับข้อมูลการโอนเงิน' : 'Available for transfer records'
+    : isSubcontractor ? 'ยังไม่ได้กรอกข้อมูล' : 'Not provided';
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
       <div style={{ marginBottom: '28px' }}>
         <h1 style={{ fontSize: '32px', marginBottom: '8px', fontWeight: '700', color: 'var(--text-main)' }}>
-          My Profile
+          {isSubcontractor ? 'โปรไฟล์ของฉัน' : 'My Profile'}
         </h1>
         <p style={{ margin: 0, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          Account identity, work context, and profile defaults used across the portal.
+          {isSubcontractor
+            ? 'ข้อมูลติดต่อ บัญชีธนาคาร และข้อมูลที่ระบบใช้กรอกอัตโนมัติ'
+            : 'Account identity, work context, and profile defaults used across the portal.'}
         </p>
       </div>
 
@@ -504,13 +563,13 @@ const ProfilePage = () => {
 
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--primary)', marginBottom: '6px' }}>
-              {roleLabel}
+              {displayRoleLabel}
             </div>
             <h2 style={{ fontSize: '26px', margin: 0, color: 'var(--text-main)' }}>
-              {user.display_name || user.name || user.contact_name || 'Unknown'}
+              {user.display_name || user.name || user.contact_name || (isSubcontractor ? 'ไม่พบชื่อผู้ใช้' : 'Unknown')}
             </h2>
             <div style={{ color: 'var(--text-muted)', marginTop: '8px', lineHeight: 1.5 }}>
-              {user.company || (isSubcontractor ? 'Subcontractor Portal' : 'Manee Son Construction')}
+              {displayCompany}
             </div>
 
             <input
@@ -532,7 +591,7 @@ const ProfilePage = () => {
                 }}
               >
                 <Camera size={16} />
-                {avatarSaving ? 'Uploading...' : 'Change Photo'}
+                {uploadPhotoLabel}
               </button>
               {avatarUrl ? (
                 <button
@@ -546,7 +605,7 @@ const ProfilePage = () => {
                   }}
                 >
                   <RotateCcw size={16} />
-                  {isSubcontractor ? 'Use LINE Avatar' : 'Remove Photo'}
+                  {isSubcontractor ? 'ใช้รูปจาก LINE' : 'Remove Photo'}
                 </button>
               ) : null}
               <button
@@ -559,7 +618,7 @@ const ProfilePage = () => {
                 }}
               >
                 <Edit3 size={16} />
-                {isEditing ? 'Editing' : 'Edit Profile'}
+                {editProfileLabel}
               </button>
             </div>
             {avatarError ? (
@@ -580,16 +639,16 @@ const ProfilePage = () => {
         }}>
           <div>
             <div style={{ fontSize: '13px', fontWeight: '700', opacity: 0.75, marginBottom: '8px' }}>
-              Total Approved Amount
+              {isSubcontractor ? 'ยอดอนุมัติทั้งหมด' : 'Total Approved Amount'}
             </div>
             <div style={{ fontSize: '42px', fontWeight: '800', lineHeight: 1 }}>
               {approvedStat?.value || '-'}
             </div>
           </div>
           <div style={{ display: 'grid', gap: '8px', fontSize: '14px', lineHeight: 1.5 }}>
-            <div>{approvedStat?.subtext || 'Approved or paid requests for this subcontractor'}</div>
+            <div>{approvedStat?.subtext || (isSubcontractor ? 'คำขอที่อนุมัติหรือจ่ายเงินแล้ว' : 'Approved or paid requests for this subcontractor')}</div>
             <div style={{ opacity: 0.82 }}>
-              Pending approval: <strong>{pendingStat?.value || '0'}</strong>
+              {isSubcontractor ? 'รอตรวจสอบ' : 'Pending approval'}: <strong>{pendingStat?.value || '0'}</strong>
             </div>
           </div>
         </div>
@@ -620,18 +679,18 @@ const ProfilePage = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
             <div>
               <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: 'var(--text-main)' }}>
-                Activity vs Expenses
+                {isSubcontractor ? 'จำนวนคำขอและยอดรายจ่าย' : 'Activity vs Expenses'}
               </h2>
               <div style={{ color: 'var(--text-muted)', marginTop: '6px', fontSize: '13px' }}>
-                Last six active months
+                {isSubcontractor ? 'ข้อมูล 6 เดือนล่าสุดที่มีรายการ' : 'Last six active months'}
               </div>
             </div>
             <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#27a57a' }}></span> Activity
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#27a57a' }}></span> {isSubcontractor ? 'จำนวนคำขอ' : 'Activity'}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--secondary)' }}></span> Expenses
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--secondary)' }}></span> {isSubcontractor ? 'รายจ่าย' : 'Expenses'}
               </div>
             </div>
           </div>
@@ -646,8 +705,8 @@ const ProfilePage = () => {
                   cursor={{ fill: '#f8fafc', opacity: 0.8 }}
                   contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: 'none' }}
                 />
-                <Bar dataKey="Activity" fill="#27a57a" radius={[4, 4, 0, 0]} barSize={12} />
-                <Bar dataKey="Expenses" fill="#c2a878" radius={[4, 4, 0, 0]} barSize={12} />
+                <Bar dataKey="Activity" name={isSubcontractor ? 'จำนวนคำขอ' : 'Activity'} fill="#27a57a" radius={[4, 4, 0, 0]} barSize={12} />
+                <Bar dataKey="Expenses" name={isSubcontractor ? 'รายจ่าย' : 'Expenses'} fill="#c2a878" radius={[4, 4, 0, 0]} barSize={12} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -655,7 +714,7 @@ const ProfilePage = () => {
 
         <div style={{ display: 'grid', gap: '24px' }}>
           <DetailPanel
-            title="Profile Information"
+            title={isSubcontractor ? 'ข้อมูลโปรไฟล์' : 'Profile Information'}
             icon={IdCard}
             actions={
               isEditing ? (
@@ -667,7 +726,7 @@ const ProfilePage = () => {
                     style={{ ...buttonStyle('secondary'), ...(profileSaving ? disabledButtonStyle : {}) }}
                   >
                     <X size={16} />
-                    Cancel
+                    {isSubcontractor ? 'ยกเลิก' : 'Cancel'}
                   </button>
                   <button
                     type="button"
@@ -680,7 +739,7 @@ const ProfilePage = () => {
                     }}
                   >
                     <Save size={16} />
-                    {profileSaving ? 'Saving...' : 'Save'}
+                    {saveProfileLabel}
                   </button>
                 </div>
               ) : null
@@ -689,78 +748,78 @@ const ProfilePage = () => {
             {isEditing ? (
               <>
                 <EditableField
-                  label="Display Name"
+                  label={isSubcontractor ? 'ชื่อที่แสดง' : 'Display Name'}
                   value={profileForm.displayName}
                   onChange={updateProfileField('displayName')}
                 />
                 <EditableField
-                  label="Contact Name"
+                  label={isSubcontractor ? 'ชื่อผู้ติดต่อ' : 'Contact Name'}
                   value={profileForm.contactName}
                   onChange={updateProfileField('contactName')}
                 />
-                <EditableField label="Phone" value={profileForm.phone} onChange={updateProfileField('phone')} />
+                <EditableField label={isSubcontractor ? 'เบอร์ติดต่อ' : 'Phone'} value={profileForm.phone} onChange={updateProfileField('phone')} />
                 <EditableField
-                  label="Company / Organization"
+                  label={isSubcontractor ? 'บริษัท / หน่วยงาน' : 'Company / Organization'}
                   value={profileForm.company}
                   onChange={updateProfileField('company')}
                 />
-                <EditableField label="Timezone" value={profileForm.time} onChange={updateProfileField('time')} />
+                <EditableField label={isSubcontractor ? 'เขตเวลา' : 'Timezone'} value={profileForm.time} onChange={updateProfileField('time')} />
                 <EditableField label="Email" value={user.email || ''} onChange={() => {}} readOnly />
               </>
             ) : (
               <>
-                <DetailRow label="Display Name" value={user.display_name || user.name} />
-                <DetailRow label="Contact Name" value={user.contact_name || user.name} />
-                <DetailRow label="Phone" value={user.phone} />
+                <DetailRow label={isSubcontractor ? 'ชื่อที่แสดง' : 'Display Name'} value={user.display_name || user.name} />
+                <DetailRow label={isSubcontractor ? 'ชื่อผู้ติดต่อ' : 'Contact Name'} value={user.contact_name || user.name} />
+                <DetailRow label={isSubcontractor ? 'เบอร์ติดต่อ' : 'Phone'} value={user.phone} />
                 <DetailRow label="Email" value={user.email} />
                 {user.line_uid ? <DetailRow label="LINE UID" value={user.line_uid} /> : null}
                 <DetailRow
-                  label="Assigned Projects"
+                  label={isSubcontractor ? 'โครงการที่ได้รับมอบหมาย' : 'Assigned Projects'}
                   value={assignedProjectIds.length ? assignedProjectIds.join(', ') : '-'}
                 />
               </>
             )}
           </DetailPanel>
 
-          <DetailPanel title="Banking Information" icon={Landmark}>
+          <DetailPanel title={isSubcontractor ? 'ข้อมูลบัญชีธนาคาร' : 'Banking Information'} icon={Landmark}>
             {isEditing ? (
               <>
                 <EditableField
-                  label="Bank Name"
+                  label={isSubcontractor ? 'ธนาคาร' : 'Bank Name'}
                   value={profileForm.bankName}
                   onChange={updateProfileField('bankName')}
                 />
                 <EditableField
-                  label="Account Number"
+                  label={isSubcontractor ? 'เลขที่บัญชี' : 'Account Number'}
                   value={profileForm.accountNo}
                   onChange={updateProfileField('accountNo')}
                 />
                 <EditableField
-                  label="Account Name"
+                  label={isSubcontractor ? 'ชื่อบัญชี' : 'Account Name'}
                   value={profileForm.accountName}
                   onChange={updateProfileField('accountName')}
                 />
               </>
             ) : (
               <>
-                <DetailRow label="Bank Name" value={bankAccount.bank_name} />
-                <DetailRow label="Account Number" value={bankAccount.account_no} />
-                <DetailRow label="Account Name" value={bankAccount.account_name} />
+                <DetailRow label={isSubcontractor ? 'ธนาคาร' : 'Bank Name'} value={bankAccount.bank_name} />
+                <DetailRow label={isSubcontractor ? 'เลขที่บัญชี' : 'Account Number'} value={bankAccount.account_no} />
+                <DetailRow label={isSubcontractor ? 'ชื่อบัญชี' : 'Account Name'} value={bankAccount.account_name} />
                 <DetailRow
-                  label="Banking Status"
-                  value={hasProfileBankDetails ? 'Available for transfer records' : 'Not provided'}
+                  label={isSubcontractor ? 'สถานะข้อมูลบัญชี' : 'Banking Status'}
+                  value={bankingStatusText}
                 />
               </>
             )}
           </DetailPanel>
 
-          <DetailPanel title={isSubcontractor ? 'Contract Status' : 'Access Details'} icon={Phone}>
+          <DetailPanel title={isSubcontractor ? 'สถานะบัญชี' : 'Access Details'} icon={Phone}>
             {isSubcontractor ? (
-              <DetailRow label="KYC Status" value="Private signed-URL review" />
+              <DetailRow label="สถานะ KYC" value="ใช้ลิงก์ส่วนตัวสำหรับตรวจสอบเอกสาร" />
             ) : (
               <DetailRow label="Portal Role" value={roleLabel} />
             )}
-            <DetailRow label="Timezone" value={user.time || 'Asia/Bangkok'} />
+            <DetailRow label={isSubcontractor ? 'เขตเวลา' : 'Timezone'} value={user.time || 'Asia/Bangkok'} />
           </DetailPanel>
         </div>
       </div>

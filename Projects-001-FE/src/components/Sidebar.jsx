@@ -38,6 +38,7 @@ function getInitials(user) {
 const Sidebar = () => {
   const navigate = useNavigate();
   const [authUser, setAuthUser] = useState(() => getStoredAuthUser());
+  const isAdminUser = isAdminPortalUser(authUser);
 
   useEffect(() => {
     return subscribeToAuthChanges(() => {
@@ -46,7 +47,7 @@ const Sidebar = () => {
   }, []);
 
   const navItems = useMemo(() => {
-    if (isAdminPortalUser(authUser)) {
+    if (isAdminUser) {
       const sharedAdminItems = [
         { name: 'Projects', icon: Briefcase, path: '/project' },
         { name: 'Input', icon: ClipboardList, path: '/input' },
@@ -68,20 +69,20 @@ const Sidebar = () => {
     }
 
     return [
-      { name: 'Input', icon: ClipboardList, path: '/input' },
-      { name: 'Profile', icon: UserRound, path: '/profile/me' },
+      { name: 'ส่งคำขอ', icon: ClipboardList, path: '/input' },
+      { name: 'โปรไฟล์', icon: UserRound, path: '/profile/me' },
     ];
-  }, [authUser]);
+  }, [authUser, isAdminUser]);
 
   const systemItems = useMemo(() => {
-    if (isAdminPortalUser(authUser)) {
+    if (isAdminUser) {
       return [
         { name: 'Settings', icon: Settings, path: '/setting' },
         { name: 'Support', icon: HelpCircle, path: '/support' },
       ];
     }
     return [];
-  }, [authUser]);
+  }, [isAdminUser]);
 
   const handleLogout = async () => {
     clearAuthSession();
@@ -98,7 +99,7 @@ const Sidebar = () => {
         <div>
           <div className="sidebar-brand-title">Projects-001</div>
           <div className="sidebar-brand-subtitle">
-            {isAdminPortalUser(authUser) ? 'Admin Portal' : 'Subcontractor Portal'}
+            {isAdminUser ? 'Admin Portal' : 'พื้นที่ผู้รับเหมา'}
           </div>
         </div>
       </div>
@@ -148,11 +149,15 @@ const Sidebar = () => {
           <div className="sidebar-user-card">
             <div className="sidebar-user-avatar">{getInitials(authUser)}</div>
             <div className="sidebar-user-meta">
-              <div className="sidebar-user-label">Signed in as</div>
-              <div className="sidebar-user-name">
-                {authUser?.display_name || authUser?.email || authUser?.subcontractor_id || 'User'}
+              <div className="sidebar-user-label">
+                {isAdminUser ? 'Signed in as' : 'เข้าสู่ระบบในชื่อ'}
               </div>
-              <div className="sidebar-user-role">{authUser?.role || 'session'}</div>
+              <div className="sidebar-user-name">
+                {authUser?.display_name || authUser?.email || authUser?.subcontractor_id || (isAdminUser ? 'User' : 'ผู้ใช้งาน')}
+              </div>
+              <div className="sidebar-user-role">
+                {isAdminUser ? authUser?.role || 'session' : 'ผู้รับเหมา'}
+              </div>
             </div>
           </div>
 
@@ -162,7 +167,7 @@ const Sidebar = () => {
             className="sidebar-logout-button"
           >
             <LogOut size={16} />
-            Sign Out
+            {isAdminUser ? 'Sign Out' : 'ออกจากระบบ'}
           </button>
         </div>
       </div>
