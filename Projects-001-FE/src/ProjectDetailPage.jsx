@@ -13,13 +13,13 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import { getInsightWarehouseRows, getProjectDetailData } from './api';
+import BoqSheetCharts from './components/BoqSheetCharts';
 import BoqWorkbench from './components/BoqWorkbench';
 import Loading from './components/Loading';
 
@@ -524,34 +524,6 @@ function ProjectDetailPage() {
       : compareSummary.totalVariance < 0
         ? 'danger'
         : 'neutral';
-  const varianceChartData = wbsSummary.map((item) => ({
-    key: item.key,
-    label: shortenLabel(item.label, 22),
-    fullLabel: item.label,
-    sheetName: item.sheetName,
-    displayLabel: item.sheetName ? `${item.sheetName} · ${item.label}` : item.label,
-    variance: item.variance,
-    fill: item.variance >= 0 ? '#22c55e' : '#ef4444',
-    marginPercent: item.marginPercent,
-  }));
-  const budgetCompareChartData = wbsSummary.map((item) => ({
-    key: item.key,
-    label: shortenLabel(item.label, 22),
-    fullLabel: item.label,
-    displayLabel: item.sheetName ? `${item.sheetName} · ${item.label}` : item.label,
-    customer: item.customerTotalBudget,
-    subcontractor: item.subcontractorTotalBudget,
-  }));
-  const costMixChartData = wbsSummary.map((item) => ({
-    key: item.key,
-    label: shortenLabel(item.label, 20),
-    fullLabel: item.label,
-    displayLabel: item.sheetName ? `${item.sheetName} · ${item.label}` : item.label,
-    customerMaterial: item.customerMaterialBudget,
-    customerLabor: item.customerLaborBudget,
-    subcontractorMaterial: item.subcontractorMaterialBudget,
-    subcontractorLabor: item.subcontractorLaborBudget,
-  }));
   const executionChartData = executionSummary.map((item) => ({
     ...item,
     shortLabel: shortenLabel(item.label, 18),
@@ -754,125 +726,7 @@ function ProjectDetailPage() {
       </section>
 
       <section className="project-detail-chart-grid">
-        <ChartCard
-          title="Variance by WBS"
-          description="ดูว่าหมวดงานหลักไหนสร้างส่วนต่างระหว่าง Customer BOQ และ Subcontractor BOQ มากที่สุด"
-        >
-          {varianceChartData.length ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={varianceChartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
-                <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="label"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6b7280' }}
-                />
-                <YAxis
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6b7280' }}
-                  tickFormatter={(value) => compactCurrencyFormatter.format(Number(value || 0))}
-                />
-                <Tooltip
-                  formatter={(value) => [formatCurrency(value), 'Variance']}
-                  labelFormatter={(_, payload) => payload?.[0]?.payload?.displayLabel || '-'}
-                  contentStyle={baseChartTooltipStyle}
-                />
-                <Bar dataKey="variance" radius={[8, 8, 0, 0]}>
-                  {varianceChartData.map((entry) => (
-                    <Cell key={entry.key} fill={entry.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <ChartEmptyState message="ยังไม่มี compare summary ระดับ WBS สำหรับสร้างกราฟ variance" />
-          )}
-        </ChartCard>
-
-        <ChartCard
-          title="Customer vs Subcontractor"
-          description="เทียบงบรวมของทั้งสองฝั่งในแต่ละหมวด WBS ระดับบนสุด เพื่อหา gap ของแต่ละหมวดอย่างรวดเร็ว"
-        >
-          {budgetCompareChartData.length ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={budgetCompareChartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
-                <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="label"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6b7280' }}
-                />
-                <YAxis
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6b7280' }}
-                  tickFormatter={(value) => compactCurrencyFormatter.format(Number(value || 0))}
-                />
-                <Tooltip
-                  formatter={(value, name) => [
-                    formatCurrency(value),
-                    name === 'customer' ? 'Customer BOQ' : 'Subcontractor BOQ',
-                  ]}
-                  labelFormatter={(_, payload) => payload?.[0]?.payload?.displayLabel || '-'}
-                  contentStyle={baseChartTooltipStyle}
-                />
-                <Legend />
-                <Bar dataKey="customer" name="Customer BOQ" fill="#1f2937" radius={[8, 8, 0, 0]} />
-                <Bar dataKey="subcontractor" name="Subcontractor BOQ" fill="#c4a470" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <ChartEmptyState message="ยังไม่มีข้อมูล WBS summary สำหรับเทียบ Customer และ Subcontractor" />
-          )}
-        </ChartCard>
-
-        <ChartCard
-          title="Material / Labor Mix"
-          description="แยกโครงสร้างต้นทุนของแต่ละหมวดว่า Material และ Labor กระจุกอยู่ฝั่งไหนบ้าง"
-        >
-          {costMixChartData.length ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={costMixChartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
-                <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="label"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6b7280' }}
-                />
-                <YAxis
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6b7280' }}
-                  tickFormatter={(value) => compactCurrencyFormatter.format(Number(value || 0))}
-                />
-                <Tooltip
-                  formatter={(value, name) => {
-                    const labels = {
-                      customerMaterial: 'Customer Material',
-                      customerLabor: 'Customer Labor',
-                      subcontractorMaterial: 'Subcontractor Material',
-                      subcontractorLabor: 'Subcontractor Labor',
-                    };
-                    return [formatCurrency(value), labels[name] || name];
-                  }}
-                  labelFormatter={(_, payload) => payload?.[0]?.payload?.displayLabel || '-'}
-                  contentStyle={baseChartTooltipStyle}
-                />
-                <Legend />
-                <Bar dataKey="customerMaterial" name="Customer Material" stackId="customer" fill="#60a5fa" radius={[8, 8, 0, 0]} />
-                <Bar dataKey="customerLabor" name="Customer Labor" stackId="customer" fill="#1d4ed8" radius={[8, 8, 0, 0]} />
-                <Bar dataKey="subcontractorMaterial" name="Subcontractor Material" stackId="sub" fill="#fbbf24" radius={[8, 8, 0, 0]} />
-                <Bar dataKey="subcontractorLabor" name="Subcontractor Labor" stackId="sub" fill="#b45309" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <ChartEmptyState message="ยังไม่มีข้อมูล material/labor split สำหรับแสดงผล" />
-          )}
-        </ChartCard>
+        <BoqSheetCharts wbsSummary={wbsSummary} />
 
         <ChartCard
           title="Execution Status"
