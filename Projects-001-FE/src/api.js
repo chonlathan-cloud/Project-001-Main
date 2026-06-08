@@ -432,14 +432,23 @@ export async function getDashboardData() {
   const recentActions = Array.isArray(data?.recent_actions) ? data.recent_actions : [];
 
   const cashflow = monthlyCashflow.map((item) => {
-    const income = toNumber(item.income);
-    const expense = toNumber(item.expense);
+    const actualIncome = toNumber(item.actual_income ?? item.income);
+    const actualExpense = toNumber(item.actual_expense ?? item.expense);
+    const committedIncome = toNumber(item.committed_income);
+    const committedExpense = toNumber(item.committed_expense);
+    const plannedIncome = toNumber(item.planned_income);
 
     return {
       month: item.month || '-',
-      income,
-      expense,
-      balance: income - expense,
+      income: actualIncome,
+      expense: actualExpense,
+      balance: actualIncome - actualExpense,
+      actualIncome,
+      actualExpense,
+      committedIncome,
+      committedExpense,
+      committedBalance: committedIncome - committedExpense,
+      plannedIncome,
     };
   });
 
@@ -453,7 +462,11 @@ export async function getDashboardData() {
 
   const totalIncome = cashflow.reduce((sum, item) => sum + item.income, 0);
   const totalExpense = cashflow.reduce((sum, item) => sum + item.expense, 0);
+  const committedIncome = cashflow.reduce((sum, item) => sum + item.committedIncome, 0);
+  const committedExpense = cashflow.reduce((sum, item) => sum + item.committedExpense, 0);
+  const plannedIncome = cashflow.reduce((sum, item) => sum + item.plannedIncome, 0);
   const netCashflow = totalIncome - totalExpense;
+  const committedNetCashflow = committedIncome - committedExpense;
   const remainingBudget = totalBudget - actualCost;
   const budgetUtilization = totalBudget > 0 ? (actualCost / totalBudget) * 100 : 0;
   const overdueRatio = totalBudget > 0 ? (overdueAmount / totalBudget) * 100 : 0;
@@ -483,6 +496,10 @@ export async function getDashboardData() {
       profitMargin,
       totalIncome,
       totalExpense,
+      committedIncome,
+      committedExpense,
+      committedNetCashflow,
+      plannedIncome,
       netCashflow,
       remainingBudget,
       budgetUtilization,
@@ -564,10 +581,10 @@ export async function getDashboardData() {
       },
       {
         key: 'cashflow',
-        label: 'Net cashflow',
+        label: 'Actual cashflow',
         value: netCashflow,
         kind: 'currency',
-        description: 'รายรับจาก installments หักรายจ่ายที่อนุมัติแล้ว',
+        description: 'เงินสดรับจ่ายจริงจากรายการที่ paid แล้ว',
         tone: netCashflow < 0 ? 'danger' : 'positive',
       },
     ],

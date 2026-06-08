@@ -1,0 +1,4 @@
+interface:
+  display_name: "Backend Cloud SQL"
+  short_description: "Connect backend to Cloud SQL safely"
+  default_prompt: "Use $backend-cloud-sql to connect the backend to Cloud SQL and verify dashboard data safely."

@@ -932,6 +932,14 @@ body {
   background: #c2a878;
 }
 
+.dashboard-cashflow-mini-bars .committed-income {
+  background: rgba(79, 111, 100, 0.36);
+}
+
+.dashboard-cashflow-mini-bars .committed-expense {
+  background: rgba(194, 168, 120, 0.48);
+}
+
 .dashboard-risk-chart {
   height: 310px;
 }

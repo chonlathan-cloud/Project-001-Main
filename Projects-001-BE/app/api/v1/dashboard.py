@@ -46,6 +46,21 @@ def _money(value: object) -> float:
         return 0.0
 
 
+def _input_request_amount(request: InputRequest) -> float:
+    if request.approved_amount is not None:
+        return _money(request.approved_amount)
+    return _money(request.amount)
+
+
+def _cashflow_direction(entry_type: object) -> str:
+    normalized = str(entry_type or "").upper()
+    if normalized == "INCOME":
+        return "income"
+    if normalized == "EXPENSE":
+        return "expense"
+    return ""
+
+
 def _project_health_tone(*, burn_percent: float, overdue_amount: float, pending_amount: float) -> str:
     if overdue_amount > 0 or burn_percent >= 95:
         return "danger"
@@ -139,7 +154,14 @@ async def get_dashboard_summary(
         )
 
         monthly_cashflow_map: dict[str, dict[str, float | str]] = defaultdict(
-            lambda: {"month": "", "income": 0.0, "expense": 0.0}
+            lambda: {
+                "month": "",
+                "actual_income": 0.0,
+                "actual_expense": 0.0,
+                "committed_income": 0.0,
+                "committed_expense": 0.0,
+                "planned_income": 0.0,
+            }
         )
 
         for installment in installments:
@@ -147,8 +169,8 @@ async def get_dashboard_summary(
                 continue
             key = _month_key(installment.due_date)
             monthly_cashflow_map[key]["month"] = _month_label(installment.due_date)
-            monthly_cashflow_map[key]["income"] = _money(
-                monthly_cashflow_map[key]["income"]
+            monthly_cashflow_map[key]["planned_income"] = _money(
+                monthly_cashflow_map[key]["planned_income"]
             ) + _money(installment.amount)
 
         for transaction in transactions:
@@ -156,20 +178,53 @@ async def get_dashboard_summary(
                 continue
             key = _month_key(transaction.approved_at)
             monthly_cashflow_map[key]["month"] = _month_label(transaction.approved_at)
-            monthly_cashflow_map[key]["expense"] = _money(
-                monthly_cashflow_map[key]["expense"]
+            monthly_cashflow_map[key]["actual_expense"] = _money(
+                monthly_cashflow_map[key]["actual_expense"]
             ) + _money(transaction.base_amount)
+
+        for request in input_requests:
+            request_status = str(request.status or "").upper()
+            direction = _cashflow_direction(request.entry_type)
+            if not direction:
+                continue
+
+            amount = _input_request_amount(request)
+            if amount <= 0:
+                continue
+
+            if request_status == "PAID":
+                event_date = request.paid_at or request.approved_at
+                if event_date is None:
+                    continue
+                key = _month_key(event_date)
+                monthly_cashflow_map[key]["month"] = _month_label(event_date)
+                field = "actual_income" if direction == "income" else "actual_expense"
+                monthly_cashflow_map[key][field] = _money(
+                    monthly_cashflow_map[key][field]
+                ) + amount
+            elif request_status == "APPROVED" and request.approved_at is not None:
+                key = _month_key(request.approved_at)
+                monthly_cashflow_map[key]["month"] = _month_label(request.approved_at)
+                field = "committed_income" if direction == "income" else "committed_expense"
+                monthly_cashflow_map[key][field] = _money(
+                    monthly_cashflow_map[key][field]
+                ) + amount
 
         monthly_cashflow = [
             DashboardCashflowPoint(
                 month=str(monthly_cashflow_map[key]["month"]),
-                income=round(_money(monthly_cashflow_map[key]["income"]), 2),
-                expense=round(_money(monthly_cashflow_map[key]["expense"]), 2),
+                income=round(_money(monthly_cashflow_map[key]["actual_income"]), 2),
+                expense=round(_money(monthly_cashflow_map[key]["actual_expense"]), 2),
                 net=round(
-                    _money(monthly_cashflow_map[key]["income"])
-                    - _money(monthly_cashflow_map[key]["expense"]),
+                    _money(monthly_cashflow_map[key]["actual_income"])
+                    - _money(monthly_cashflow_map[key]["actual_expense"]),
                     2,
                 ),
+                actual_income=round(_money(monthly_cashflow_map[key]["actual_income"]), 2),
+                actual_expense=round(_money(monthly_cashflow_map[key]["actual_expense"]), 2),
+                committed_income=round(_money(monthly_cashflow_map[key]["committed_income"]), 2),
+                committed_expense=round(_money(monthly_cashflow_map[key]["committed_expense"]), 2),
+                planned_income=round(_money(monthly_cashflow_map[key]["planned_income"]), 2),
             )
             for key in sorted(monthly_cashflow_map.keys())
         ]

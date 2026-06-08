@@ -34,6 +34,14 @@ const percentFormatter = new Intl.NumberFormat('th-TH', {
   maximumFractionDigits: 1,
 });
 
+const monthLabelFormatter = new Intl.DateTimeFormat('en-US', { month: 'short' });
+const calendarMonthLabels = Array.from({ length: 12 }, (_, monthIndex) => (
+  monthLabelFormatter.format(new Date(2024, monthIndex, 1))
+));
+const calendarMonthLookup = new Map(
+  calendarMonthLabels.map((label, index) => [label.toLowerCase(), index])
+);
+
 const toneStyles = {
   neutral: {
     background: '#ffffff',
@@ -75,6 +83,18 @@ const chartTooltipStyle = {
   boxShadow: '0 18px 40px rgba(15, 23, 42, 0.08)',
 };
 
+const cashflowSeriesLabels = {
+  actualIncome: 'Actual income',
+  actualExpense: 'Paid expense',
+  committedIncome: 'Approved income',
+  committedExpense: 'Approved expense',
+  balance: 'Actual balance',
+};
+
+function getCashflowSeriesLabel(value) {
+  return cashflowSeriesLabels[value] || value;
+}
+
 function formatMetric(value, kind) {
   if (kind === 'currency') {
     return currencyFormatter.format(Number(value || 0));
@@ -113,6 +133,59 @@ function getCashflowInsightTone(value) {
   if (amount < 0) return 'danger';
   if (amount > 0) return 'positive';
   return 'neutral';
+}
+
+function getCalendarMonthIndex(label) {
+  const normalizedLabel = String(label || '').trim().slice(0, 3).toLowerCase();
+  return calendarMonthLookup.has(normalizedLabel) ? calendarMonthLookup.get(normalizedLabel) : -1;
+}
+
+function toCashflowDisplayRow(item, monthLabel) {
+  const actualIncome = Number(item?.actualIncome ?? item?.income ?? 0);
+  const actualExpense = Number(item?.actualExpense ?? item?.expense ?? 0);
+  const committedIncome = Number(item?.committedIncome || 0);
+  const committedExpense = Number(item?.committedExpense || 0);
+  const plannedIncome = Number(item?.plannedIncome || 0);
+  const balance = Number.isFinite(Number(item?.balance))
+    ? Number(item.balance)
+    : actualIncome - actualExpense;
+
+  return {
+    ...item,
+    month: monthLabel || item?.month || '-',
+    income: actualIncome,
+    expense: actualExpense,
+    balance,
+    actualIncome,
+    actualExpense,
+    committedIncome,
+    committedExpense,
+    committedBalance: committedIncome - committedExpense,
+    plannedIncome,
+  };
+}
+
+function getDisplayCashflowRows(items) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+
+  const displayRows = items.map((item) => toCashflowDisplayRow(item));
+  const latestCalendarRow = [...displayRows]
+    .reverse()
+    .find((item) => getCalendarMonthIndex(item?.month) >= 0);
+
+  if (!latestCalendarRow) return displayRows;
+
+  const currentMonthIndex = new Date().getMonth();
+  const latestDataMonthIndex = getCalendarMonthIndex(latestCalendarRow.month);
+
+  if (latestDataMonthIndex >= currentMonthIndex) return displayRows;
+
+  const filledRows = [...displayRows];
+  for (let monthIndex = latestDataMonthIndex + 1; monthIndex <= currentMonthIndex; monthIndex += 1) {
+    filledRows.push(toCashflowDisplayRow(null, calendarMonthLabels[monthIndex]));
+  }
+
+  return filledRows;
 }
 
 function BudgetRow({ item }) {
@@ -254,40 +327,42 @@ function DashboardPage() {
     );
   }
 
-  const latestMonth = data?.cashflow?.[data.cashflow.length - 1] || null;
-  const cashflowRows = Array.isArray(data?.cashflow) ? data.cashflow : [];
+  const cashflowRows = getDisplayCashflowRows(data?.cashflow);
+  const latestMonth = cashflowRows[cashflowRows.length - 1] || null;
   const strongestIncomeMonth = getMaxCashflowItem(cashflowRows, 'income');
   const highestExpenseMonth = getMaxCashflowItem(cashflowRows, 'expense');
-  const positiveCashflowMonths = cashflowRows.filter((item) => Number(item?.balance || 0) > 0).length;
   const maxCashflowAmount = Math.max(
     ...cashflowRows.flatMap((item) => [
       Math.abs(Number(item?.income || 0)),
       Math.abs(Number(item?.expense || 0)),
+      Math.abs(Number(item?.committedIncome || 0)),
+      Math.abs(Number(item?.committedExpense || 0)),
       Math.abs(Number(item?.balance || 0)),
     ]),
     1
   );
+  const committedNetCashflow = Number(data?.kpis?.committedNetCashflow || 0);
   const cashflowInsights = [
     {
       key: 'income-peak',
-      label: 'Strongest income',
+      label: 'Actual income peak',
       value: strongestIncomeMonth?.month || '-',
       detail: formatMetric(strongestIncomeMonth?.income || 0, 'currency'),
       tone: 'positive',
     },
     {
       key: 'expense-peak',
-      label: 'Highest expense',
+      label: 'Paid expense peak',
       value: highestExpenseMonth?.month || '-',
       detail: formatMetric(highestExpenseMonth?.expense || 0, 'currency'),
       tone: 'warning',
     },
     {
-      key: 'positive-months',
-      label: 'Positive months',
-      value: `${positiveCashflowMonths}/${cashflowRows.length || 0}`,
-      detail: `Net ${formatMetric(data?.kpis?.netCashflow, 'currency')}`,
-      tone: getCashflowInsightTone(data?.kpis?.netCashflow),
+      key: 'approved-pending',
+      label: 'Approved pending',
+      value: formatMetric(Math.abs(committedNetCashflow), 'currency'),
+      detail: `${formatMetric(data?.kpis?.committedIncome, 'currency')} in / ${formatMetric(data?.kpis?.committedExpense, 'currency')} out`,
+      tone: committedNetCashflow < 0 ? 'warning' : getCashflowInsightTone(committedNetCashflow),
     },
   ];
   const riskyRows = Array.isArray(data?.riskyProjects) ? data.riskyProjects : [];
@@ -382,7 +457,7 @@ function DashboardPage() {
           balance={data?.kpis?.netCashflow}
           totalIncome={data?.kpis?.totalIncome}
           totalExpense={data?.kpis?.totalExpense}
-          cashflow={data?.cashflow}
+          cashflow={cashflowRows}
           latestMonth={latestMonth?.month}
           formatCurrency={(value) => formatMetric(value, 'currency')}
         />
@@ -395,14 +470,14 @@ function DashboardPage() {
         <div className="dashboard-primary-stack">
           <DashboardPanel
             title="Monthly Cashflow"
-            description="เปรียบเทียบรายรับจาก installments กับรายจ่ายที่อนุมัติแล้วในแต่ละเดือน"
-            action={<span className="dashboard-panel-pill">Income / Expense / Balance</span>}
+            description="Actual paid income and expense by month, with approved-but-unpaid commitments shown separately."
+            action={<span className="dashboard-panel-pill">Actual paid / Approved pending / Net</span>}
             className="dashboard-chart-panel"
           >
           <div className="dashboard-chart-height">
-            {data?.cashflow?.length ? (
+            {cashflowRows.length ? (
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={data.cashflow} margin={{ top: 18, right: 20, left: 0, bottom: 6 }}>
+                <ComposedChart data={cashflowRows} margin={{ top: 18, right: 20, left: 0, bottom: 6 }}>
                   <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" vertical={false} />
                   <XAxis
                     dataKey="month"
@@ -419,7 +494,7 @@ function DashboardPage() {
                   <Tooltip
                     formatter={(value, name) => [
                       formatMetric(value, 'currency'),
-                      name === 'income' ? 'Income' : name === 'expense' ? 'Expense' : 'Balance',
+                      getCashflowSeriesLabel(name),
                     ]}
                     labelStyle={{ color: '#111827', fontWeight: 700 }}
                     contentStyle={chartTooltipStyle}
@@ -429,10 +504,12 @@ function DashboardPage() {
                     align="right"
                     iconType="circle"
                     wrapperStyle={{ fontSize: '12px', color: '#6b7280', paddingBottom: '12px' }}
-                    formatter={(value) => (value === 'income' ? 'Income' : value === 'expense' ? 'Expense' : 'Balance')}
+                    formatter={getCashflowSeriesLabel}
                   />
-                  <Bar dataKey="income" name="income" fill="#4f6f64" radius={[8, 8, 0, 0]} barSize={24} />
-                  <Bar dataKey="expense" name="expense" fill="#c2a878" radius={[8, 8, 0, 0]} barSize={18} />
+                  <Bar dataKey="income" name="actualIncome" fill="#4f6f64" radius={[8, 8, 0, 0]} barSize={24} />
+                  <Bar dataKey="expense" name="actualExpense" fill="#c2a878" radius={[8, 8, 0, 0]} barSize={18} />
+                  <Bar dataKey="committedIncome" name="committedIncome" fill="#abcec1" fillOpacity={0.72} radius={[8, 8, 0, 0]} barSize={16} />
+                  <Bar dataKey="committedExpense" name="committedExpense" fill="#dfc391" fillOpacity={0.72} radius={[8, 8, 0, 0]} barSize={16} />
                   <Line
                     type="monotone"
                     dataKey="balance"
@@ -466,9 +543,18 @@ function DashboardPage() {
                   const balance = Number(item?.balance || 0);
                   const incomeWidth = Math.max(6, Math.min(100, (Math.abs(Number(item?.income || 0)) / maxCashflowAmount) * 100));
                   const expenseWidth = Math.max(6, Math.min(100, (Math.abs(Number(item?.expense || 0)) / maxCashflowAmount) * 100));
+                  const committedIncome = Number(item?.committedIncome || 0);
+                  const committedExpense = Number(item?.committedExpense || 0);
+                  const committedIncomeWidth = Math.max(6, Math.min(100, (Math.abs(committedIncome) / maxCashflowAmount) * 100));
+                  const committedExpenseWidth = Math.max(6, Math.min(100, (Math.abs(committedExpense) / maxCashflowAmount) * 100));
+                  const committedAmount = committedIncome + committedExpense;
 
                   return (
-                    <div key={item.month} className="dashboard-cashflow-month">
+                    <div
+                      key={item.month}
+                      className="dashboard-cashflow-month"
+                      title={`Actual ${formatMetric(balance, 'currency')} · Approved pending ${formatMetric(committedAmount, 'currency')}`}
+                    >
                       <div className="dashboard-cashflow-month-label">
                         <span>{item.month}</span>
                         <strong className={balance < 0 ? 'is-negative' : 'is-positive'}>
@@ -478,6 +564,12 @@ function DashboardPage() {
                       <div className="dashboard-cashflow-mini-bars">
                         <div className="income" style={{ width: `${incomeWidth}%` }} />
                         <div className="expense" style={{ width: `${expenseWidth}%` }} />
+                        {committedIncome > 0 ? (
+                          <div className="committed-income" style={{ width: `${committedIncomeWidth}%` }} />
+                        ) : null}
+                        {committedExpense > 0 ? (
+                          <div className="committed-expense" style={{ width: `${committedExpenseWidth}%` }} />
+                        ) : null}
                       </div>
                     </div>
                   );

@@ -78,7 +78,7 @@ function DashboardCashflowCard({
 
       <div className="dashboard-cashflow-grid">
         <div className="dashboard-cashflow-summary">
-          <div className="dashboard-kpi-label">Cashflow Balance</div>
+          <div className="dashboard-kpi-label">Actual Cashflow Balance</div>
           <div className="dashboard-cashflow-value">{toCurrency(numericBalance)}</div>
           <p>
             {statusStyle.message}
@@ -113,11 +113,11 @@ function DashboardCashflowCard({
 
         <div className="dashboard-cashflow-amounts">
           <div>
-            <span>Income</span>
+            <span>Actual income</span>
             <strong>{toCurrency(numericIncome)}</strong>
           </div>
           <div>
-            <span>Expense</span>
+            <span>Paid expense</span>
             <strong>{toCurrency(numericExpense)}</strong>
           </div>
         </div>

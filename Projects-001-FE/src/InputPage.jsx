@@ -11,6 +11,7 @@ import {
   submitInputRequest,
   uploadInputReceipt,
 } from './api';
+import { getStoredAuthUser } from './auth';
 
 const MotionDiv = motion.div;
 
@@ -98,15 +99,89 @@ const initialFormState = {
   amount: '',
 };
 
-const buildDefaultedFormState = (defaults = {}, overrides = {}) => ({
-  ...initialFormState,
-  requesterName: defaults.requesterName || initialFormState.requesterName,
-  phone: defaults.phone || initialFormState.phone,
-  bankName: defaults.bankName || initialFormState.bankName,
-  accountNo: defaults.accountNo || initialFormState.accountNo,
-  accountName: defaults.accountName || initialFormState.accountName,
-  ...overrides,
-});
+const cleanText = (value) => String(value || '').trim();
+
+const pickFirstText = (...values) =>
+  values.map(cleanText).find(Boolean) || '';
+
+const buildCurrentUserDefaults = () => {
+  const authUser = getStoredAuthUser() || {};
+
+  return {
+    requesterName: pickFirstText(
+      authUser.contact_name,
+      authUser.contactName,
+      authUser.name,
+      authUser.display_name,
+      authUser.displayName,
+      authUser.email
+    ),
+    phone: pickFirstText(
+      authUser.phone,
+      authUser.contact_phone,
+      authUser.contactPhone,
+      authUser.mobile,
+      authUser.tel
+    ),
+  };
+};
+
+const resolveInputDefaults = (defaults = {}) => {
+  const currentUserDefaults = buildCurrentUserDefaults();
+
+  return {
+    requesterName: pickFirstText(defaults.requesterName, currentUserDefaults.requesterName),
+    phone: pickFirstText(defaults.phone, currentUserDefaults.phone),
+    bankName: pickFirstText(defaults.bankName),
+    accountNo: pickFirstText(defaults.accountNo),
+    accountName: pickFirstText(defaults.accountName),
+  };
+};
+
+const buildDefaultedFormState = (defaults = {}, overrides = {}) => {
+  const resolvedDefaults = resolveInputDefaults(defaults);
+
+  return {
+    ...initialFormState,
+    requesterName: resolvedDefaults.requesterName || initialFormState.requesterName,
+    phone: resolvedDefaults.phone || initialFormState.phone,
+    bankName: resolvedDefaults.bankName || initialFormState.bankName,
+    accountNo: resolvedDefaults.accountNo || initialFormState.accountNo,
+    accountName: resolvedDefaults.accountName || initialFormState.accountName,
+    ...overrides,
+  };
+};
+
+const formatOcrItemDetail = (item) => {
+  const description = cleanText(item?.description);
+  if (!description) return '';
+
+  const qty = Number(item?.qty);
+  const price = Number(item?.price);
+  const details = [];
+
+  if (Number.isFinite(qty) && qty > 0) details.push(`qty ${qty}`);
+  if (Number.isFinite(price) && price > 0) details.push(`${price.toLocaleString()} THB`);
+
+  return details.length ? `${description} (${details.join(' x ')})` : description;
+};
+
+const buildRequestDetailFromOcr = (extracted = {}) => {
+  const itemDetails = Array.isArray(extracted.items)
+    ? extracted.items.map(formatOcrItemDetail).filter(Boolean)
+    : [];
+
+  if (itemDetails.length) return itemDetails.join('\n');
+
+  return [
+    extracted.vendor_name,
+    extracted.receipt_no,
+    extracted.document_date,
+  ]
+    .map(cleanText)
+    .filter(Boolean)
+    .join(' | ');
+};
 
 const fieldBaseStyle = {
   width: '100%',
@@ -319,19 +394,20 @@ const InputPage = () => {
           getInputProjectOptions(),
           getInputDefaults(),
         ]);
+        const resolvedDefaults = resolveInputDefaults(defaults);
         setProjects(items);
-        setInputDefaults(buildDefaultedFormState(defaults));
+        setInputDefaults(buildDefaultedFormState(resolvedDefaults));
         setForm((current) => {
           const nextProjectId =
             current.projectId || (items.length === 1 ? String(items[0].project_id || '') : '');
-          return buildDefaultedFormState(defaults, {
+          return buildDefaultedFormState(resolvedDefaults, {
             ...current,
             projectId: nextProjectId,
-            requesterName: current.requesterName || defaults.requesterName || '',
-            phone: current.phone || defaults.phone || '',
-            bankName: current.bankName || defaults.bankName || '',
-            accountNo: current.accountNo || defaults.accountNo || '',
-            accountName: current.accountName || defaults.accountName || '',
+            requesterName: current.requesterName || resolvedDefaults.requesterName || '',
+            phone: current.phone || resolvedDefaults.phone || '',
+            bankName: current.bankName || resolvedDefaults.bankName || '',
+            accountNo: current.accountNo || resolvedDefaults.accountNo || '',
+            accountName: current.accountName || resolvedDefaults.accountName || '',
           });
         });
       } catch (error) {
@@ -475,6 +551,7 @@ const InputPage = () => {
             ? normalizedExtracted.suggested_entry_type
             : current.entryType;
         const nextRequestType = current.requestType || normalizedExtracted.suggested_request_type || '';
+        const nextRequestDetail = current.note || buildRequestDetailFromOcr(normalizedExtracted);
 
         return {
           ...current,
@@ -491,15 +568,7 @@ const InputPage = () => {
               : nextRequestType,
           vendorName: current.vendorName || normalizedExtracted.vendor_name || '',
           receiptNo: current.receiptNo || normalizedExtracted.receipt_no || '',
-          note:
-            current.note ||
-            [
-              normalizedExtracted.vendor_name,
-              normalizedExtracted.receipt_no,
-              normalizedExtracted.document_date,
-            ]
-              .filter(Boolean)
-              .join(' | '),
+          note: nextRequestDetail,
         };
       });
       setFlashMessage(`อ่านข้อมูลจาก ${file.name} สำเร็จแล้ว`);
@@ -881,19 +950,19 @@ const InputPage = () => {
                 />
               </div>
 
+              <TextAreaField
+                label="รายการ / ค่าอะไร"
+                placeholder="กรุณากรอกรายการหรือรายละเอียดค่าใช้จ่าย"
+                value={form.note}
+                onChange={handleFieldChange('note')}
+                style={{ width: '100%' }}
+              />
+
               <InputField
                 label="ผู้ขาย / ร้านค้า"
                 placeholder="กรุณากรอกชื่อร้านหรือผู้ขาย"
                 value={form.vendorName}
                 onChange={handleFieldChange('vendorName')}
-              />
-
-              <TextAreaField
-                label="อื่น ๆ"
-                placeholder="ถ้ามี กรุณากรอกรายละเอียด"
-                value={form.note}
-                onChange={handleFieldChange('note')}
-                style={{ width: '100%' }}
               />
 
               <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>

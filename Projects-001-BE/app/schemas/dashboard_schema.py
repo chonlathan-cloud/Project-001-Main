@@ -23,6 +23,11 @@ class DashboardCashflowPoint(BaseModel):
     income: float = 0.0
     expense: float = 0.0
     net: float = 0.0
+    actual_income: float = 0.0
+    actual_expense: float = 0.0
+    committed_income: float = 0.0
+    committed_expense: float = 0.0
+    planned_income: float = 0.0
 
 
 class DashboardZoneStatusItem(BaseModel):
