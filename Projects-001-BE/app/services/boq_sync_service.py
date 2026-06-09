@@ -43,6 +43,7 @@ PERSIST_TIMEOUT_SECONDS = 30
 TOTAL_SYNC_TIMEOUT_SECONDS = 180
 BATCH_SYNC_PER_TAB_TIMEOUT_SECONDS = 195
 NON_SYNCABLE_TAB_NAMES = {"summary", "work detail"}
+API_SYNC_DATA_SHEET_NAME = "API_Sync_Data"
 MAX_BATCH_SYNC_TABS = get_settings().boq_batch_sync_max_tabs
 HEADER_ROW_KEYWORDS = {
     "item",
@@ -85,6 +86,45 @@ COMPACT_TEMPLATE_COLUMNS = {
     "labor_unit_price": 6,
     "total_labor": 7,
     "grand_total": 8,
+}
+API_SYNC_DATA_HEADER_ALIASES = {
+    "category": "sheet_name",
+    "sheet": "sheet_name",
+    "sheetname": "sheet_name",
+    "sourcesheet": "sheet_name",
+    "sourcesheetname": "sheet_name",
+    "itemno": "item_no",
+    "itemnumber": "item_no",
+    "description": "description",
+    "desc": "description",
+    "qty": "qty",
+    "quantity": "qty",
+    "unit": "unit",
+    "matunitprice": "material_unit_price",
+    "materialunitprice": "material_unit_price",
+    "mattotalprice": "total_material",
+    "materialtotalprice": "total_material",
+    "totalmaterial": "total_material",
+    "labunitprice": "labor_unit_price",
+    "laborunitprice": "labor_unit_price",
+    "labortunitprice": "labor_unit_price",
+    "labtotalprice": "total_labor",
+    "labortotalprice": "total_labor",
+    "totallabor": "total_labor",
+    "totalunitprice": "total_unit_price",
+    "grandtotalprice": "grand_total",
+    "grandtotal": "grand_total",
+    "totalprice": "grand_total",
+    "remark": "remark",
+    "remarks": "remark",
+    "wbslevel": "wbs_level",
+    "parentindex": "parent_index",
+    "parentkey": "parent_key",
+    "linekey": "line_key",
+    "matchkey": "match_key",
+    "rowtype": "row_type",
+    "includeinbudget": "include_in_budget",
+    "sortorder": "sort_order",
 }
 
 
@@ -604,6 +644,314 @@ def _template_qty_and_unit(
     return Decimal("0"), _clean_template_unit(first) or _clean_template_unit(second)
 
 
+def _normalize_api_sync_header(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _api_sync_columns(header: list[Any]) -> dict[str, int]:
+    columns: dict[str, int] = {}
+    for index, value in enumerate(header):
+        alias = API_SYNC_DATA_HEADER_ALIASES.get(_normalize_api_sync_header(value))
+        if alias and alias not in columns:
+            columns[alias] = index
+    return columns
+
+
+def _api_cell(row: list[Any], columns: dict[str, int], key: str) -> str:
+    index = columns.get(key)
+    if index is None:
+        return ""
+    return _cell_text(row, index)
+
+
+def _is_truthy_api_value(value: Any) -> bool:
+    cleaned = str(value or "").strip().lower()
+    if not cleaned:
+        return False
+    return cleaned in {"1", "true", "yes", "y", "include", "included", "ใช้", "ใช่"}
+
+
+def _api_item_no_level(item_no: str) -> int | None:
+    cleaned = str(item_no or "").strip()
+    if not cleaned:
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)*", cleaned):
+        return min(len(cleaned.split(".")), 6)
+    if re.match(r"\d+", cleaned):
+        return 1
+    return None
+
+
+def _api_total_description(row: list[Any], columns: dict[str, int]) -> str:
+    return " ".join(
+        value
+        for value in (
+            _api_cell(row, columns, "item_no"),
+            _api_cell(row, columns, "description"),
+        )
+        if value
+    ).strip()
+
+
+def _is_api_total_row(row: list[Any], columns: dict[str, int]) -> bool:
+    label = _api_total_description(row, columns)
+    if not label:
+        return False
+    normalized = label.lower()
+    return (
+        normalized.startswith("total")
+        or normalized.startswith("รวม")
+        or bool(TEMPLATE_SECTION_TOTAL_PATTERN.match(label))
+        or bool(TEMPLATE_SHEET_TOTAL_PATTERN.match(label))
+    )
+
+
+def _api_amounts_from_columns(
+    row: list[Any],
+    columns: dict[str, int],
+) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal]:
+    material_unit_price = _template_decimal_or_zero(_api_cell(row, columns, "material_unit_price"))
+    total_material = _template_decimal_or_zero(_api_cell(row, columns, "total_material"))
+    labor_unit_price = _template_decimal_or_zero(_api_cell(row, columns, "labor_unit_price"))
+    total_labor = _template_decimal_or_zero(_api_cell(row, columns, "total_labor"))
+    total_unit_price = _template_decimal_or_zero(_api_cell(row, columns, "total_unit_price"))
+    grand_total = _template_decimal_or_zero(_api_cell(row, columns, "grand_total"))
+
+    if grand_total == 0:
+        grand_total = total_unit_price or total_material + total_labor
+
+    return material_unit_price, total_material, labor_unit_price, total_labor, grand_total
+
+
+def _api_qty_and_unit(row: list[Any], columns: dict[str, int]) -> tuple[Decimal, str | None]:
+    first = _api_cell(row, columns, "qty")
+    second = _api_cell(row, columns, "unit")
+    first_number = _parse_template_quantity(first)
+    second_number = _parse_template_quantity(second)
+
+    if first_number is not None and second_number is None:
+        return first_number, _clean_template_unit(second)
+    if second_number is not None and first_number is None:
+        return second_number, _clean_template_unit(first)
+    if first_number is not None:
+        return first_number, _clean_template_unit(second)
+    return Decimal("0"), _clean_template_unit(second) or _clean_template_unit(first)
+
+
+def _api_has_budget_amount(
+    qty: Decimal,
+    unit: str | None,
+    total_material: Decimal,
+    total_labor: Decimal,
+    grand_total: Decimal,
+) -> bool:
+    return any(
+        value != 0
+        for value in (qty, total_material, total_labor, grand_total)
+    ) or unit is not None
+
+
+def _api_sort_grouped_rows(
+    grouped_rows: dict[str, list[tuple[int, list[Any]]]]
+) -> list[tuple[str, list[tuple[int, list[Any]]]]]:
+    return sorted(grouped_rows.items(), key=lambda item: (item[1][0][0], item[0].lower()))
+
+
+def _parse_api_sync_detail_rows(
+    *,
+    category: str,
+    detail_rows: list[tuple[int, list[Any]]],
+    columns: dict[str, int],
+) -> tuple[list[dict[str, Any]], tuple[Decimal, Decimal, Decimal]]:
+    parsed_items: list[dict[str, Any]] = []
+    active_level_indexes: dict[int, int] = {}
+    actual_totals = (Decimal("0"), Decimal("0"), Decimal("0"))
+
+    for source_index, row in detail_rows:
+        if _is_template_blank_or_divider(row) or _is_header_like_row(row):
+            continue
+        if _is_api_total_row(row, columns):
+            continue
+
+        item_no = _api_cell(row, columns, "item_no")
+        description = _api_cell(row, columns, "description")
+        if not description and _is_template_description_candidate(item_no):
+            description = item_no
+            item_no = ""
+        if not description and not item_no:
+            continue
+
+        (
+            material_unit_price,
+            total_material,
+            labor_unit_price,
+            total_labor,
+            grand_total,
+        ) = _api_amounts_from_columns(row, columns)
+        qty, unit = _api_qty_and_unit(row, columns)
+        has_budget_amount = _api_has_budget_amount(
+            qty,
+            unit,
+            total_material,
+            total_labor,
+            grand_total,
+        )
+
+        explicit_wbs_level = _api_cell(row, columns, "wbs_level")
+        if explicit_wbs_level:
+            try:
+                wbs_level = max(1, int(Decimal(explicit_wbs_level)))
+            except (InvalidOperation, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid WBS_Level at API_Sync_Data row {source_index}."
+                ) from exc
+        else:
+            item_no_level = _api_item_no_level(item_no)
+            if item_no_level is not None:
+                wbs_level = item_no_level
+            else:
+                current_depth = max(active_level_indexes, default=0)
+                wbs_level = max(1, current_depth + 1)
+
+        parent_index = active_level_indexes.get(wbs_level - 1)
+        explicit_parent_index = _api_cell(row, columns, "parent_index")
+        if explicit_parent_index:
+            try:
+                parent_index = int(Decimal(explicit_parent_index))
+            except (InvalidOperation, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid Parent_Index at API_Sync_Data row {source_index}."
+                ) from exc
+
+        include_in_budget = _api_cell(row, columns, "include_in_budget")
+        if include_in_budget and not _is_truthy_api_value(include_in_budget):
+            total_material = Decimal("0")
+            total_labor = Decimal("0")
+            grand_total = Decimal("0")
+
+        parsed_items.append(
+            {
+                "source_index": source_index,
+                "parent_index": parent_index,
+                "sheet_name": category,
+                "wbs_level": wbs_level,
+                "item_no": item_no or None,
+                "description": description or item_no,
+                "qty": qty,
+                "unit": unit,
+                "material_unit_price": material_unit_price,
+                "labor_unit_price": labor_unit_price,
+                "total_material": total_material,
+                "total_labor": total_labor,
+                "grand_total": grand_total,
+            }
+        )
+
+        if total_material != 0 or total_labor != 0 or grand_total != 0:
+            actual_totals = _add_template_totals(
+                actual_totals,
+                (total_material, total_labor, grand_total),
+            )
+
+        can_have_children = bool(item_no) or not has_budget_amount
+        if can_have_children:
+            active_level_indexes[wbs_level] = source_index
+            for level in list(active_level_indexes):
+                if level > wbs_level:
+                    active_level_indexes.pop(level, None)
+
+    return parsed_items, actual_totals
+
+
+def parse_api_sync_data_sheet(sheet_name: str, rows: list[list[Any]]) -> dict[str, Any] | None:
+    if _normalize_template_key(sheet_name) != _normalize_template_key(API_SYNC_DATA_SHEET_NAME):
+        return None
+    if not rows:
+        raise ValueError("API_Sync_Data is empty.")
+
+    columns = _api_sync_columns(rows[0])
+    required_columns = {"sheet_name", "description"}
+    missing_columns = sorted(required_columns - set(columns))
+    if missing_columns:
+        raise ValueError(
+            "API_Sync_Data is missing required columns: "
+            + ", ".join(missing_columns)
+        )
+
+    grouped_rows: dict[str, list[tuple[int, list[Any]]]] = {}
+    for source_index, row in enumerate(rows[1:], start=2):
+        if _is_template_blank_or_divider(row) or _is_header_like_row(row):
+            continue
+        category = _api_cell(row, columns, "sheet_name").strip()
+        if not category:
+            raise ValueError(f"Category is required at API_Sync_Data row {source_index}.")
+        grouped_rows.setdefault(category, []).append((source_index, row))
+
+    if not grouped_rows:
+        raise ValueError("API_Sync_Data does not contain any syncable rows.")
+
+    parsed_items: list[dict[str, Any]] = []
+    validation_messages: list[str] = []
+    total_categories = 0
+
+    for category, category_rows in _api_sort_grouped_rows(grouped_rows):
+        total_categories += 1
+        total_row_index = next(
+            (
+                index
+                for index, (_, row) in enumerate(category_rows)
+                if _is_api_total_row(row, columns)
+            ),
+            None,
+        )
+        expected_totals: tuple[Decimal, Decimal, Decimal] | None = None
+        detail_rows = category_rows
+
+        if total_row_index is not None:
+            total_row = category_rows[total_row_index][1]
+            _, expected_material, _, expected_labor, expected_grand = _api_amounts_from_columns(
+                total_row,
+                columns,
+            )
+            expected_totals = (expected_material, expected_labor, expected_grand)
+            detail_rows = category_rows[total_row_index + 1 :]
+
+        category_items, actual_totals = _parse_api_sync_detail_rows(
+            category=category,
+            detail_rows=detail_rows,
+            columns=columns,
+        )
+        if not category_items:
+            raise ValueError(f"API_Sync_Data category '{category}' has no detail rows.")
+
+        if expected_totals is not None:
+            mismatches = _template_total_mismatches(expected_totals, actual_totals)
+            if mismatches:
+                raise ValueError(
+                    f"API_Sync_Data validation failed for category '{category}': "
+                    + "; ".join(mismatches)
+                )
+            validation_messages.append(
+                f"{category} total validated: material {actual_totals[0]:,.2f}, "
+                f"labor {actual_totals[1]:,.2f}, total {actual_totals[2]:,.2f}"
+            )
+        else:
+            validation_messages.append(
+                f"{category} imported without a category TOTAL row."
+            )
+
+        parsed_items.extend(category_items)
+
+    return {
+        "parsed_items": parsed_items,
+        "validation_message": (
+            f"API_Sync_Data parser imported {len(parsed_items)} rows across "
+            f"{total_categories} categories. "
+            + " ".join(validation_messages)
+        ),
+    }
+
+
 def _validate_template_sheet_total(
     sheet_name: str,
     expected: tuple[Decimal, Decimal, Decimal],
@@ -1006,18 +1354,34 @@ async def fetch_google_sheet_tabs(sheet_url: str) -> list[dict[str, Any]]:
 
     payload = response.json()
     sheets = payload.get("sheets", [])
+    sheet_names = [
+        str(entry.get("properties", {}).get("title") or "").strip()
+        for entry in sheets
+    ]
+    has_api_sync_data = any(
+        _normalize_template_key(name) == _normalize_template_key(API_SYNC_DATA_SHEET_NAME)
+        for name in sheet_names
+    )
     tabs: list[dict[str, Any]] = []
-    for entry in sheets:
-        properties = entry.get("properties", {})
-        name = str(properties.get("title") or "").strip()
+    for name in sheet_names:
         if not name:
             continue
         syncable = _is_syncable_tab(name)
+        is_api_sync_data = (
+            _normalize_template_key(name) == _normalize_template_key(API_SYNC_DATA_SHEET_NAME)
+        )
         tabs.append(
             {
                 "name": name,
                 "syncable": syncable,
-                "default_selected": syncable,
+                "default_selected": (
+                    syncable
+                    and (
+                        is_api_sync_data
+                        if has_api_sync_data
+                        else True
+                    )
+                ),
             }
         )
 
@@ -1052,7 +1416,7 @@ def _normalize_parsed_items(parsed_items: list[dict]) -> list[dict]:
 
     for position, item in enumerate(parsed_items):
         try:
-            source_index = int(item.get("index", position))
+            source_index = int(item.get("source_index", item.get("index", position)))
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid index at parsed row {position}.") from exc
         description = (item.get("description") or "").strip() or None
@@ -1110,6 +1474,7 @@ def _normalize_parsed_items(parsed_items: list[dict]) -> list[dict]:
             {
                 "source_index": source_index,
                 "parent_index": parent_index,
+                "sheet_name": (item.get("sheet_name") or "").strip() or None,
                 "wbs_level": wbs_level,
                 "item_no": item_no,
                 "description": description,
@@ -1140,18 +1505,34 @@ async def persist_boq_version(
     normalized_boq_type = _normalize_boq_type(boq_type)
     normalized_sheet_name = _normalize_sheet_name(sheet_name)
     normalized_items = _normalize_parsed_items(parsed_items)
-
-    await _lock_boq_sync_scope(
-        session=session,
-        project_id=project_id,
-        boq_type=normalized_boq_type,
-        sheet_name=normalized_sheet_name,
+    scope_sheet_names = sorted(
+        {
+            normalized_sheet_name,
+            *(
+                _normalize_sheet_name(item["sheet_name"])
+                for item in normalized_items
+                if item.get("sheet_name")
+            ),
+        },
+        key=lambda value: value.lower(),
     )
+
+    for scope_sheet_name in scope_sheet_names:
+        await _lock_boq_sync_scope(
+            session=session,
+            project_id=project_id,
+            boq_type=normalized_boq_type,
+            sheet_name=scope_sheet_name,
+        )
     close_result = await session.execute(
         update(BOQItem)
         .where(BOQItem.project_id == project_id)
         .where(func.upper(func.trim(BOQItem.boq_type)) == normalized_boq_type)
-        .where(func.lower(func.trim(BOQItem.sheet_name)) == normalized_sheet_name.lower())
+        .where(
+            func.lower(func.trim(BOQItem.sheet_name)).in_(
+                [value.lower() for value in scope_sheet_names]
+            )
+        )
         .where(BOQItem.valid_to.is_(None))
         .values(valid_to=now)
     )
@@ -1161,10 +1542,11 @@ async def persist_boq_version(
     inserted_rows: list[BOQItem] = []
 
     for item in normalized_items:
+        item_sheet_name = _normalize_sheet_name(item.get("sheet_name") or normalized_sheet_name)
         row = BOQItem(
             project_id=project_id,
             boq_type=normalized_boq_type,
-            sheet_name=normalized_sheet_name,
+            sheet_name=item_sheet_name,
             wbs_level=item["wbs_level"],
             item_no=item["item_no"],
             description=item["description"],
@@ -1284,11 +1666,26 @@ async def sync_boq_sheet(
             parse_started_at = perf_counter()
             parse_strategy = "gemini"
             validation_message = ""
-            template_result = parse_template_boq_sheet(
+            api_sync_result = parse_api_sync_data_sheet(
                 sheet_name=normalized_sheet_name,
                 rows=prepared_rows,
             )
-            if template_result is not None:
+            if api_sync_result is not None:
+                parse_strategy = "api_sync_data"
+                parsed_items = api_sync_result["parsed_items"]
+                validation_message = api_sync_result["validation_message"]
+                logger.info(
+                    "boq_sync.api_sync_data_parse.done parsed_items=%s elapsed_ms=%s",
+                    len(parsed_items),
+                    round((perf_counter() - parse_started_at) * 1000, 1),
+                    extra=context,
+                )
+            else:
+                template_result = parse_template_boq_sheet(
+                    sheet_name=normalized_sheet_name,
+                    rows=prepared_rows,
+                )
+            if api_sync_result is None and template_result is not None:
                 parse_strategy = "template"
                 parsed_items = template_result["parsed_items"]
                 validation_message = template_result["validation_message"]
@@ -1332,7 +1729,7 @@ async def sync_boq_sheet(
                     round((perf_counter() - parse_started_at) * 1000, 1),
                     extra=context,
                 )
-            else:
+            elif api_sync_result is None:
                 logger.info("boq_sync.gemini_parse.start", extra=context)
                 try:
                     async with asyncio.timeout(GEMINI_PARSE_TIMEOUT_SECONDS):

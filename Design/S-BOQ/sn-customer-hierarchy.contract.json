@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "phase": "1",
+  "scope": {
+    "sheet_name": "SN",
+    "boq_type": "CUSTOMER",
+    "source_file": "Design/S-BOQ/S-BOQ.json"
+  },
+  "requirements": {
+    "show_total_rows": true,
+    "system_description_prefix_rule": "Descriptions beginning with ระบบ are Level 1 systems across all sheets.",
+    "expected_level_2_groups": [
+      "ท่อน้ำเสีย PVC CLASS 13.5",
+      "ท่อประปา PPR (PN 20)",
+      "วาล์ว (VALVE) ทองเหลือง"
+    ]
+  },
+  "known_source_anomalies": [
+    {
+      "type": "ORDER_MISMATCH",
+      "detail": "In S-BOQ.json, valve rows appear before the system headers. Parent inference must use original sheet order, not this post-processed sample order."
+    },
+    {
+      "type": "MISSING_ROW_IDS",
+      "detail": "The sample includes parent_id values but not the matching row id values, so parent references cannot be resolved from this fixture alone."
+    },
+    {
+      "type": "MISSING_TOTAL_ROWS",
+      "detail": "The sample does not include TOTAL - SN, TOTAL - 1, or TOTAL - 2, but the final API/UI must show them."
+    }
+  ],
+  "expected_tree": [
+    {
+      "contract_key": "sn.customer.system.wastewater",
+      "item_no": "1",
+      "description": "ระบบน้ำเสีย (SIOL WATER)",
+      "row_type": "SYSTEM",
+      "display_wbs_level": 1,
+      "material_total": 2120,
+      "labor_total": 80,
+      "grand_total": 2200,
+      "children": [
+        {
+          "contract_key": "sn.customer.group.wastewater_pvc_class_13_5",
+          "item_no": "2.2",
+          "description": "ท่อน้ำเสีย PVC CLASS 13.5",
+          "row_type": "GROUP",
+          "display_wbs_level": 2,
+          "material_total": 2120,
+          "labor_total": 80,
+          "grand_total": 2200,
+          "children": [
+            {
+              "contract_key": "sn.customer.item.wastewater_pvc_size_2",
+              "item_no": "",
+              "description": "ขนาด Æ 2\"",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "M",
+              "qty": 1,
+              "material_total": 120,
+              "labor_total": 80,
+              "grand_total": 200
+            },
+            {
+              "contract_key": "sn.customer.item.wastewater_pvc_accessories",
+              "item_no": "",
+              "description": "ACCESSORIES & FITTING",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "LOT",
+              "qty": 1,
+              "material_total": 1000,
+              "labor_total": 0,
+              "grand_total": 1000
+            },
+            {
+              "contract_key": "sn.customer.item.wastewater_pvc_hanger",
+              "item_no": "",
+              "description": "HANGER & SUPPORT",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "LOT",
+              "qty": 1,
+              "material_total": 1000,
+              "labor_total": 0,
+              "grand_total": 1000
+            }
+          ]
+        },
+        {
+          "contract_key": "sn.customer.total.section_1",
+          "item_no": "",
+          "description": "TOTAL - 1",
+          "row_type": "TOTAL",
+          "display_wbs_level": 2,
+          "material_total": 2120,
+          "labor_total": 80,
+          "grand_total": 2200
+        }
+      ]
+    },
+    {
+      "contract_key": "sn.customer.system.cold_water",
+      "item_no": "2",
+      "description": "ระบบน้ำดี (COLD WATER)",
+      "row_type": "SYSTEM",
+      "display_wbs_level": 1,
+      "material_total": 5330,
+      "labor_total": 2570,
+      "grand_total": 7900,
+      "children": [
+        {
+          "contract_key": "sn.customer.group.ppr_pn_20",
+          "item_no": "2.2",
+          "description": "ท่อประปา PPR (PN 20)",
+          "row_type": "GROUP",
+          "display_wbs_level": 2,
+          "material_total": 1780,
+          "labor_total": 220,
+          "grand_total": 2000,
+          "children": [
+            {
+              "contract_key": "sn.customer.item.ppr_size_half",
+              "item_no": "",
+              "description": "ขนาด Æ 1/2\"",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "M",
+              "qty": 2,
+              "material_total": 180,
+              "labor_total": 220,
+              "grand_total": 400
+            },
+            {
+              "contract_key": "sn.customer.item.ppr_accessories",
+              "item_no": "",
+              "description": "ACCESSORIES & FITTING",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "LOT",
+              "qty": 1,
+              "material_total": 900,
+              "labor_total": 0,
+              "grand_total": 900
+            },
+            {
+              "contract_key": "sn.customer.item.ppr_hanger",
+              "item_no": "",
+              "description": "HANGER & SUPPORT",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "LOT",
+              "qty": 1,
+              "material_total": 700,
+              "labor_total": 0,
+              "grand_total": 700
+            }
+          ]
+        },
+        {
+          "contract_key": "sn.customer.group.brass_valve",
+          "item_no": "2..5",
+          "description": "วาล์ว (VALVE) ทองเหลือง",
+          "row_type": "GROUP",
+          "display_wbs_level": 2,
+          "material_total": 3550,
+          "labor_total": 2350,
+          "grand_total": 5900,
+          "children": [
+            {
+              "contract_key": "sn.customer.item.stop_valve_half",
+              "item_no": "",
+              "description": "STOP VALVE Æ 1/2\"",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "SET",
+              "qty": 1,
+              "material_total": 150,
+              "labor_total": 150,
+              "grand_total": 300
+            },
+            {
+              "contract_key": "sn.customer.item.gate_valve_half",
+              "item_no": "",
+              "description": "GATE VALVE Æ 1/2\"",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "SET",
+              "qty": 5,
+              "material_total": 900,
+              "labor_total": 750,
+              "grand_total": 1650
+            },
+            {
+              "contract_key": "sn.customer.item.solenoid_valve_half",
+              "item_no": "",
+              "description": "SOLENOID VALVE Æ 1/2\"",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "SET",
+              "qty": 1,
+              "material_total": 1200,
+              "labor_total": 450,
+              "grand_total": 1650
+            },
+            {
+              "contract_key": "sn.customer.item.valve_accessories",
+              "item_no": "",
+              "description": "ACCESSORIES & FITTING",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "LOT",
+              "qty": 1,
+              "material_total": 800,
+              "labor_total": 0,
+              "grand_total": 800
+            },
+            {
+              "contract_key": "sn.customer.item.water_meter_half",
+              "item_no": "",
+              "description": "มิเตอร์น้ำประปา ø1/2\"",
+              "row_type": "ITEM",
+              "display_wbs_level": 3,
+              "unit": "SET",
+              "qty": 1,
+              "material_total": 500,
+              "labor_total": 1000,
+              "grand_total": 1500
+            }
+          ]
+        },
+        {
+          "contract_key": "sn.customer.total.section_2",
+          "item_no": "",
+          "description": "TOTAL - 2",
+          "row_type": "TOTAL",
+          "display_wbs_level": 2,
+          "material_total": 5330,
+          "labor_total": 2570,
+          "grand_total": 7900
+        }
+      ]
+    },
+    {
+      "contract_key": "sn.customer.total.sheet",
+      "item_no": "",
+      "description": "TOTAL - SN",
+      "row_type": "TOTAL",
+      "display_wbs_level": 1,
+      "material_total": 7450,
+      "labor_total": 2650,
+      "grand_total": 10100
+    }
+  ],
+  "excluded_or_deferred_rows": [
+    {
+      "description": "ปั๊มน้ำอัตโนมัติ",
+      "reason": "Not included in the user-defined expected Level 2 set for the current SN fixture. If future source data includes detail rows under this group, it should be displayed as a normal Level 2 GROUP under ระบบน้ำดี."
+    }
+  ]
+}

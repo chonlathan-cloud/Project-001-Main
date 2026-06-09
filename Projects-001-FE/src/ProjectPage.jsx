@@ -1206,7 +1206,7 @@ const ProjectPage = () => {
                           <div>
                             <div style={{ fontSize: '13px', fontWeight: '700', color: '#5f48e0' }}>Workbook tabs</div>
                             <div style={{ fontSize: '12px', color: '#7a7a88' }}>
-                              Default selection skips tabs like Summary, maps work detail to IN, and preselects up to {MAX_BATCH_SYNC_TABS} tabs.
+                              If API_Sync_Data exists, it is preselected as the canonical import tab. Legacy BOQ tabs remain available for manual fallback.
                             </div>
                           </div>
                           <div style={{ fontSize: '12px', color: '#666' }}>

@@ -169,12 +169,12 @@ function buildMockProfileData() { // This is only used for subcontractor profile
       },
     ],
     chartData: [
-      { name: 'Jan', Activity: 42, Expenses: 28 },
-      { name: 'Feb', Activity: 55, Expenses: 41 },
-      { name: 'Mar', Activity: 48, Expenses: 36 },
-      { name: 'Apr', Activity: 71, Expenses: 52 },
-      { name: 'May', Activity: 64, Expenses: 47 },
-      { name: 'Jun', Activity: 78, Expenses: 59 },
+      { name: 'Jan', Activity: 42, Income: 168000, Expenses: 118000 },
+      { name: 'Feb', Activity: 55, Income: 244000, Expenses: 214000 },
+      { name: 'Mar', Activity: 48, Income: 268000, Expenses: 236000 },
+      { name: 'Apr', Activity: 71, Income: 410000, Expenses: 340000 },
+      { name: 'May', Activity: 64, Income: 196000, Expenses: 0 },
+      { name: 'Jun', Activity: 78, Income: 112000, Expenses: 67000 },
     ],
   };
 }

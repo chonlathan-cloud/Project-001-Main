@@ -26,13 +26,55 @@ import { signOutFirebaseClient } from '../firebaseClient';
 import { logoutLineClient } from '../liffClient';
 
 function getInitials(user) {
-  const source = user?.display_name || user?.email || user?.subcontractor_id || 'User';
+  const source =
+    user?.display_name ||
+    user?.displayName ||
+    user?.name ||
+    user?.contact_name ||
+    user?.contactName ||
+    user?.email ||
+    user?.subcontractor_id ||
+    'User';
   return String(source)
     .split(/[\s@.-]+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part.charAt(0).toUpperCase())
     .join('') || 'U';
+}
+
+function getAvatarUrl(user) {
+  return (
+    user?.profile_image_url ||
+    user?.profileImageUrl ||
+    user?.line_picture_url ||
+    user?.linePictureUrl ||
+    user?.avatar_url ||
+    user?.avatarUrl ||
+    user?.picture_url ||
+    user?.photo_url ||
+    ''
+  );
+}
+
+function SidebarUserAvatar({ user }) {
+  const imageUrl = getAvatarUrl(user);
+  const [failedImageUrl, setFailedImageUrl] = useState('');
+  const shouldShowImage = imageUrl && failedImageUrl !== imageUrl;
+
+  return (
+    <div className="sidebar-user-avatar">
+      {shouldShowImage ? (
+        <img
+          src={imageUrl}
+          alt=""
+          onError={() => setFailedImageUrl(imageUrl)}
+        />
+      ) : (
+        <span>{getInitials(user)}</span>
+      )}
+    </div>
+  );
 }
 
 const Sidebar = () => {
@@ -147,7 +189,7 @@ const Sidebar = () => {
 
         <div className="sidebar-footer">
           <div className="sidebar-user-card">
-            <div className="sidebar-user-avatar">{getInitials(authUser)}</div>
+            <SidebarUserAvatar user={authUser} />
             <div className="sidebar-user-meta">
               <div className="sidebar-user-label">
                 {isAdminUser ? 'Signed in as' : 'เข้าสู่ระบบในชื่อ'}

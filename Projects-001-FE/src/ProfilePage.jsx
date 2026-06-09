@@ -17,8 +17,10 @@ import {
   X,
 } from 'lucide-react';
 import {
-  BarChart,
+  ComposedChart,
+  LineChart,
   Bar,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -90,6 +92,13 @@ const iconMap = {
   budget_managed: DollarSign,
 };
 
+const chartFieldKeys = {
+  income: ['Income', 'income', 'Incomes', 'incomes', 'Revenue', 'revenue', 'actualIncome', 'actual_income', 'totalIncome', 'total_income'],
+  expenses: ['Expenses', 'expenses', 'Expense', 'expense', 'actualExpense', 'actual_expense', 'totalExpense', 'total_expense'],
+  activity: ['Activity', 'activity', 'Requests', 'requests', 'request_count', 'requestCount', 'count'],
+  netCashFlow: ['NetCashFlow', 'netCashFlow', 'net_cashflow', 'netCashflow', 'Net', 'net', 'Balance', 'balance'],
+};
+
 const subcontractorStatCopy = {
   active_projects: {
     label: 'โครงการที่ใช้งานอยู่',
@@ -123,6 +132,53 @@ const localizeSubcontractorStats = (stats = []) =>
     label: subcontractorStatCopy[stat.id]?.label || stat.label,
     subtext: subcontractorStatCopy[stat.id]?.subtext || stat.subtext,
   }));
+
+const toChartNumber = (value) => {
+  if (value == null || value === '') return 0;
+  const normalized = typeof value === 'string' ? value.replace(/[^\d.-]/g, '') : value;
+  const numberValue = Number(normalized);
+  return Number.isFinite(numberValue) ? numberValue : 0;
+};
+
+const pickChartNumber = (item, keys) => {
+  for (const key of keys) {
+    if (item?.[key] != null && item?.[key] !== '') {
+      return toChartNumber(item[key]);
+    }
+  }
+  return null;
+};
+
+const normalizeProfileChartData = (rows = []) => {
+  if (!Array.isArray(rows)) return [];
+
+  return rows.map((item) => {
+    const income = pickChartNumber(item, chartFieldKeys.income) ?? 0;
+    const expenses = pickChartNumber(item, chartFieldKeys.expenses) ?? 0;
+    const activity = pickChartNumber(item, chartFieldKeys.activity) ?? 0;
+    const providedNetCashFlow = pickChartNumber(item, chartFieldKeys.netCashFlow);
+
+    return {
+      ...item,
+      name: item?.name || item?.month || item?.label || '',
+      Income: income,
+      Expenses: expenses,
+      Activity: activity,
+      NetCashFlow: providedNetCashFlow ?? income - expenses,
+    };
+  });
+};
+
+const formatCompactNumber = (value) =>
+  new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(toChartNumber(value));
+
+const formatWholeNumber = (value) =>
+  new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 0,
+  }).format(toChartNumber(value));
 
 const isSubcontractorUser = (user = {}) =>
   String(user?.role_key || user?.role || '').trim().toLowerCase() === 'subcontractor';
@@ -342,6 +398,9 @@ const ProfilePage = () => {
         setProfileData(null);
       } else {
         setProfileData(result);
+        if (result?.user) {
+          syncStoredProfileUser(result.user);
+        }
       }
       setLoading(false);
     };
@@ -543,6 +602,7 @@ const ProfilePage = () => {
   const bankingStatusText = hasProfileBankDetails
     ? isSubcontractor ? 'พร้อมใช้สำหรับข้อมูลการโอนเงิน' : 'Available for transfer records'
     : isSubcontractor ? 'ยังไม่ได้กรอกข้อมูล' : 'Not provided';
+  const profileChartData = normalizeProfileChartData(profileData.chartData || []);
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
@@ -675,40 +735,106 @@ const ProfilePage = () => {
       </div>
 
       <div className="profile-bottom-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, 0.65fr)', gap: '24px', marginTop: '24px' }}>
-        <div style={cardStyle}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
+        <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '22px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
             <div>
               <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: 'var(--text-main)' }}>
-                {isSubcontractor ? 'จำนวนคำขอและยอดรายจ่าย' : 'Activity vs Expenses'}
+                {isSubcontractor ? 'รายรับและรายจ่าย' : 'Income vs Expenses'}
               </h2>
               <div style={{ color: 'var(--text-muted)', marginTop: '6px', fontSize: '13px' }}>
-                {isSubcontractor ? 'ข้อมูล 6 เดือนล่าสุดที่มีรายการ' : 'Last six active months'}
+                {isSubcontractor ? 'กระแสเงินสดสุทธิจาก 6 เดือนล่าสุดที่มีรายการ' : 'Net cash flow across the last six active months'}
               </div>
             </div>
             <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#27a57a' }}></span> {isSubcontractor ? 'จำนวนคำขอ' : 'Activity'}
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--primary)' }}></span> {isSubcontractor ? 'รายรับ' : 'Income'}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--secondary)' }}></span> {isSubcontractor ? 'รายจ่าย' : 'Expenses'}
               </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
+                <span style={{ width: '16px', height: '2px', borderRadius: '999px', backgroundColor: 'var(--text-main)' }}></span> {isSubcontractor ? 'สุทธิ' : 'Net'}
+              </div>
             </div>
           </div>
 
-          <div style={{ height: '320px', width: '100%' }}>
+          <div style={{ height: '340px', width: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={profileData.chartData || []} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}>
+              <ComposedChart data={profileChartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }} />
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }}
+                  tickFormatter={formatCompactNumber}
+                  tickMargin={12}
+                  width={72}
+                />
                 <Tooltip
                   cursor={{ fill: '#f8fafc', opacity: 0.8 }}
                   contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: 'none' }}
+                  formatter={(value, name) => [formatWholeNumber(value), name]}
                 />
-                <Bar dataKey="Activity" name={isSubcontractor ? 'จำนวนคำขอ' : 'Activity'} fill="#27a57a" radius={[4, 4, 0, 0]} barSize={12} />
+                <Bar dataKey="Income" name={isSubcontractor ? 'รายรับ' : 'Income'} fill="#4f6f64" radius={[4, 4, 0, 0]} barSize={12} />
                 <Bar dataKey="Expenses" name={isSubcontractor ? 'รายจ่าย' : 'Expenses'} fill="#c2a878" radius={[4, 4, 0, 0]} barSize={12} />
-              </BarChart>
+                <Line
+                  type="monotone"
+                  dataKey="NetCashFlow"
+                  name={isSubcontractor ? 'สุทธิ' : 'Net'}
+                  stroke="#2f2e2c"
+                  strokeWidth={2.25}
+                  dot={{ r: 3, fill: '#2f2e2c', strokeWidth: 0 }}
+                  activeDot={{ r: 5 }}
+                />
+              </ComposedChart>
             </ResponsiveContainer>
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '18px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '12px' }}>
+              <div>
+                <h3 style={{ fontSize: '14px', fontWeight: '750', margin: 0, color: 'var(--text-main)' }}>
+                  {isSubcontractor ? 'จำนวนคำขอ' : 'Request Activity'}
+                </h3>
+                <div style={{ color: 'var(--text-muted)', marginTop: '4px', fontSize: '12px' }}>
+                  {isSubcontractor ? 'ปริมาณรายการที่ส่งในแต่ละเดือน' : 'Monthly submitted request volume'}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#27a57a' }}></span> {isSubcontractor ? 'กิจกรรม' : 'Activity'}
+              </div>
+            </div>
+            <div style={{ height: '150px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={profileChartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }} dy={10} />
+                  <YAxis
+                    allowDecimals={false}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }}
+                    tickMargin={10}
+                    width={44}
+                  />
+                  <Tooltip
+                    cursor={{ stroke: '#d8e2dc', strokeDasharray: '3 3' }}
+                    contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: 'none' }}
+                    formatter={(value, name) => [formatWholeNumber(value), name]}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="Activity"
+                    name={isSubcontractor ? 'กิจกรรม' : 'Activity'}
+                    stroke="#27a57a"
+                    strokeWidth={2.25}
+                    dot={{ r: 3, fill: '#27a57a', strokeWidth: 0 }}
+                    activeDot={{ r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
