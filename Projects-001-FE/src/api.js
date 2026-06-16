@@ -1,4 +1,9 @@
-import { getStoredAuthUser, getStoredSessionToken } from './auth';
+import {
+  clearAuthSession,
+  getStoredAuthUser,
+  getStoredSessionToken,
+  saveAuthNotice,
+} from './auth';
 
 const DEFAULT_API_BASE_URL = 'http://localhost:8000';
 
@@ -7,6 +12,206 @@ const API_BASE_URL = (
 ).replace(/\/+$/, '');
 
 const CHART_COLORS = ['#c9a15c', '#27a57a', '#de5b52', '#7c5cff', '#5a8dee'];
+const SESSION_EXPIRED_MESSAGE = 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้งเพื่อใช้งานต่อ';
+const AUTH_REQUIRED_MESSAGE = 'กรุณาเข้าสู่ระบบเพื่อใช้งานต่อ';
+const NETWORK_ERROR_MESSAGE = 'เชื่อมต่อ server ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง';
+const REQUEST_TIMEOUT_MESSAGE = 'ระบบใช้เวลาตอบกลับนานเกินไป กรุณาลองอีกครั้ง';
+
+export class ApiError extends Error {
+  constructor({ message, status = 0, code = 'API_ERROR', detail = '', payload = null, path = '' }) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+    this.payload = payload;
+    this.path = path;
+  }
+}
+
+const normalizeErrorText = (value) => String(value || '').trim();
+
+function stringifyDetail(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        const location = Array.isArray(item?.loc) ? item.loc.join('.') : 'request';
+        return `${location}: ${item?.msg || item?.message || 'Validation error'}`;
+      })
+      .filter(Boolean)
+      .join(' | ');
+  }
+  if (typeof value === 'object') {
+    return normalizeErrorText(value.message || value.detail || value.msg || value.error);
+  }
+  return normalizeErrorText(value);
+}
+
+function extractResponseDetail(payload, status) {
+  return (
+    stringifyDetail(payload?.detail) ||
+    stringifyDetail(payload?.message) ||
+    stringifyDetail(payload?.error) ||
+    `Request failed with status ${status}`
+  );
+}
+
+function extractResponseCode(payload, status, detail, path) {
+  const explicitCode = normalizeErrorText(
+    payload?.code ||
+      payload?.error_code ||
+      payload?.detail?.code ||
+      payload?.detail?.error_code
+  );
+  if (explicitCode) return explicitCode.toUpperCase();
+
+  const loweredDetail = detail.toLowerCase();
+  const loweredPath = String(path || '').toLowerCase();
+
+  if (status === 401 && loweredDetail.includes('expired')) return 'AUTH_SESSION_EXPIRED';
+  if (status === 401 && loweredDetail.includes('malformed')) return 'AUTH_INVALID';
+  if (status === 401 && loweredDetail.includes('invalid')) return 'AUTH_INVALID';
+  if (status === 401) return 'AUTH_REQUIRED';
+  if (status === 403) return 'AUTH_FORBIDDEN';
+  if (status === 429) return loweredPath.includes('/chat/') ? 'AI_RATE_LIMITED' : 'RATE_LIMITED';
+
+  if (
+    loweredDetail.includes('context length') ||
+    loweredDetail.includes('too many tokens') ||
+    loweredDetail.includes('token limit') ||
+    loweredDetail.includes('maximum context')
+  ) {
+    return 'AI_CONTEXT_TOO_LARGE';
+  }
+
+  if (
+    status === 402 ||
+    loweredDetail.includes('quota') ||
+    loweredDetail.includes('resource_exhausted') ||
+    loweredDetail.includes('insufficient credit') ||
+    loweredDetail.includes('billing account') ||
+    loweredDetail.includes('payment required')
+  ) {
+    return loweredPath.includes('/chat/') || loweredDetail.includes('ai') || loweredDetail.includes('gemini')
+      ? 'AI_QUOTA_EXCEEDED'
+      : 'QUOTA_EXCEEDED';
+  }
+
+  if (status >= 500 && (loweredPath.includes('/chat/') || loweredDetail.includes('ai chat') || loweredDetail.includes('gemini'))) {
+    return 'AI_PROVIDER_UNAVAILABLE';
+  }
+
+  if (status >= 500) return 'SERVER_ERROR';
+  if (status === 404) return 'NOT_FOUND';
+  if (status === 400) return 'BAD_REQUEST';
+  return 'API_ERROR';
+}
+
+function getFriendlyErrorMessage({ status, code, detail, path }) {
+  const loweredPath = String(path || '').toLowerCase();
+  const isChatPath = loweredPath.includes('/chat/');
+
+  switch (code) {
+    case 'AUTH_SESSION_EXPIRED':
+    case 'AUTH_INVALID':
+      return SESSION_EXPIRED_MESSAGE;
+    case 'AUTH_REQUIRED':
+      return AUTH_REQUIRED_MESSAGE;
+    case 'AUTH_FORBIDDEN':
+      return 'บัญชีนี้ไม่มีสิทธิ์ใช้งานส่วนนี้';
+    case 'AI_RATE_LIMITED':
+      return 'Chat AI ถูกใช้งานถี่เกินไป กรุณารอสักครู่แล้วลองใหม่';
+    case 'RATE_LIMITED':
+      return 'ระบบถูกใช้งานถี่เกินไป กรุณารอสักครู่แล้วลองใหม่';
+    case 'AI_QUOTA_EXCEEDED':
+      return 'โควต้า AI หมดหรือยังไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลระบบ';
+    case 'AI_CONTEXT_TOO_LARGE':
+      return 'คำถามหรือข้อมูลประกอบยาวเกินไป กรุณาถามให้แคบลงแล้วลองใหม่';
+    case 'AI_PROVIDER_UNAVAILABLE':
+      return 'Chat AI ยังไม่พร้อมตอบตอนนี้ กรุณาลองใหม่อีกครั้ง';
+    case 'SERVER_ERROR':
+      return isChatPath
+        ? 'Chat AI มีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้ง'
+        : 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง';
+    case 'REQUEST_TIMEOUT':
+      return REQUEST_TIMEOUT_MESSAGE;
+    case 'NETWORK_ERROR':
+      return NETWORK_ERROR_MESSAGE;
+    default:
+      return detail || `Request failed with status ${status}`;
+  }
+}
+
+function createRequestFailure(error, timeoutMs, path) {
+  if (error?.name === 'AbortError') {
+    return new ApiError({
+      status: 0,
+      code: 'REQUEST_TIMEOUT',
+      detail: `Request timed out after ${Math.round(timeoutMs / 1000)} seconds.`,
+      message: REQUEST_TIMEOUT_MESSAGE,
+      path,
+    });
+  }
+
+  return new ApiError({
+    status: 0,
+    code: 'NETWORK_ERROR',
+    detail: error?.message || NETWORK_ERROR_MESSAGE,
+    message: NETWORK_ERROR_MESSAGE,
+    path,
+  });
+}
+
+function handleSessionFailure(error, sessionToken) {
+  if (!sessionToken || error.status !== 401) return;
+
+  saveAuthNotice({
+    code: error.code,
+    tone: 'warning',
+    title: 'Session expired',
+    message: SESSION_EXPIRED_MESSAGE,
+  });
+  clearAuthSession({ preserveNotice: true });
+}
+
+function createApiResponseError(response, payload, path, sessionToken) {
+  const detail = extractResponseDetail(payload, response.status);
+  const code = extractResponseCode(payload, response.status, detail, path);
+  const error = new ApiError({
+    status: response.status,
+    code,
+    detail,
+    payload,
+    path,
+    message: getFriendlyErrorMessage({
+      status: response.status,
+      code,
+      detail,
+      path,
+    }),
+  });
+
+  handleSessionFailure(error, sessionToken);
+  return error;
+}
+
+export function isAuthSessionError(error) {
+  return ['AUTH_SESSION_EXPIRED', 'AUTH_INVALID', 'AUTH_REQUIRED'].includes(error?.code);
+}
+
+export function isRetryableApiError(error) {
+  if (['AI_QUOTA_EXCEEDED', 'QUOTA_EXCEEDED', 'AUTH_FORBIDDEN', 'AUTH_REQUIRED'].includes(error?.code)) {
+    return false;
+  }
+
+  return (
+    ['REQUEST_TIMEOUT', 'NETWORK_ERROR', 'AI_RATE_LIMITED', 'AI_PROVIDER_UNAVAILABLE', 'SERVER_ERROR'].includes(error?.code) ||
+    Number(error?.status || 0) >= 500
+  );
+}
 
 const compactNumber = new Intl.NumberFormat('en-US', {
   notation: 'compact',
@@ -301,6 +506,18 @@ const sanitizeExecutionSummaryItem = (item, index = 0) => ({
   tone: String(item?.tone || 'neutral').trim(),
 });
 
+const sumExecutionSummaryAmounts = (items, keys) => {
+  const keySet = new Set(keys);
+  return (Array.isArray(items) ? items : []).reduce((total, item) => (
+    keySet.has(item.key) ? total + toNumber(item.amount) : total
+  ), 0);
+};
+
+const firstPositiveNumber = (...values) => {
+  const value = values.find((item) => toNumber(item) > 0);
+  return value == null ? 0 : toNumber(value);
+};
+
 const toProjectCardItem = (project) => {
   const id = project.project_id || project.id || '';
   const total = toNumber(project.total_budget ?? project.contingency_budget);
@@ -315,12 +532,70 @@ const toProjectCardItem = (project) => {
     progressPercent,
     spent: toNumber(project.spent, total * (progressPercent / 100)),
     total,
+    budgetSource: project.budget_source || (total > 0 ? 'Project budget' : ''),
+    customerBudget: toNumber(project.customer_budget),
+    subcontractorBudget: toNumber(project.subcontractor_budget),
+    committedCost: toNumber(project.committed_cost),
+    pendingAmount: toNumber(project.pending_amount),
+    paidAmount: toNumber(project.paid_amount),
     overheadPercent: toNumber(project.overhead_percent),
     profitPercent: toNumber(project.profit_percent),
     vatPercent: toNumber(project.vat_percent),
     contingencyBudget: toNumber(project.contingency_budget, total),
   };
 };
+
+function enrichProjectCardWithBoq(project, boqResponse) {
+  if (!boqResponse) return project;
+
+  const compareSummary = boqResponse?.compare_summary || {};
+  const executionSummary = Array.isArray(boqResponse?.execution_summary)
+    ? boqResponse.execution_summary.map((item, index) => sanitizeExecutionSummaryItem(item, index))
+    : [];
+  const customerBudget = toNumber(compareSummary?.customer_total_budget);
+  const subcontractorBudget = toNumber(compareSummary?.subcontractor_total_budget);
+  const total = firstPositiveNumber(customerBudget, subcontractorBudget, project.total, project.contingencyBudget);
+  const committedCost = sumExecutionSummaryAmounts(executionSummary, [
+    'approved_transactions',
+    'approved_input_requests',
+    'paid_input_requests',
+  ]);
+  const pendingAmount = sumExecutionSummaryAmounts(executionSummary, [
+    'pending_input_requests',
+    'overdue_installments',
+  ]);
+  const paidAmount = sumExecutionSummaryAmounts(executionSummary, ['paid_input_requests']);
+  const spent = firstPositiveNumber(committedCost, project.spent);
+  const progressPercent = total > 0 ? (spent / total) * 100 : project.progressPercent;
+  const budgetSource = customerBudget > 0
+    ? 'Customer BOQ'
+    : subcontractorBudget > 0
+      ? 'Subcontractor BOQ'
+      : project.budgetSource;
+
+  return {
+    ...project,
+    total,
+    spent,
+    progressPercent,
+    budgetSource,
+    customerBudget,
+    subcontractorBudget,
+    committedCost: spent,
+    pendingAmount,
+    paidAmount,
+  };
+}
+
+async function enrichProjectCard(project) {
+  if (!project.id) return project;
+
+  const boqResponse = await apiRequest(`/api/v1/projects/${project.id}/boq`, {
+    timeoutMs: 30000,
+  }).catch(() => null);
+
+  return enrichProjectCardWithBoq(project, boqResponse);
+}
 
 async function apiRequest(path, options = {}) {
   const { timeoutMs = 30000, headers, ...fetchOptions } = options;
@@ -343,10 +618,7 @@ async function apiRequest(path, options = {}) {
     });
   } catch (error) {
     clearTimeout(timeoutId);
-    if (error?.name === 'AbortError') {
-      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
-    }
-    throw error;
+    throw createRequestFailure(error, timeoutMs, path);
   }
   clearTimeout(timeoutId);
 
@@ -358,19 +630,20 @@ async function apiRequest(path, options = {}) {
   }
 
   if (!response.ok) {
-    const detail = Array.isArray(payload?.detail)
-      ? payload.detail
-          .map((item) => {
-            const location = Array.isArray(item?.loc) ? item.loc.join('.') : 'request';
-            return `${location}: ${item?.msg || 'Validation error'}`;
-          })
-          .join(' | ')
-      : payload?.detail || payload?.message || `Request failed with status ${response.status}`;
-    throw new Error(detail);
+    throw createApiResponseError(response, payload, path, sessionToken);
   }
 
   if (payload?.status && payload.status !== 'success') {
-    throw new Error(payload.detail || 'API request failed.');
+    const detail = extractResponseDetail(payload, response.status);
+    const code = extractResponseCode(payload, response.status, detail, path);
+    throw new ApiError({
+      status: response.status,
+      code,
+      detail,
+      payload,
+      path,
+      message: getFriendlyErrorMessage({ status: response.status, code, detail, path }),
+    });
   }
 
   return payload?.data ?? payload;
@@ -602,8 +875,12 @@ export async function getDashboardData() {
 export async function getProjectsData() {
   const data = await apiRequest('/api/v1/projects');
   const projects = Array.isArray(data) ? data : [];
+  const projectCards = projects.map(toProjectCardItem);
+  const enrichedResults = await Promise.allSettled(projectCards.map(enrichProjectCard));
 
-  return projects.map(toProjectCardItem);
+  return enrichedResults.map((result, index) => (
+    result.status === 'fulfilled' ? result.value : projectCards[index]
+  ));
 }
 
 export async function createProject(payload) {

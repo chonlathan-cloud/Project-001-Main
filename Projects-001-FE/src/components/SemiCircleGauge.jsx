@@ -1,6 +1,19 @@
 import React from 'react';
 
-const SemiCircleGauge = ({ value, max, size = 240, strokeWidth = 16, color = '#4f6f64', bgColor = '#c7eadc' }) => {
+const defaultValueFormatter = (value) =>
+  `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const SemiCircleGauge = ({
+  value,
+  max,
+  size = 240,
+  strokeWidth = 16,
+  color = '#4f6f64',
+  bgColor = '#c7eadc',
+  label = 'spent',
+  remainingLabel = 'left',
+  valueFormatter = defaultValueFormatter,
+}) => {
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * Math.PI;
   const percentage = max > 0 ? Math.min(value / max, 1) : 0;
@@ -35,9 +48,9 @@ const SemiCircleGauge = ({ value, max, size = 240, strokeWidth = 16, color = '#4
         transform: 'translateX(-50%)', 
         textAlign: 'center' 
       }}>
-        <div style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>{Math.round(percentage * 100)}% spent</div>
+        <div style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>{Math.round(percentage * 100)}% {label}</div>
         <div style={{ fontSize: '24px', fontWeight: 'bold' }}>
-          ${value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+          {valueFormatter(value)}
         </div>
       </div>
       
@@ -51,8 +64,8 @@ const SemiCircleGauge = ({ value, max, size = 240, strokeWidth = 16, color = '#4
         padding: '2px 6px',
         borderRadius: '8px'
       }}>
-        <div style={{ fontSize: '10px', color: '#888' }}>{Math.round((1 - percentage) * 100)}% left</div>
-        <div style={{ fontSize: '12px', fontWeight: 'bold' }}>${(max - value).toLocaleString()}</div>
+        <div style={{ fontSize: '10px', color: '#888' }}>{Math.round((1 - percentage) * 100)}% {remainingLabel}</div>
+        <div style={{ fontSize: '12px', fontWeight: 'bold' }}>{valueFormatter(Math.max(max - value, 0))}</div>
       </div>
     </div>
   );

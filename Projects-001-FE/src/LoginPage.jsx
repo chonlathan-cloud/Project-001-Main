@@ -1,9 +1,17 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, ShieldCheck, Smartphone } from 'lucide-react';
 
-import { clearPendingLineAuth, resolvePostLoginPath, saveAuthSession, savePendingLineAuth } from './auth';
+import {
+  clearAuthNotice,
+  clearPendingLineAuth,
+  getStoredAuthNotice,
+  resolvePostLoginPath,
+  saveAuthSession,
+  savePendingLineAuth,
+} from './auth';
 import { adminLogin, lineLogin } from './api';
+import AuthNotice from './components/AuthNotice';
 import { signInAdminWithGooglePopup } from './firebaseClient';
 import { beginLineLogin, getActiveLineAccessToken } from './liffClient';
 import logoImage from './assets/Logo.png';
@@ -36,12 +44,26 @@ const actionButton = (tone = 'primary') => ({
 
 const LoginPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [loadingAction, setLoadingAction] = useState('');
   const [error, setError] = useState('');
+  const [authNotice, setAuthNotice] = useState(() => (
+    location.state?.authNotice ||
+    (location.state?.reason === 'session_expired'
+      ? {
+          tone: 'warning',
+          title: 'Session expired',
+          message: 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้งเพื่อใช้งานต่อ',
+        }
+      : null) ||
+    getStoredAuthNotice()
+  ));
 
   const handleAdminGoogleLogin = async () => {
     setLoadingAction('admin');
     setError('');
+    setAuthNotice(null);
+    clearAuthNotice();
     clearPendingLineAuth();
 
     try {
@@ -59,6 +81,8 @@ const LoginPage = () => {
   const handleLineLogin = async () => {
     setLoadingAction('line');
     setError('');
+    setAuthNotice(null);
+    clearAuthNotice();
 
     try {
       const liffClient = await beginLineLogin();
@@ -115,6 +139,8 @@ const LoginPage = () => {
               Subcontractor Portal access with LINE LIFF. Admins can continue with Google sign-in.
             </p>
           </div>
+
+          <AuthNotice notice={authNotice} />
 
           {error ? (
             <div style={{

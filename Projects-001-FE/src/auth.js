@@ -1,6 +1,7 @@
 const SESSION_TOKEN_KEY = 'app_session_token';
 const SESSION_USER_KEY = 'app_auth_user';
 const PENDING_LINE_AUTH_KEY = 'app_pending_line_auth';
+const AUTH_NOTICE_KEY = 'app_auth_notice';
 const AUTH_EVENT_NAME = 'app-auth-changed';
 const ADMIN_ROLES = new Set(['admin', 'owner', 'super_admin']);
 
@@ -36,6 +37,38 @@ export function getStoredPendingLineAuth() {
   return parseJson(window.localStorage.getItem(PENDING_LINE_AUTH_KEY), null);
 }
 
+export function saveAuthNotice(notice) {
+  if (typeof window === 'undefined') return;
+  const payload = {
+    code: String(notice?.code || '').trim(),
+    tone: String(notice?.tone || 'info').trim(),
+    title: String(notice?.title || '').trim(),
+    message: String(notice?.message || '').trim(),
+  };
+  if (!payload.title && !payload.message) {
+    window.localStorage.removeItem(AUTH_NOTICE_KEY);
+    return;
+  }
+  window.localStorage.setItem(AUTH_NOTICE_KEY, JSON.stringify(payload));
+}
+
+export function getStoredAuthNotice() {
+  if (typeof window === 'undefined') return null;
+  return parseJson(window.localStorage.getItem(AUTH_NOTICE_KEY), null);
+}
+
+export function clearAuthNotice() {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(AUTH_NOTICE_KEY);
+}
+
+export function consumeAuthNotice() {
+  if (typeof window === 'undefined') return null;
+  const notice = getStoredAuthNotice();
+  clearAuthNotice();
+  return notice;
+}
+
 function emitAuthChanged() {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(AUTH_EVENT_NAME));
@@ -45,13 +78,17 @@ export function saveAuthSession(payload) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(SESSION_TOKEN_KEY, payload.session_token || '');
   window.localStorage.setItem(SESSION_USER_KEY, JSON.stringify(payload.user || null));
+  window.localStorage.removeItem(AUTH_NOTICE_KEY);
   emitAuthChanged();
 }
 
-export function clearAuthSession() {
+export function clearAuthSession({ preserveNotice = false } = {}) {
   if (typeof window === 'undefined') return;
   window.localStorage.removeItem(SESSION_TOKEN_KEY);
   window.localStorage.removeItem(SESSION_USER_KEY);
+  if (!preserveNotice) {
+    window.localStorage.removeItem(AUTH_NOTICE_KEY);
+  }
   emitAuthChanged();
 }
 
@@ -69,7 +106,7 @@ export function subscribeToAuthChanges(listener) {
   if (typeof window === 'undefined') return () => {};
 
   const handleStorage = (event) => {
-    if (!event.key || [SESSION_TOKEN_KEY, SESSION_USER_KEY, PENDING_LINE_AUTH_KEY].includes(event.key)) {
+    if (!event.key || [SESSION_TOKEN_KEY, SESSION_USER_KEY, PENDING_LINE_AUTH_KEY, AUTH_NOTICE_KEY].includes(event.key)) {
       listener();
     }
   };

@@ -49,6 +49,14 @@ const PROJECT_TYPE_OPTIONS = ['COMMERCIAL', 'INDUSTRIAL', 'HOTEL', 'WAREHOUSE', 
 const PROJECT_STATUS_OPTIONS = ['ACTIVE', 'PLANNING', 'ON_HOLD', 'COMPLETED'];
 const MAX_BATCH_SYNC_TABS = Number(import.meta.env.VITE_BOQ_BATCH_SYNC_MAX_TABS || 5);
 const ACTIVE_SYNC_JOB_STATUSES = new Set(['QUEUED', 'RUNNING']);
+const currencyFormatter = new Intl.NumberFormat('th-TH', {
+  style: 'currency',
+  currency: 'THB',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const formatCurrency = (value) => currencyFormatter.format(Number.isFinite(Number(value)) ? Number(value) : 0);
 
 const buttonStyle = {
   border: 'none',
@@ -120,8 +128,11 @@ const DrawerField = ({ label, children, helper }) => (
 );
 
 const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync, canMutate = true }) => {
-  const { id, name, spent, total, status, progressPercent, projectType } = project;
+  const { id, name, spent, total, status, progressPercent, projectType, budgetSource, pendingAmount = 0 } = project;
   const left = total - spent;
+  const isOverBudget = left < 0;
+  const leftLabel = isOverBudget ? 'Over budget' : 'Left';
+  const displayLeft = Math.abs(left);
   const normalizedStatus = String(status || '').toLowerCase();
   const isOnTrack =
     normalizedStatus.includes('active') ||
@@ -279,17 +290,23 @@ const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync, canMutat
       </div>
 
       <div style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
-        <CircularProgress value={spent} max={Math.max(total, 1)} color="#4f6f64" bgColor="#c7eadc" />
+        <CircularProgress
+          value={spent}
+          max={Math.max(total, 1)}
+          color={isOverBudget ? '#de5b52' : '#4f6f64'}
+          bgColor={isOverBudget ? '#f8d2ce' : '#c7eadc'}
+          label="committed"
+        />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
           <div>
-            <div style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>Left</div>
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>{leftLabel}</div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
-              <span style={{ fontSize: '20px', fontWeight: 'bold' }}>
-                ${left.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span style={{ fontSize: '20px', fontWeight: 'bold', color: isOverBudget ? '#de5b52' : '#1a1a1a' }}>
+                {formatCurrency(displayLeft)}
               </span>
               <span style={{ fontSize: '12px', color: '#888' }}>
-                /${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                /{formatCurrency(total)}
               </span>
             </div>
           </div>
@@ -311,7 +328,14 @@ const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync, canMutat
             {isOnTrack ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
             {status}
           </div>
-          <div style={{ fontSize: '12px', color: '#888' }}>Progress {progressPercent.toFixed(1)}%</div>
+          <div style={{ fontSize: '12px', color: '#888' }}>
+            Progress {progressPercent.toFixed(1)}%{budgetSource ? ` • ${budgetSource}` : ''}
+          </div>
+          {pendingAmount > 0 ? (
+            <div style={{ fontSize: '12px', color: '#8a6d1f', fontWeight: 600 }}>
+              Pending queue {formatCurrency(pendingAmount)}
+            </div>
+          ) : null}
           {saveError ? <div style={{ fontSize: '12px', color: '#de5b52' }}>{saveError}</div> : null}
         </div>
       </div>
@@ -356,7 +380,7 @@ const ExpenseListItem = ({ name, amount, percentage, isUp }) => (
         </svg>
       </div>
       <div>
-        <div style={{ fontSize: '14px', fontWeight: '600', color: '#333' }}>${amount.toLocaleString()}</div>
+        <div style={{ fontSize: '14px', fontWeight: '600', color: '#333' }}>{formatCurrency(amount)}</div>
         <div style={{ fontSize: '12px', color: '#888' }}>{name}</div>
       </div>
     </div>
@@ -841,7 +865,7 @@ const ProjectPage = () => {
 
             <div style={{ textAlign: 'center', marginBottom: '16px' }}>
               <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#1a1a1a' }}>
-                ${totalBudget.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {formatCurrency(totalBudget)}
               </div>
               <div style={{ display: 'flex', justifyContent: 'center', marginTop: '8px' }}>
                 <div
@@ -864,7 +888,16 @@ const ProjectPage = () => {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <SemiCircleGauge value={totalSpent} max={Math.max(totalBudget, 1)} color="#4f6f64" bgColor="#c7eadc" size={260} />
+              <SemiCircleGauge
+                value={totalSpent}
+                max={Math.max(totalBudget, 1)}
+                color="#4f6f64"
+                bgColor="#c7eadc"
+                size={260}
+                label="committed"
+                remainingLabel="left"
+                valueFormatter={formatCurrency}
+              />
             </div>
           </Motion.div>
 
@@ -1128,7 +1161,7 @@ const ProjectPage = () => {
                   <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', fontSize: '13px', color: '#666' }}>
                     <span>Type: {selectedProject?.projectType}</span>
                     <span>Status: {selectedProject?.status}</span>
-                    <span>Budget: ${selectedProject?.total?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span>Budget: {formatCurrency(selectedProject?.total)}</span>
                   </div>
                 </div>
 

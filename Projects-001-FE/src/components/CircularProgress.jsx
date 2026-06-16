@@ -1,10 +1,27 @@
 import React from 'react';
 
-const CircularProgress = ({ value, max, size = 80, strokeWidth = 8, color = '#4f6f64', bgColor = '#c7eadc' }) => {
+const CircularProgress = ({
+  value,
+  max,
+  size = 80,
+  strokeWidth = 8,
+  color = '#4f6f64',
+  bgColor = '#c7eadc',
+  label = 'spent',
+}) => {
+  const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const safeMax = Number.isFinite(Number(max)) ? Number(max) : 0;
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * 2 * Math.PI;
-  const percentage = max > 0 ? Math.min(value / max, 1) : 0;
+  const rawPercentage = safeMax > 0 ? (safeValue / safeMax) * 100 : 0;
+  const percentage = Math.min(rawPercentage / 100, 1);
   const offset = circumference - percentage * circumference;
+  const percentageLabel = rawPercentage > 100
+    ? '100%+'
+    : `${rawPercentage.toLocaleString('en-US', {
+        minimumFractionDigits: rawPercentage > 0 && rawPercentage < 100 ? 1 : 0,
+        maximumFractionDigits: 1,
+      })}%`;
 
   return (
     <div style={{ position: 'relative', width: size, height: size, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
@@ -30,9 +47,43 @@ const CircularProgress = ({ value, max, size = 80, strokeWidth = 8, color = '#4f
           style={{ transform: 'rotate(-90deg)', transformOrigin: '50% 50%', transition: 'stroke-dashoffset 0.5s ease-in-out' }}
         />
       </svg>
-      <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center', color: '#333' }}>
-        <span style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>{Math.round(percentage * 100)}% spent</span>
-        <span style={{ fontSize: '14px', fontWeight: 'bold' }}>${value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+      <div
+        style={{
+          position: 'absolute',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: size - strokeWidth * 3,
+          textAlign: 'center',
+          color: '#333',
+          pointerEvents: 'none',
+        }}
+      >
+        <span
+          style={{
+            color,
+            fontSize: '14px',
+            fontWeight: 'bold',
+            lineHeight: 1.1,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {percentageLabel}
+        </span>
+        <span
+          style={{
+            marginTop: '3px',
+            color: '#888',
+            fontSize: '10px',
+            fontWeight: 700,
+            lineHeight: 1.15,
+            textTransform: 'lowercase',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {label}
+        </span>
       </div>
     </div>
   );

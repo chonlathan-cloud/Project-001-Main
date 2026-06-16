@@ -350,6 +350,52 @@ body {
   font-weight: 800;
 }
 
+.auth-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(194, 168, 120, 0.36);
+  border-radius: 8px;
+  background: rgba(194, 168, 120, 0.12);
+  color: #75624a;
+}
+
+.auth-notice.error {
+  border-color: #f7b4ad;
+  background: #fff5f4;
+  color: #b42318;
+}
+
+.auth-notice-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+}
+
+.auth-notice strong,
+.auth-notice small {
+  display: block;
+}
+
+.auth-notice strong {
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 850;
+}
+
+.auth-notice small {
+  margin-top: 3px;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 650;
+}
+
 .dashboard-page {
   display: flex;
   flex-direction: column;
