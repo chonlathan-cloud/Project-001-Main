@@ -12,6 +12,8 @@ import {
   uploadInputReceipt,
 } from './api';
 import { getStoredAuthUser } from './auth';
+import InputLineItemsEditor from './components/InputLineItemsEditor';
+import { createEmptyLineItem, sumLineItems } from './components/inputLineItemsUtils';
 
 const MotionDiv = motion.div;
 
@@ -120,9 +122,15 @@ const initialFormState = {
   accountNo: '',
   accountName: '',
   amount: '',
+  lineItems: [createEmptyLineItem()],
 };
 
 const cleanText = (value) => String(value || '').trim();
+
+const toFiniteNumber = (value, fallback = 0) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+};
 
 const mergeTextValues = (...groups) => {
   const merged = [];
@@ -144,6 +152,86 @@ const buildWorkTypeOptions = (values = []) =>
   mergeTextValues(DEFAULT_WORK_TYPE_VALUES, values).map((value) => ({ value, label: value }));
 
 const normalizeTags = (values = []) => mergeTextValues(Array.isArray(values) ? values : []);
+
+const hasMeaningfulLineItems = (items = []) =>
+  Array.isArray(items) &&
+  items.some((item) => cleanText(item?.description) || toFiniteNumber(item?.amount) !== 0);
+
+const normalizeFormLineItems = (items = []) => {
+  const sourceItems = Array.isArray(items) && items.length ? items : [createEmptyLineItem()];
+  return sourceItems.map((item) => {
+    const qty = toFiniteNumber(item?.qty, 1) || 1;
+    const unitPrice = toFiniteNumber(item?.unit_price ?? item?.price);
+    const amount = item?.amount == null
+      ? Number((qty * unitPrice).toFixed(2))
+      : toFiniteNumber(item.amount);
+
+    return createEmptyLineItem({
+      id: item?.id || '',
+      description: cleanText(item?.description),
+      qty,
+      unit_price: unitPrice,
+      amount,
+      work_type: normalizeWorkType(item?.work_type),
+      request_type: normalizeRequestType(item?.request_type),
+    });
+  });
+};
+
+const buildLineItemsFromOcr = (extracted = {}, { entryType, workType, requestType } = {}) => {
+  const isIncome = entryType === 'INCOME';
+  const ocrItems = Array.isArray(extracted.items) ? extracted.items : [];
+  const normalizedItems = ocrItems
+    .map((item) => {
+      const description = cleanText(item?.description);
+      if (!description) return null;
+      const qty = toFiniteNumber(item?.qty, 1) || 1;
+      const unitPrice = toFiniteNumber(item?.unit_price ?? item?.price);
+      const amount = item?.amount == null
+        ? Number((qty * unitPrice).toFixed(2))
+        : toFiniteNumber(item.amount);
+
+      return createEmptyLineItem({
+        description,
+        qty,
+        unit_price: unitPrice,
+        amount,
+        work_type: isIncome ? '' : normalizeWorkType(item?.work_type || workType),
+        request_type: isIncome ? '' : normalizeRequestType(item?.request_type || requestType),
+      });
+    })
+    .filter(Boolean);
+
+  if (normalizedItems.length) return normalizedItems;
+
+  const fallbackAmount = toFiniteNumber(extracted.total_amount);
+  if (fallbackAmount > 0) {
+    return [
+      createEmptyLineItem({
+        description: cleanText(extracted.suggested_request_type || extracted.vendor_name || 'รายการจาก OCR'),
+        qty: 1,
+        unit_price: fallbackAmount,
+        amount: fallbackAmount,
+        work_type: isIncome ? '' : normalizeWorkType(workType),
+        request_type: isIncome ? '' : normalizeRequestType(requestType || extracted.suggested_request_type),
+      }),
+    ];
+  }
+
+  return [createEmptyLineItem()];
+};
+
+const normalizeLineItemsForSubmit = (items = [], { isIncomeRequest, workType, requestType } = {}) =>
+  normalizeFormLineItems(items)
+    .filter((item) => cleanText(item.description))
+    .map((item) => ({
+      description: cleanText(item.description),
+      qty: toFiniteNumber(item.qty, 1) || 1,
+      unit_price: toFiniteNumber(item.unit_price),
+      amount: toFiniteNumber(item.amount),
+      work_type: isIncomeRequest ? null : normalizeWorkType(item.work_type || workType) || null,
+      request_type: isIncomeRequest ? null : normalizeRequestType(item.request_type || requestType) || null,
+    }));
 
 const pickFirstText = (...values) =>
   values.map(cleanText).find(Boolean) || '';
@@ -193,6 +281,7 @@ const buildDefaultedFormState = (defaults = {}, overrides = {}) => {
     accountNo: resolvedDefaults.accountNo || initialFormState.accountNo,
     accountName: resolvedDefaults.accountName || initialFormState.accountName,
     ...overrides,
+    lineItems: normalizeFormLineItems(overrides.lineItems || initialFormState.lineItems),
   };
 };
 
@@ -659,6 +748,16 @@ const InputPage = () => {
     setForm((current) => ({ ...current, [field]: nextValue }));
   };
 
+  const handleLineItemsChange = (nextLineItems) => {
+    const normalizedLineItems = normalizeFormLineItems(nextLineItems);
+    const totalAmount = sumLineItems(normalizedLineItems);
+    setForm((current) => ({
+      ...current,
+      lineItems: normalizedLineItems,
+      amount: totalAmount ? String(Number(totalAmount.toFixed(2))) : '',
+    }));
+  };
+
   const handleAddTag = (rawValue) => {
     const [cleaned] = mergeTextValues([rawValue]);
     if (!cleaned) return;
@@ -687,6 +786,11 @@ const InputPage = () => {
       workType: nextType === 'INCOME' ? '' : current.workType,
       customWorkType: nextType === 'INCOME' ? '' : current.customWorkType,
       requestType: nextType === 'INCOME' ? '' : current.requestType,
+      lineItems: normalizeFormLineItems(current.lineItems).map((item) => ({
+        ...item,
+        work_type: nextType === 'INCOME' ? '' : item.work_type,
+        request_type: nextType === 'INCOME' ? '' : item.request_type,
+      })),
     }));
     setSubmitError('');
     setSubmitResult(null);
@@ -750,16 +854,27 @@ const InputPage = () => {
             ? normalizedExtracted.suggested_entry_type
             : current.entryType;
         const nextRequestType = current.requestType || normalizedExtracted.suggested_request_type || '';
-        const nextRequestDetail = current.note || buildRequestDetailFromOcr(normalizedExtracted);
+        const existingLineItems = normalizeFormLineItems(current.lineItems);
+        const nextLineItems = hasMeaningfulLineItems(existingLineItems)
+          ? existingLineItems
+          : buildLineItemsFromOcr(normalizedExtracted, {
+              entryType: nextEntryType,
+              workType: current.workType,
+              requestType: nextRequestType,
+            });
+        const nextLineItemTotal = sumLineItems(nextLineItems);
+        const nextRequestDetail = current.note || (hasMeaningfulLineItems(nextLineItems) ? '' : buildRequestDetailFromOcr(normalizedExtracted));
 
         return {
           ...current,
           entryType: nextEntryType,
           amount: current.amount
             ? current.amount
-            : normalizedExtracted.total_amount == null
-              ? ''
-              : String(normalizedExtracted.total_amount),
+            : nextLineItemTotal
+              ? String(Number(nextLineItemTotal.toFixed(2)))
+              : normalizedExtracted.total_amount == null
+                ? ''
+                : String(normalizedExtracted.total_amount),
           documentDate: current.documentDate || normalizeDateInputValue(normalizedExtracted.document_date),
           workType: nextEntryType === 'INCOME' ? '' : current.workType,
           customWorkType: nextEntryType === 'INCOME' ? '' : current.customWorkType,
@@ -767,6 +882,7 @@ const InputPage = () => {
           vendorName: current.vendorName || normalizedExtracted.vendor_name || '',
           receiptNo: current.receiptNo || normalizedExtracted.receipt_no || '',
           note: nextRequestDetail,
+          lineItems: nextLineItems,
         };
       });
       setFlashMessage(`อ่านข้อมูลจาก ${file.name} สำเร็จแล้ว`);
@@ -801,8 +917,18 @@ const InputPage = () => {
       setSubmitError('กรุณาระบุวันที่');
       return;
     }
-    if (!form.amount || Number(form.amount) <= 0) {
-      setSubmitError('กรุณากรอกจำนวนเงินที่มากกว่า 0');
+    const lineItemsForValidation = normalizeLineItemsForSubmit(form.lineItems, {
+      isIncomeRequest: form.entryType === 'INCOME',
+      workType: form.workType === OTHER_WORK_TYPE_VALUE ? form.customWorkType : form.workType,
+      requestType: form.requestType,
+    });
+    const lineItemTotalForValidation = sumLineItems(lineItemsForValidation);
+    if (!lineItemsForValidation.length) {
+      setSubmitError('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ');
+      return;
+    }
+    if (lineItemTotalForValidation <= 0) {
+      setSubmitError('ยอดรวมรายการต้องมากกว่า 0');
       return;
     }
 
@@ -815,7 +941,12 @@ const InputPage = () => {
         : normalizeWorkType(form.workType);
     const normalizedRequestType = isIncomeRequest ? '' : normalizeRequestType(form.requestType);
     const normalizedDocumentDate = form.documentDate || form.requestDate;
-    const numericAmount = Number(form.amount);
+    const normalizedLineItems = normalizeLineItemsForSubmit(form.lineItems, {
+      isIncomeRequest,
+      workType: normalizedWorkType,
+      requestType: normalizedRequestType,
+    });
+    const numericAmount = Number(sumLineItems(normalizedLineItems).toFixed(2));
 
     if (isIncomeRequest && normalizedTags.length === 0) {
       setSubmitError('รายการรายรับต้องมีแท็กอย่างน้อย 1 รายการ');
@@ -835,6 +966,10 @@ const InputPage = () => {
     }
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
       setSubmitError('จำนวนเงินไม่ถูกต้อง');
+      return;
+    }
+    if (!normalizedLineItems.length) {
+      setSubmitError('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ');
       return;
     }
 
@@ -866,6 +1001,7 @@ const InputPage = () => {
           account_name: form.accountName.trim() || form.requesterName.trim(),
         },
         amount: numericAmount,
+        line_items: normalizedLineItems,
         receipt_file_name:
           uploadedReceiptPayload?.file_name || selectedFile?.name || extractData?.file_name || null,
         receipt_content_type:
@@ -931,7 +1067,9 @@ const InputPage = () => {
   const hasAssignedProjects = projectOptions.length > 0;
   const workTypeSelectOptions = [...workTypeOptions, OTHER_WORK_TYPE_OPTION];
   const selectedTags = normalizeTags(form.tags);
-  const numericFormAmount = Number(form.amount);
+  const formLineItems = normalizeFormLineItems(form.lineItems);
+  const numericFormAmount = sumLineItems(formLineItems);
+  const hasValidLineItems = formLineItems.some((item) => cleanText(item.description)) && numericFormAmount > 0;
   const isSubmitDisabled =
     isSubmitting ||
     isExtracting ||
@@ -939,9 +1077,7 @@ const InputPage = () => {
     !form.projectId ||
     !form.requesterName.trim() ||
     !form.requestDate ||
-    !form.amount ||
-    !Number.isFinite(numericFormAmount) ||
-    numericFormAmount <= 0 ||
+    !hasValidLineItems ||
     (isIncome && selectedTags.length === 0) ||
     (!isIncome && form.workType === OTHER_WORK_TYPE_VALUE && !form.customWorkType.trim()) ||
     (!selectedFile && !uploadedReceipt);
@@ -1180,6 +1316,19 @@ const InputPage = () => {
                 </>
               ) : null}
 
+              <InputLineItemsEditor
+                value={formLineItems}
+                onChange={handleLineItemsChange}
+                disabled={isExtracting || isSubmitting}
+                entryType={form.entryType}
+                workTypeOptions={workTypeOptions}
+                requestTypeOptions={REQUEST_TYPE_OPTIONS}
+                fallbackWorkType={form.workType === OTHER_WORK_TYPE_VALUE ? form.customWorkType : form.workType}
+                fallbackRequestType={form.requestType}
+                title="รายการจากใบเสร็จ"
+                subtitle="ตรวจ แก้ไข เพิ่ม หรือลบรายการก่อนส่งให้ผู้ดูแลตรวจสอบ"
+              />
+
               <TagInput
                 label="แท็ก"
                 required={isIncome}
@@ -1192,8 +1341,8 @@ const InputPage = () => {
               />
 
               <TextAreaField
-                label="รายการ / ค่าอะไร"
-                placeholder="กรุณากรอกรายการหรือรายละเอียดค่าใช้จ่าย"
+                label="หมายเหตุเพิ่มเติม"
+                placeholder="กรุณากรอกหมายเหตุเพิ่มเติมถ้ามี"
                 value={form.note}
                 onChange={handleFieldChange('note')}
                 style={{ width: '100%' }}
@@ -1218,12 +1367,13 @@ const InputPage = () => {
                   onChange={handleFieldChange('bankName')}
                 />
                 <InputField
-                  label="จำนวนเงินที่ขอเบิก"
-                  placeholder="กรุณากรอก"
+                  label="ยอดรวมจากรายการ"
+                  placeholder="คำนวณจาก line items"
                   type="number"
                   inputMode="decimal"
-                  value={form.amount}
+                  value={numericFormAmount ? Number(numericFormAmount.toFixed(2)) : ''}
                   onChange={handleFieldChange('amount')}
+                  disabled
                 />
               </div>
 
@@ -1344,6 +1494,30 @@ const InputPage = () => {
                       <div><strong>สถานะ:</strong> {formatStatusLabel(submitResult.status)}</div>
                     </div>
                   </div>
+                  {submitResult.line_items?.length ? (
+                    <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
+                      <h2 style={{ fontSize: '22px', marginBottom: '16px' }}>รายการที่บันทึก</h2>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {submitResult.line_items.map((item) => (
+                          <div
+                            key={item.id || `${item.line_no}-${item.description}`}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr auto',
+                              gap: '12px',
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              backgroundColor: 'var(--bg-primary)',
+                              fontSize: '13px',
+                            }}
+                          >
+                            <span>{item.description}</span>
+                            <strong>{Number(item.amount || 0).toLocaleString()} บาท</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
                       <div>
@@ -1519,7 +1693,9 @@ const InputPage = () => {
                           }}
                         >
                           <span>{item.description}</span>
-                          <span>{item.qty} x {item.price}</span>
+                          <span>
+                            {toFiniteNumber(item.qty, 1)} x {toFiniteNumber(item.price).toLocaleString()} = {toFiniteNumber(item.amount, toFiniteNumber(item.qty, 1) * toFiniteNumber(item.price)).toLocaleString()} บาท
+                          </span>
                         </div>
                       ))}
                     </div>

@@ -6,13 +6,20 @@ import {
   approveAdminInputRequest,
   getAdminInputReceiptUrl,
   getAdminInputRequests,
+  getInputRequestAccountingReadiness,
   getInputProjectOptions,
+  linkInputRequestFlowAccountDocument,
   markPaidAdminInputRequest,
   rejectAdminInputRequest,
+  retryInputRequestFlowAccountAttachment,
+  retryInputRequestFlowAccountSupplierInvoice,
+  syncInputRequestFlowAccount,
   updateAdminInputRequest,
 } from './api';
 import { canMutateAdminData, getStoredAuthUser } from './auth';
 import ApprovalPaymentInstructions from './components/ApprovalPaymentInstructions';
+import InputLineItemsEditor from './components/InputLineItemsEditor';
+import { createEmptyLineItem, sumLineItems } from './components/inputLineItemsUtils';
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All Statuses' },
@@ -34,6 +41,13 @@ const REQUEST_TYPE_OPTIONS = [
   { value: 'ค่าแรง', label: 'ค่าแรง' },
   { value: 'ค่าเบิกล่วงหน้า', label: 'ค่าเบิกล่วงหน้า' },
   { value: 'ค่าใช้จ่ายทั่วไป', label: 'ค่าใช้จ่ายทั่วไป' },
+];
+
+const VAT_MODE_OPTIONS = [
+  { value: '', label: 'เลือก VAT mode' },
+  { value: 'no_vat', label: 'No VAT' },
+  { value: 'vat_inclusive', label: 'VAT Inclusive' },
+  { value: 'vat_exclusive', label: 'VAT Exclusive' },
 ];
 
 const WORK_TYPE_OPTIONS = [
@@ -63,13 +77,20 @@ const emptyEditor = {
   request_type: '',
   note: '',
   vendor_name: '',
+  vendor_tax_id: '',
+  vendor_branch: '',
+  vendor_address: '',
+  accounting_vat_mode: '',
+  accounting_wht_rate: '',
   bank_name: '',
   account_no: '',
   account_name: '',
   receipt_no: '',
   amount: '',
+  line_items: [createEmptyLineItem()],
   review_note: '',
   payment_reference: '',
+  payment_date: new Date().toISOString().slice(0, 10),
 };
 
 const formatEntryType = (value) => (value === 'INCOME' ? 'รายรับ' : 'รายจ่าย');
@@ -86,10 +107,59 @@ const formatOcrFieldLabel = (fieldName) => {
   return labels[fieldName] || fieldName;
 };
 const isReviewableStatus = (value) => ['DRAFT', 'PENDING_ADMIN', 'REJECTED'].includes(value);
+const isEditableStatus = (value) => ['DRAFT', 'PENDING_ADMIN', 'REJECTED', 'APPROVED'].includes(value);
 const matchesFilters = (item, filters) =>
   (!filters.status || item.status === filters.status) &&
   (!filters.entryType || item.entry_type === filters.entryType) &&
   (!filters.projectId || item.project_id === filters.projectId);
+const cleanText = (value) => String(value || '').trim();
+const toNumber = (value, fallback = 0) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+};
+const normalizeEditorLineItems = (items = [], fallbackRequest = null) => {
+  const sourceItems = Array.isArray(items) && items.length ? items : [];
+  if (!sourceItems.length && fallbackRequest) {
+    const fallbackAmount = toNumber(fallbackRequest.approved_amount ?? fallbackRequest.amount);
+    return [
+      createEmptyLineItem({
+        description: cleanText(fallbackRequest.note || fallbackRequest.request_type || fallbackRequest.vendor_name || 'รายการคำขอ'),
+        qty: 1,
+        unit_price: fallbackAmount,
+        amount: fallbackAmount,
+        work_type: fallbackRequest.work_type || '',
+        request_type: fallbackRequest.request_type || '',
+      }),
+    ];
+  }
+
+  return (sourceItems.length ? sourceItems : [createEmptyLineItem()]).map((item) => {
+    const qty = toNumber(item?.qty, 1) || 1;
+    const unitPrice = toNumber(item?.unit_price ?? item?.price);
+    const amount = item?.amount == null ? Number((qty * unitPrice).toFixed(2)) : toNumber(item.amount);
+    return createEmptyLineItem({
+      id: item?.id || '',
+      description: cleanText(item?.description),
+      qty,
+      unit_price: unitPrice,
+      amount,
+      work_type: item?.work_type || '',
+      request_type: item?.request_type || '',
+    });
+  });
+};
+const normalizeLineItemsForSave = (items = [], selectedRequest = null) =>
+  normalizeEditorLineItems(items, selectedRequest)
+    .filter((item) => cleanText(item.description))
+    .map((item) => ({
+      id: item.id || null,
+      description: cleanText(item.description),
+      qty: toNumber(item.qty, 1) || 1,
+      unit_price: toNumber(item.unit_price),
+      amount: toNumber(item.amount),
+      work_type: selectedRequest?.entry_type === 'INCOME' ? null : cleanText(item.work_type) || null,
+      request_type: selectedRequest?.entry_type === 'INCOME' ? null : cleanText(item.request_type) || null,
+    }));
 
 function ApprovalPage() {
   const location = useLocation();
@@ -115,6 +185,7 @@ function ApprovalPage() {
   const [receiptPreviewLoading, setReceiptPreviewLoading] = useState(false);
   const [receiptPreviewError, setReceiptPreviewError] = useState('');
   const [technicalDetailsOpen, setTechnicalDetailsOpen] = useState(false);
+  const [accountingReadiness, setAccountingReadiness] = useState(null);
 
   const selectedRequest = useMemo(
     () => requests.find((item) => item.request_id === selectedRequestId) || null,
@@ -152,6 +223,8 @@ function ApprovalPage() {
       setEditor(emptyEditor);
       return;
     }
+    const lineItems = normalizeEditorLineItems(request.line_items, request);
+    const lineItemTotal = sumLineItems(lineItems);
 
     setEditor({
       requester_name: request.requester_name || '',
@@ -162,13 +235,20 @@ function ApprovalPage() {
       request_type: request.request_type || '',
       note: request.note || '',
       vendor_name: request.vendor_name || '',
+      vendor_tax_id: request.vendor_tax_id || '',
+      vendor_branch: request.vendor_branch || '',
+      vendor_address: request.vendor_address || '',
+      accounting_vat_mode: request.accounting_vat_mode || '',
+      accounting_wht_rate: request.accounting_wht_rate ?? (request.request_type === 'ค่าแรง' ? 3 : ''),
       bank_name: request.bank_name || request.bank_account?.bank_name || '',
       account_no: request.account_no || request.bank_account?.account_no || '',
       account_name: request.account_name || request.bank_account?.account_name || '',
       receipt_no: request.receipt_no || '',
-      amount: request.approved_amount ?? request.amount ?? '',
+      amount: lineItemTotal || (request.approved_amount ?? request.amount ?? ''),
+      line_items: lineItems,
       review_note: request.review_note || '',
       payment_reference: request.payment_reference || '',
+      payment_date: request.paid_at ? String(request.paid_at).slice(0, 10) : new Date().toISOString().slice(0, 10),
     });
   };
 
@@ -245,6 +325,49 @@ function ApprovalPage() {
   useEffect(() => {
     let isActive = true;
 
+    const loadAccountingReadiness = async () => {
+      if (!selectedRequest?.request_id) {
+        setAccountingReadiness(null);
+        return;
+      }
+
+      try {
+        const response = await getInputRequestAccountingReadiness(selectedRequest.request_id);
+        if (isActive) {
+          setAccountingReadiness(response);
+        }
+      } catch (error) {
+        if (isActive) {
+          setAccountingReadiness({
+            enabled: false,
+            ready: false,
+            can_sync_expense: false,
+            can_sync_attachment: false,
+            can_sync_supplier_invoice: false,
+            can_mark_paid: false,
+            missing_fields: [],
+            errors: [error.message || 'Failed to load accounting readiness.'],
+            external_document_id: selectedRequest.flowaccount_external_document_id || '',
+          });
+        }
+      }
+    };
+
+    loadAccountingReadiness();
+
+    return () => {
+      isActive = false;
+    };
+  }, [
+    selectedRequest?.request_id,
+    selectedRequest?.status,
+    selectedRequest?.flowaccount_sync_status,
+    selectedRequest?.flowaccount_external_document_id,
+  ]);
+
+  useEffect(() => {
+    let isActive = true;
+
     const loadReceiptPreview = async () => {
       if (!selectedRequest?.receipt_storage_key) {
         if (isActive) {
@@ -289,6 +412,18 @@ function ApprovalPage() {
     setFlashMessage('');
   };
 
+  const handleEditorLineItemsChange = (nextLineItems) => {
+    const normalizedLineItems = normalizeEditorLineItems(nextLineItems, selectedRequest);
+    const totalAmount = sumLineItems(normalizedLineItems);
+    setEditor((current) => ({
+      ...current,
+      line_items: normalizedLineItems,
+      amount: totalAmount ? String(Number(totalAmount.toFixed(2))) : '',
+    }));
+    setActionError('');
+    setFlashMessage('');
+  };
+
   const replaceRequest = (nextItem) => {
     setRequests((current) => current.map((item) => (item.request_id === nextItem.request_id ? nextItem : item)));
     setSelectedRequestId(nextItem.request_id);
@@ -297,6 +432,17 @@ function ApprovalPage() {
 
   const handleSave = async () => {
     if (!selectedRequest) return;
+    const lineItemsForSave = normalizeLineItemsForSave(editor.line_items, selectedRequest);
+    const lineItemTotal = sumLineItems(lineItemsForSave);
+
+    if (!lineItemsForSave.length) {
+      setActionError('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ');
+      return;
+    }
+    if (lineItemTotal <= 0) {
+      setActionError('ยอดรวมรายการต้องมากกว่า 0');
+      return;
+    }
 
     try {
       setBusyAction('save');
@@ -310,13 +456,19 @@ function ApprovalPage() {
         request_type: editor.request_type || null,
         note: editor.note.trim() || null,
         vendor_name: editor.vendor_name.trim() || null,
+        vendor_tax_id: editor.vendor_tax_id.trim() || null,
+        vendor_branch: editor.vendor_branch.trim() || null,
+        vendor_address: editor.vendor_address.trim() || null,
+        accounting_vat_mode: editor.accounting_vat_mode || null,
+        accounting_wht_rate: editor.accounting_wht_rate === '' ? null : Number(editor.accounting_wht_rate),
         bank_account: {
           bank_name: editor.bank_name.trim() || null,
           account_no: editor.account_no.trim() || null,
           account_name: editor.account_name.trim() || null,
         },
         receipt_no: editor.receipt_no.trim() || null,
-        amount: Number(editor.amount),
+        amount: Number(lineItemTotal.toFixed(2)),
+        line_items: lineItemsForSave,
       });
       replaceRequest(updated);
       await refreshReceiptPreview(updated);
@@ -330,12 +482,15 @@ function ApprovalPage() {
 
   const handleApprove = async () => {
     if (!selectedRequest) return;
+    const lineItemsForApprove = normalizeLineItemsForSave(editor.line_items, selectedRequest);
+    const approvedLineItemTotal = sumLineItems(lineItemsForApprove);
 
     try {
       setBusyAction('approve');
       setActionError('');
       const approved = await approveAdminInputRequest(selectedRequest.request_id, {
-        approved_amount: Number(editor.amount),
+        approved_amount: Number((approvedLineItemTotal || Number(editor.amount || 0)).toFixed(2)),
+        line_items: lineItemsForApprove,
         review_note: editor.review_note.trim() || null,
       });
       if (matchesFilters(approved, filters)) {
@@ -387,6 +542,7 @@ function ApprovalPage() {
       setActionError('');
       const paid = await markPaidAdminInputRequest(selectedRequest.request_id, {
         payment_reference: editor.payment_reference.trim() || null,
+        payment_date: editor.payment_date || null,
         review_note: editor.review_note.trim() || null,
       });
       if (matchesFilters(paid, filters)) {
@@ -398,6 +554,86 @@ function ApprovalPage() {
       setFlashMessage('อัปเดตสถานะเป็น PAID เรียบร้อย');
     } catch (error) {
       setActionError(error.message || 'Failed to mark request as paid.');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleSyncFlowAccount = async () => {
+    if (!selectedRequest) return;
+    const overrideDuplicate = selectedRequest.is_duplicate_flag
+      ? window.confirm('This request is flagged as duplicate. Confirm sync to FlowAccount anyway?')
+      : false;
+
+    if (selectedRequest.is_duplicate_flag && !overrideDuplicate) {
+      return;
+    }
+
+    try {
+      setBusyAction('sync-flowaccount');
+      setActionError('');
+      const synced = await syncInputRequestFlowAccount(selectedRequest.request_id, {
+        override_duplicate: overrideDuplicate,
+        override_reason: overrideDuplicate ? 'Owner confirmed duplicate FlowAccount sync in Approval UI.' : null,
+      });
+      replaceRequest(synced);
+      setFlashMessage('FlowAccount sync updated.');
+    } catch (error) {
+      setActionError(error.message || 'Failed to sync FlowAccount.');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleRetryAttachment = async () => {
+    if (!selectedRequest) return;
+    try {
+      setBusyAction('retry-attachment');
+      setActionError('');
+      const updated = await retryInputRequestFlowAccountAttachment(selectedRequest.request_id);
+      replaceRequest(updated);
+      setFlashMessage('FlowAccount attachment retry finished.');
+    } catch (error) {
+      setActionError(error.message || 'Failed to retry FlowAccount attachment.');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleRetrySupplierInvoice = async () => {
+    if (!selectedRequest) return;
+    try {
+      setBusyAction('retry-supplier-invoice');
+      setActionError('');
+      const updated = await retryInputRequestFlowAccountSupplierInvoice(selectedRequest.request_id);
+      replaceRequest(updated);
+      setFlashMessage('FlowAccount Supplier Invoice retry finished.');
+    } catch (error) {
+      setActionError(error.message || 'Failed to retry Supplier Invoice.');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const handleLinkFlowAccountDocument = async () => {
+    if (!selectedRequest) return;
+    const expenseId = window.prompt('FlowAccount Expense recordId/documentId');
+    if (!expenseId?.trim()) return;
+    const documentNo = window.prompt('FlowAccount document number (optional)') || '';
+
+    try {
+      setBusyAction('link-flowaccount');
+      setActionError('');
+      const linked = await linkInputRequestFlowAccountDocument(selectedRequest.request_id, {
+        expense_id: expenseId.trim(),
+        document_no: documentNo.trim() || null,
+        external_document_id: selectedRequest.flowaccount_external_document_id || null,
+        note: editor.review_note.trim() || null,
+      });
+      replaceRequest(linked);
+      setFlashMessage('Linked existing FlowAccount document.');
+    } catch (error) {
+      setActionError(error.message || 'Failed to link FlowAccount document.');
     } finally {
       setBusyAction('');
     }
@@ -415,10 +651,33 @@ function ApprovalPage() {
 
   const projectOptions = [{ project_id: '', name: 'ทุกโครงการ' }, ...projects];
   const canMutateApprovals = canMutateAdminData(getStoredAuthUser());
-  const canEdit = canMutateApprovals && selectedRequest ? isReviewableStatus(selectedRequest.status) : false;
-  const canApprove = canEdit;
-  const canReject = canEdit;
-  const canMarkPaid = canMutateApprovals && selectedRequest?.status === 'APPROVED';
+  const hasFlowAccountDocument = Boolean(selectedRequest?.flowaccount_expense_id);
+  const canEdit = canMutateApprovals && selectedRequest ? isEditableStatus(selectedRequest.status) && !hasFlowAccountDocument : false;
+  const canApprove = canMutateApprovals && selectedRequest ? isReviewableStatus(selectedRequest.status) : false;
+  const canReject = canApprove;
+  const flowAccountEnabled = Boolean(accountingReadiness?.enabled);
+  const canSyncFlowAccount =
+    canMutateApprovals &&
+    selectedRequest?.status === 'APPROVED' &&
+    selectedRequest?.entry_type === 'EXPENSE' &&
+    (accountingReadiness?.can_sync_expense || hasFlowAccountDocument);
+  const canRetryAttachment =
+    canMutateApprovals &&
+    hasFlowAccountDocument &&
+    selectedRequest?.flowaccount_attachment_status === 'FAILED';
+  const canRetrySupplierInvoice =
+    canMutateApprovals &&
+    hasFlowAccountDocument &&
+    selectedRequest?.flowaccount_supplier_invoice_status === 'FAILED';
+  const canLinkFlowAccount =
+    canMutateApprovals &&
+    selectedRequest?.status === 'APPROVED' &&
+    selectedRequest?.entry_type === 'EXPENSE' &&
+    !hasFlowAccountDocument;
+  const canMarkPaid =
+    canMutateApprovals &&
+    selectedRequest?.status === 'APPROVED' &&
+    (!flowAccountEnabled || accountingReadiness?.can_mark_paid);
   const canPreviewReceipt = Boolean(receiptPreview?.signed_url);
   const isPreviewImage = (receiptPreview?.content_type || '').startsWith('image/');
   const isPreviewPdf = (receiptPreview?.content_type || '') === 'application/pdf';
@@ -585,6 +844,114 @@ function ApprovalPage() {
                   </div>
                 </div>
               ) : null}
+
+              <div style={{ border: '1px solid #d8cfbf', borderRadius: '16px', backgroundColor: '#fbfaf7', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
+                  <div>
+                    <strong style={{ display: 'block', marginBottom: '4px' }}>Accounting / FlowAccount</strong>
+                    <span style={{ color: '#666', fontSize: '13px' }}>
+                      {flowAccountEnabled ? 'Sandbox/production backend sync status' : 'FlowAccount integration disabled in backend config'}
+                    </span>
+                  </div>
+                  <span style={{ color: accountingReadiness?.ready ? '#13654b' : '#8b5a00', backgroundColor: accountingReadiness?.ready ? '#e6f5ec' : '#fff4de', borderRadius: '999px', padding: '5px 10px', fontSize: '12px', fontWeight: 700 }}>
+                    {accountingReadiness?.ready ? 'READY' : 'NOT READY'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', color: '#555', fontSize: '13px' }}>
+                  <div>Expense: {selectedRequest.flowaccount_sync_status || 'NOT_READY'}</div>
+                  <div>Document: {selectedRequest.flowaccount_document_no || selectedRequest.flowaccount_expense_id || '-'}</div>
+                  <div>Attachment: {selectedRequest.flowaccount_attachment_status || 'NOT_READY'}</div>
+                  <div>Supplier Invoice: {selectedRequest.flowaccount_supplier_invoice_status || 'NOT_READY'}</div>
+                  <div>Payment: {selectedRequest.flowaccount_payment_status || 'NOT_READY'}</div>
+                  <div>External ID: {accountingReadiness?.external_document_id || selectedRequest.flowaccount_external_document_id || '-'}</div>
+                </div>
+
+                {accountingReadiness?.missing_fields?.length || accountingReadiness?.errors?.length ? (
+                  <div style={{ color: '#8b5a00', backgroundColor: '#fff8e8', border: '1px solid #f0c36a', borderRadius: '12px', padding: '10px 12px', fontSize: '13px' }}>
+                    {[...(accountingReadiness?.missing_fields || []), ...(accountingReadiness?.errors || [])].join(' | ')}
+                  </div>
+                ) : null}
+
+                {[selectedRequest.flowaccount_sync_error, selectedRequest.flowaccount_attachment_error, selectedRequest.flowaccount_supplier_invoice_error, selectedRequest.flowaccount_payment_error].filter(Boolean).length ? (
+                  <div style={{ color: '#912018', backgroundColor: '#fde8e8', border: '1px solid #de5b52', borderRadius: '12px', padding: '10px 12px', fontSize: '13px' }}>
+                    {[selectedRequest.flowaccount_sync_error, selectedRequest.flowaccount_attachment_error, selectedRequest.flowaccount_supplier_invoice_error, selectedRequest.flowaccount_payment_error].filter(Boolean).join(' | ')}
+                  </div>
+                ) : null}
+
+                {canMutateApprovals ? (
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={handleSyncFlowAccount}
+                      disabled={!!busyAction || !canSyncFlowAccount}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '9px 12px',
+                        borderRadius: '12px',
+                        border: 'none',
+                        backgroundColor: '#1f6f8b',
+                        color: 'white',
+                        cursor: busyAction || !canSyncFlowAccount ? 'wait' : 'pointer',
+                        opacity: canSyncFlowAccount ? 1 : 0.55,
+                      }}
+                    >
+                      <CircleDollarSign size={15} />
+                      {busyAction === 'sync-flowaccount' ? 'Syncing...' : 'Sync FlowAccount'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleRetryAttachment}
+                      disabled={!!busyAction || !canRetryAttachment}
+                      style={{
+                        padding: '9px 12px',
+                        borderRadius: '12px',
+                        border: '1px solid #d8cfbf',
+                        backgroundColor: 'white',
+                        cursor: busyAction || !canRetryAttachment ? 'wait' : 'pointer',
+                        opacity: canRetryAttachment ? 1 : 0.55,
+                      }}
+                    >
+                      Retry Attachment
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleRetrySupplierInvoice}
+                      disabled={!!busyAction || !canRetrySupplierInvoice}
+                      style={{
+                        padding: '9px 12px',
+                        borderRadius: '12px',
+                        border: '1px solid #d8cfbf',
+                        backgroundColor: 'white',
+                        cursor: busyAction || !canRetrySupplierInvoice ? 'wait' : 'pointer',
+                        opacity: canRetrySupplierInvoice ? 1 : 0.55,
+                      }}
+                    >
+                      Retry Supplier Invoice
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleLinkFlowAccountDocument}
+                      disabled={!!busyAction || !canLinkFlowAccount}
+                      style={{
+                        padding: '9px 12px',
+                        borderRadius: '12px',
+                        border: '1px solid #d8cfbf',
+                        backgroundColor: 'white',
+                        cursor: busyAction || !canLinkFlowAccount ? 'wait' : 'pointer',
+                        opacity: canLinkFlowAccount ? 1 : 0.55,
+                      }}
+                    >
+                      Link Existing
+                    </button>
+                  </div>
+                ) : null}
+              </div>
 
               <ApprovalPaymentInstructions
                 request={selectedRequest}
@@ -765,7 +1132,7 @@ function ApprovalPage() {
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Approved Amount</span>
-                  <input type="number" style={inputStyle} value={editor.amount} onChange={handleEditorChange('amount')} disabled={!canEdit} />
+                  <input type="number" style={inputStyle} value={editor.amount} onChange={handleEditorChange('amount')} disabled />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Receipt No</span>
@@ -800,10 +1167,53 @@ function ApprovalPage() {
                   <input style={inputStyle} value={editor.vendor_name} onChange={handleEditorChange('vendor_name')} disabled={!canEdit} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>VAT Mode</span>
+                  <select style={inputStyle} value={editor.accounting_vat_mode} onChange={handleEditorChange('accounting_vat_mode')} disabled={!canEdit}>
+                    {VAT_MODE_OPTIONS.map((option) => (
+                      <option key={option.value || 'empty-vat'} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor Tax ID</span>
+                  <input style={inputStyle} value={editor.vendor_tax_id} onChange={handleEditorChange('vendor_tax_id')} disabled={!canEdit} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor Branch</span>
+                  <input style={inputStyle} value={editor.vendor_branch} onChange={handleEditorChange('vendor_branch')} disabled={!canEdit} placeholder="สำนักงานใหญ่ / 00000" />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', gridColumn: '1 / -1' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor Address</span>
+                  <input style={inputStyle} value={editor.vendor_address} onChange={handleEditorChange('vendor_address')} disabled={!canEdit} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>WHT Rate (%)</span>
+                  <input type="number" min="0" max="100" step="0.01" style={inputStyle} value={editor.accounting_wht_rate} onChange={handleEditorChange('accounting_wht_rate')} disabled={!canEdit} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Payment Reference</span>
                   <input style={inputStyle} value={editor.payment_reference} onChange={handleEditorChange('payment_reference')} disabled={!canMutateApprovals} />
                 </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Payment Date</span>
+                  <input type="date" style={inputStyle} value={editor.payment_date} onChange={handleEditorChange('payment_date')} disabled={!canMutateApprovals} />
+                </label>
               </div>
+
+              <InputLineItemsEditor
+                value={editor.line_items}
+                onChange={handleEditorLineItemsChange}
+                disabled={!canEdit}
+                entryType={selectedRequest.entry_type}
+                workTypeOptions={WORK_TYPE_OPTIONS.filter((option) => option.value)}
+                requestTypeOptions={REQUEST_TYPE_OPTIONS.filter((option) => option.value)}
+                fallbackWorkType={editor.work_type}
+                fallbackRequestType={editor.request_type}
+                title="Line Items"
+                subtitle="แก้ไขรายการจาก OCR ก่อนบันทึกหรืออนุมัติ"
+              />
 
               <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <span style={{ fontSize: '13px', fontWeight: '600' }}>Submission Note</span>
@@ -932,6 +1342,10 @@ function ApprovalPage() {
                   <div>Account Name: {selectedRequest.account_name || selectedRequest.bank_account?.account_name || '-'}</div>
                   <div>Receipt No: {selectedRequest.receipt_no || '-'}</div>
                   <div>Document Date: {selectedRequest.document_date || '-'}</div>
+                  <div>VAT Mode: {selectedRequest.accounting_vat_mode || '-'}</div>
+                  <div>WHT Rate: {selectedRequest.accounting_wht_rate ?? '-'}</div>
+                  <div>Vendor Tax ID: {selectedRequest.vendor_tax_id || '-'}</div>
+                  <div>Vendor Branch: {selectedRequest.vendor_branch || '-'}</div>
                   <div>Receipt File: {selectedRequest.receipt_file_name || '-'}</div>
                   <div>Reviewed At: {selectedRequest.reviewed_at || '-'}</div>
                   <div>Paid At: {selectedRequest.paid_at || '-'}</div>

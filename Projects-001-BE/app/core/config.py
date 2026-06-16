@@ -65,6 +65,29 @@ class Settings(BaseSettings):
     embedding_model: str = Field(default="text-embedding-004", alias="EMBEDDING_MODEL")
     boq_batch_sync_max_tabs: int = Field(default=3, alias="BOQ_BATCH_SYNC_MAX_TABS")
 
+    flowaccount_enabled: bool = Field(default=False, alias="FLOWACCOUNT_ENABLED")
+    flowaccount_base_url: str = Field(
+        default="https://openapi.flowaccount.com/test",
+        alias="FLOWACCOUNT_BASE_URL",
+    )
+    flowaccount_client_id: str | None = Field(default=None, alias="FLOWACCOUNT_CLIENT_ID")
+    flowaccount_client_secret: str | None = Field(default=None, alias="FLOWACCOUNT_CLIENT_SECRET")
+    flowaccount_scope: str = Field(default="flowaccount-api", alias="FLOWACCOUNT_SCOPE")
+    flowaccount_token_cache_seconds: int = Field(default=84000, alias="FLOWACCOUNT_TOKEN_CACHE_SECONDS")
+    flowaccount_timeout_seconds: float = Field(default=20.0, alias="FLOWACCOUNT_TIMEOUT_SECONDS")
+    flowaccount_default_payment_method: str = Field(
+        default="transfer",
+        alias="FLOWACCOUNT_DEFAULT_PAYMENT_METHOD",
+    )
+    flowaccount_default_bank_account_id: str | None = Field(
+        default=None,
+        alias="FLOWACCOUNT_DEFAULT_BANK_ACCOUNT_ID",
+    )
+    flowaccount_expense_category_mapping_json: str | None = Field(
+        default=None,
+        alias="FLOWACCOUNT_EXPENSE_CATEGORY_MAPPING_JSON",
+    )
+
     admin_email_domain: str | None = Field(default=None, alias="ADMIN_EMAIL_DOMAIN")
     admin_emails: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="ADMIN_EMAILS")
 
@@ -97,6 +120,26 @@ class Settings(BaseSettings):
         if "@" in cleaned:
             return cleaned.split("@", 1)[1]
         return cleaned
+
+    @field_validator("flowaccount_base_url", mode="before")
+    @classmethod
+    def _normalize_flowaccount_base_url(cls, value: object) -> str:
+        cleaned = str(value or "https://openapi.flowaccount.com/test").strip()
+        return cleaned.rstrip("/")
+
+    @field_validator(
+        "flowaccount_client_id",
+        "flowaccount_client_secret",
+        "flowaccount_default_bank_account_id",
+        "flowaccount_expense_category_mapping_json",
+        mode="before",
+    )
+    @classmethod
+    def _clean_flowaccount_optional_text(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
 
     @property
     def is_development(self) -> bool:

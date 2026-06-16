@@ -252,6 +252,20 @@ async def generate_signed_url_for_storage_key(
     )
 
 
+def _download_storage_key_bytes_sync(storage_key: str) -> bytes:
+    bucket_name, object_name = _parse_gs_storage_key(storage_key)
+    client = _require_storage_client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(object_name)
+    if not blob.exists(client):
+        raise FileNotFoundError(f"Object not found in GCS: {storage_key}")
+    return blob.download_as_bytes()
+
+
+async def download_storage_key_bytes(storage_key: str) -> bytes:
+    return await asyncio.to_thread(_download_storage_key_bytes_sync, storage_key)
+
+
 def _list_temp_receipt_objects_sync() -> list[dict[str, object]]:
     bucket_name = get_default_bucket_name()
     client = _require_storage_client()

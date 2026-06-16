@@ -80,6 +80,10 @@ if [[ -n "${BACKEND_CLOUDSQL_INSTANCE:-}" ]]; then
   DEPLOY_ARGS+=(--add-cloudsql-instances "${BACKEND_CLOUDSQL_INSTANCE}")
 fi
 
+if [[ -n "${BACKEND_SECRET_ENV_VARS:-}" ]]; then
+  DEPLOY_ARGS+=(--update-secrets "${BACKEND_SECRET_ENV_VARS}")
+fi
+
 if [[ -n "${BACKEND_MEMORY:-}" ]]; then
   DEPLOY_ARGS+=(--memory "${BACKEND_MEMORY}")
 fi

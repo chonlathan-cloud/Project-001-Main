@@ -3,7 +3,7 @@
 from app.models.boq import BOQItem, Project
 from app.models.chat_history import ChatHistory
 from app.models.finance import Installment, Transaction
-from app.models.input_request import InputOptionSuggestion, InputRequest
+from app.models.input_request import InputOptionSuggestion, InputRequest, InputRequestLineItem
 
 __all__ = [
     "Project",
@@ -11,6 +11,7 @@ __all__ = [
     "Installment",
     "Transaction",
     "InputRequest",
+    "InputRequestLineItem",
     "InputOptionSuggestion",
     "ChatHistory",
 ]

@@ -78,7 +78,7 @@ Return data for the following JSON object:
 - document_date: document date in YYYY-MM-DD if a reliable date is visible, otherwise null
 - suggested_request_type: one of ["ค่าวัสดุ", "ค่าแรง", "ค่าเบิกล่วงหน้า", "ค่าใช้จ่ายทั่วไป"] or null
 - total_amount: final payable/received amount as number if visible, otherwise 0
-- items: up to 10 line items with description, qty, price
+- items: up to 10 line items with description, qty, price, amount
 - low_confidence_fields: list of field names that are visible but uncertain. Use only these names:
   ["suggested_entry_type", "vendor_name", "receipt_no", "document_date", "suggested_request_type", "total_amount", "items"]
 - message: short Thai message summarising whether the extraction is complete or partial
@@ -93,7 +93,8 @@ Rules:
 - If the document looks like a purchase or expense receipt, set suggested_entry_type to "EXPENSE".
 - If it clearly shows money received by the user/company, set suggested_entry_type to "INCOME".
 - total_amount must be numeric only, with no currency symbols.
-- items[].qty and items[].price must be numeric when available; otherwise use 0.
+- items[].qty, items[].price, and items[].amount must be numeric when available; otherwise use 0.
+- If a line total is visible, set items[].amount to that line total. If only qty and unit price are visible, set amount = qty * price.
 - If a field is missing entirely, keep it null/0 and do not include it in low_confidence_fields.
 - Return only valid JSON. No markdown.
 """
@@ -115,6 +116,7 @@ RECEIPT_OCR_RESPONSE_SCHEMA = {
                     "description": {"type": "STRING"},
                     "qty": {"type": "NUMBER", "nullable": True},
                     "price": {"type": "NUMBER", "nullable": True},
+                    "amount": {"type": "NUMBER", "nullable": True},
                 },
                 "required": ["description"],
             },
@@ -290,11 +292,20 @@ async def extract_receipt_data_with_gemini(
                 continue
             qty = item.get("qty")
             price = item.get("price")
+            amount = item.get("amount")
+            normalized_qty = float(qty) if qty is not None else 0
+            normalized_price = float(price) if price is not None else 0
+            normalized_amount = (
+                float(amount)
+                if amount is not None
+                else round(normalized_qty * normalized_price, 2)
+            )
             normalized_items.append(
                 {
                     "description": description,
-                    "qty": float(qty) if qty is not None else 0,
-                    "price": float(price) if price is not None else 0,
+                    "qty": normalized_qty,
+                    "price": normalized_price,
+                    "amount": normalized_amount,
                 }
             )
 

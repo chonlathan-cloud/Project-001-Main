@@ -10,6 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ENTRY_TYPE_VALUES = {"EXPENSE", "INCOME"}
+ACCOUNTING_VAT_MODE_VALUES = {"no_vat", "vat_inclusive", "vat_exclusive"}
 DEFAULT_WORK_TYPE_OPTIONS = [
     "งานโครงสร้าง",
     "งานสถาปัตย์",
@@ -77,6 +78,17 @@ def _normalize_tags(value: object) -> list[str]:
     return normalized
 
 
+def _to_money(value: object) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _line_items_total(line_items: list["InputRequestLineItemPayload"]) -> float:
+    return round(sum(_to_money(item.amount) for item in line_items), 2)
+
+
 def _normalize_date_value(value: object) -> date | None:
     if value in (None, ""):
         return None
@@ -115,6 +127,59 @@ class BankAccountPayload(BaseModel):
         return _clean_optional_text(value)
 
 
+class InputRequestLineItemPayload(BaseModel):
+    id: UUID | None = None
+    description: str = Field(..., min_length=1)
+    qty: float = Field(default=1, gt=0)
+    unit_price: float = 0
+    amount: float | None = None
+    work_type: str | None = None
+    request_type: str | None = None
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("line item description is required.")
+        return cleaned
+
+    @field_validator("work_type", mode="before")
+    @classmethod
+    def validate_work_type(cls, value: str | None) -> str | None:
+        return _normalize_work_type(value)
+
+    @field_validator("request_type", mode="before")
+    @classmethod
+    def validate_request_type(cls, value: str | None) -> str | None:
+        normalized = _normalize_request_type(value)
+        if normalized is None:
+            return None
+        if normalized not in REQUEST_TYPE_VALUES:
+            raise ValueError("Unsupported line item request_type.")
+        return normalized
+
+    @model_validator(mode="after")
+    def derive_amount(self) -> "InputRequestLineItemPayload":
+        if self.amount is None:
+            self.amount = round(float(self.qty or 0) * float(self.unit_price or 0), 2)
+        else:
+            self.amount = _to_money(self.amount)
+        self.unit_price = _to_money(self.unit_price)
+        return self
+
+
+class InputRequestLineItemItem(BaseModel):
+    id: UUID | None = None
+    line_no: int
+    description: str
+    qty: float
+    unit_price: float
+    amount: float
+    work_type: str | None = None
+    request_type: str | None = None
+
+
 class ProjectOptionItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -149,7 +214,8 @@ class InputRequestCreate(BaseModel):
     receipt_no: str | None = None
     document_date: date | None = None
     bank_account: BankAccountPayload = Field(default_factory=BankAccountPayload)
-    amount: float = Field(..., gt=0)
+    amount: float | None = Field(default=None, gt=0)
+    line_items: list[InputRequestLineItemPayload] = Field(default_factory=list)
     receipt_file_name: str | None = None
     receipt_content_type: str | None = None
     receipt_storage_key: str | None = None
@@ -214,15 +280,30 @@ class InputRequestCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_business_rules(self) -> "InputRequestCreate":
+        if self.line_items:
+            total_amount = _line_items_total(self.line_items)
+            if total_amount <= 0:
+                raise ValueError("line_items total amount must be greater than 0.")
+            self.amount = total_amount
+        elif self.amount is None or self.amount <= 0:
+            raise ValueError("amount is required when line_items are not provided.")
+
         if self.entry_type == "INCOME":
             self.work_type = None
             self.request_type = None
+            for item in self.line_items:
+                item.work_type = None
+                item.request_type = None
             if not self.tags:
                 raise ValueError("INCOME requests require at least 1 tag.")
             return self
 
         if self.request_type == "ค่าเบิกล่วงหน้า" and self.entry_type != "EXPENSE":
             raise ValueError("ค่าเบิกล่วงหน้า ใช้ได้เฉพาะรายการรายจ่ายเท่านั้น.")
+
+        for item in self.line_items:
+            if item.request_type == "ค่าเบิกล่วงหน้า" and self.entry_type != "EXPENSE":
+                raise ValueError("ค่าเบิกล่วงหน้า ใช้ได้เฉพาะรายการรายจ่ายเท่านั้น.")
         return self
 
     @field_validator("ocr_raw_json")
@@ -263,11 +344,17 @@ class InputRequestItem(BaseModel):
     tags: list[str] = Field(default_factory=list)
     note: str | None = None
     vendor_name: str | None = None
+    vendor_tax_id: str | None = None
+    vendor_branch: str | None = None
+    vendor_address: str | None = None
     receipt_no: str | None = None
     document_date: date | None = None
+    accounting_vat_mode: str | None = None
+    accounting_wht_rate: float | None = None
     bank_account: BankAccountPayload
     amount: float
     approved_amount: float | None = None
+    line_items: list[InputRequestLineItemItem] = Field(default_factory=list)
     receipt_file_name: str | None = None
     receipt_content_type: str | None = None
     receipt_storage_key: str | None = None
@@ -282,6 +369,26 @@ class InputRequestItem(BaseModel):
     approved_at: datetime | None = None
     paid_at: datetime | None = None
     payment_reference: str | None = None
+    accounting_ready: bool = False
+    accounting_readiness_errors: list[str] = Field(default_factory=list)
+    flowaccount_sync_status: str = "NOT_READY"
+    flowaccount_expense_id: str | None = None
+    flowaccount_document_no: str | None = None
+    flowaccount_external_document_id: str | None = None
+    flowaccount_synced_at: datetime | None = None
+    flowaccount_sync_error: str | None = None
+    flowaccount_attachment_status: str = "NOT_READY"
+    flowaccount_attachment_error: str | None = None
+    flowaccount_attachment_synced_at: datetime | None = None
+    flowaccount_supplier_invoice_status: str = "NOT_READY"
+    flowaccount_supplier_invoice_error: str | None = None
+    flowaccount_supplier_invoice_id: str | None = None
+    flowaccount_supplier_invoice_synced_at: datetime | None = None
+    flowaccount_payment_status: str = "NOT_READY"
+    flowaccount_payment_error: str | None = None
+    flowaccount_payment_synced_at: datetime | None = None
+    flowaccount_linked_manually: bool = False
+    flowaccount_duplicate_override_reason: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
 
@@ -313,10 +420,16 @@ class InputRequestAdminUpdate(BaseModel):
     tags: list[str] | None = None
     note: str | None = None
     vendor_name: str | None = None
+    vendor_tax_id: str | None = None
+    vendor_branch: str | None = None
+    vendor_address: str | None = None
     receipt_no: str | None = None
     document_date: date | None = None
+    accounting_vat_mode: str | None = None
+    accounting_wht_rate: float | None = Field(default=None, ge=0, le=100)
     bank_account: BankAccountPayload | None = None
     amount: float | None = Field(default=None, gt=0)
+    line_items: list[InputRequestLineItemPayload] | None = None
 
     @field_validator("requester_name")
     @classmethod
@@ -328,10 +441,30 @@ class InputRequestAdminUpdate(BaseModel):
             raise ValueError("requester_name is required.")
         return cleaned
 
-    @field_validator("subcontractor_id", "phone", "note", "vendor_name", "receipt_no", mode="before")
+    @field_validator(
+        "subcontractor_id",
+        "phone",
+        "note",
+        "vendor_name",
+        "vendor_tax_id",
+        "vendor_branch",
+        "vendor_address",
+        "receipt_no",
+        "accounting_vat_mode",
+        mode="before",
+    )
     @classmethod
     def clean_optional_text_fields(cls, value: str | None) -> str | None:
         return _clean_optional_text(value)
+
+    @field_validator("accounting_vat_mode")
+    @classmethod
+    def validate_accounting_vat_mode(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ACCOUNTING_VAT_MODE_VALUES:
+            raise ValueError("accounting_vat_mode must be no_vat, vat_inclusive, or vat_exclusive.")
+        return value
 
     @field_validator("work_type", mode="before")
     @classmethod
@@ -360,15 +493,40 @@ class InputRequestAdminUpdate(BaseModel):
             return None
         return _normalize_tags(value)
 
+    @model_validator(mode="after")
+    def validate_line_items_total(self) -> "InputRequestAdminUpdate":
+        if self.line_items is None:
+            return self
+        if not self.line_items:
+            raise ValueError("line_items cannot be empty when provided.")
+        total_amount = _line_items_total(self.line_items)
+        if total_amount <= 0:
+            raise ValueError("line_items total amount must be greater than 0.")
+        self.amount = total_amount
+        return self
+
 
 class InputRequestApproveAction(BaseModel):
     approved_amount: float | None = Field(default=None, gt=0)
+    line_items: list[InputRequestLineItemPayload] | None = None
     review_note: str | None = None
 
     @field_validator("review_note", mode="before")
     @classmethod
     def clean_review_note(cls, value: str | None) -> str | None:
         return _clean_optional_text(value)
+
+    @model_validator(mode="after")
+    def validate_line_items_total(self) -> "InputRequestApproveAction":
+        if self.line_items is None:
+            return self
+        if not self.line_items:
+            raise ValueError("line_items cannot be empty when provided.")
+        total_amount = _line_items_total(self.line_items)
+        if total_amount <= 0:
+            raise ValueError("line_items total amount must be greater than 0.")
+        self.approved_amount = total_amount
+        return self
 
 
 class InputRequestRejectAction(BaseModel):
@@ -385,6 +543,7 @@ class InputRequestRejectAction(BaseModel):
 
 class InputRequestMarkPaidAction(BaseModel):
     payment_reference: str | None = None
+    payment_date: date | None = None
     review_note: str | None = None
 
     @field_validator("payment_reference", "review_note", mode="before")
@@ -392,11 +551,58 @@ class InputRequestMarkPaidAction(BaseModel):
     def clean_optional_text_fields(cls, value: str | None) -> str | None:
         return _clean_optional_text(value)
 
+    @field_validator("payment_date", mode="before")
+    @classmethod
+    def validate_payment_date(cls, value: object) -> date | None:
+        return _normalize_date_value(value)
+
+
+class FlowAccountReadinessResponse(BaseModel):
+    enabled: bool
+    ready: bool
+    can_sync_expense: bool
+    can_sync_attachment: bool
+    can_sync_supplier_invoice: bool
+    can_mark_paid: bool
+    missing_fields: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    external_document_id: str
+
+
+class FlowAccountSyncAction(BaseModel):
+    override_duplicate: bool = False
+    override_reason: str | None = None
+
+    @field_validator("override_reason", mode="before")
+    @classmethod
+    def clean_override_reason(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value)
+
+
+class FlowAccountLinkExistingAction(BaseModel):
+    expense_id: str = Field(..., min_length=1)
+    document_no: str | None = None
+    external_document_id: str | None = None
+    note: str | None = None
+
+    @field_validator("expense_id", "document_no", "external_document_id", "note", mode="before")
+    @classmethod
+    def clean_text_fields(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value)
+
+    @field_validator("expense_id")
+    @classmethod
+    def validate_expense_id(cls, value: str | None) -> str:
+        if not value:
+            raise ValueError("expense_id is required.")
+        return value
+
 
 class ReceiptExtractItem(BaseModel):
     description: str
     qty: float
     price: float
+    amount: float = 0.0
 
 
 class ReceiptExtractResponse(BaseModel):

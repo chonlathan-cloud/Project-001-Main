@@ -1,0 +1,4 @@
+interface:
+  display_name: "FlowAccount Integration"
+  short_description: "FlowAccount expense and VAT sync"
+  default_prompt: "Use $flowaccount-integration to plan or implement safe FlowAccount accounting sync."

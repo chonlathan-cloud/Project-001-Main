@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import noload
+from sqlalchemy.orm import noload, selectinload
 
 from app.api.deps.auth import (
     AuthenticatedUser,
@@ -25,16 +25,21 @@ from app.api.deps.auth import (
 )
 from app.core.database import get_db
 from app.models.boq import Project
-from app.models.input_request import InputOptionSuggestion, InputRequest
+from app.models.input_request import InputOptionSuggestion, InputRequest, InputRequestLineItem
 from app.schemas.input_schema import (
     BankAccountPayload,
     DEFAULT_WORK_TYPE_OPTIONS,
+    FlowAccountLinkExistingAction,
+    FlowAccountReadinessResponse,
+    FlowAccountSyncAction,
     InputDefaultValuesResponse,
     InputRequestAdminSummaryResponse,
     InputRequestAdminUpdate,
     InputRequestApproveAction,
     InputRequestCreate,
     InputRequestItem,
+    InputRequestLineItemItem,
+    InputRequestLineItemPayload,
     InputRequestMarkPaidAction,
     InputRequestRejectAction,
     InputRequestStatusSummaryItem,
@@ -46,11 +51,24 @@ from app.schemas.input_schema import (
 )
 from app.schemas.responses import StandardResponse
 from app.services.gcs_storage_service import (
+    download_storage_key_bytes,
     generate_signed_url_for_storage_key,
     move_input_receipt_to_perm_storage,
     upload_input_receipt_to_temp_storage,
 )
 from app.services.ai_service import extract_receipt_data_with_gemini
+from app.services.flowaccount_service import (
+    FlowAccountError,
+    FlowAccountReadiness,
+    FlowAccountService,
+    apply_readiness_to_request,
+    flowaccount_document_data,
+    flowaccount_document_no,
+    flowaccount_external_document_id,
+    flowaccount_readiness,
+    flowaccount_record_id,
+    is_flowaccount_configured,
+)
 from app.services.identity_service import get_subcontractor
 from app.services.input_receipt_cleanup_service import cleanup_orphan_temp_receipts
 
@@ -82,6 +100,10 @@ def _money_value(value: object) -> float:
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _decimal_money(value: object) -> Decimal:
+    return Decimal(str(round(_money_value(value), 2)))
 
 
 def _clean_unique_text_values(values: list[str] | None) -> list[str]:
@@ -117,6 +139,49 @@ def _validate_request_business_rules(*, entry_type: str, request_type: str | Non
         )
 
 
+def _line_item_total(line_items: list[InputRequestLineItemPayload]) -> Decimal:
+    return sum((_decimal_money(item.amount) for item in line_items), Decimal("0"))
+
+
+def _build_line_item_records(
+    line_items: list[InputRequestLineItemPayload],
+    *,
+    entry_type: str,
+    fallback_work_type: str | None = None,
+    fallback_request_type: str | None = None,
+) -> list[InputRequestLineItem]:
+    records: list[InputRequestLineItem] = []
+    is_income = entry_type == "INCOME"
+
+    for index, item in enumerate(line_items, start=1):
+        records.append(
+            InputRequestLineItem(
+                line_no=index,
+                description=item.description.strip(),
+                qty=Decimal(str(item.qty)),
+                unit_price=_decimal_money(item.unit_price),
+                amount=_decimal_money(item.amount),
+                work_type=None if is_income else _clean_optional_text(item.work_type or fallback_work_type),
+                request_type=None if is_income else _clean_optional_text(item.request_type or fallback_request_type),
+            )
+        )
+
+    return records
+
+
+def _serialize_line_item(item: InputRequestLineItem) -> InputRequestLineItemItem:
+    return InputRequestLineItemItem(
+        id=item.id,
+        line_no=item.line_no,
+        description=item.description,
+        qty=float(item.qty or 0),
+        unit_price=float(item.unit_price or 0),
+        amount=float(item.amount or 0),
+        work_type=item.work_type,
+        request_type=item.request_type,
+    )
+
+
 def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequestItem:
     return InputRequestItem(
         request_id=item.id,
@@ -132,8 +197,13 @@ def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequ
         tags=_request_tags(item.tags),
         note=item.note,
         vendor_name=item.vendor_name,
+        vendor_tax_id=item.vendor_tax_id,
+        vendor_branch=item.vendor_branch,
+        vendor_address=item.vendor_address,
         receipt_no=item.receipt_no,
         document_date=item.document_date,
+        accounting_vat_mode=item.accounting_vat_mode,
+        accounting_wht_rate=float(item.accounting_wht_rate) if item.accounting_wht_rate is not None else None,
         bank_account=BankAccountPayload(
             bank_name=item.bank_name,
             account_no=item.account_no,
@@ -141,6 +211,13 @@ def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequ
         ),
         amount=float(item.amount or 0),
         approved_amount=float(item.approved_amount) if item.approved_amount is not None else None,
+        line_items=[
+            _serialize_line_item(line_item)
+            for line_item in sorted(
+                item.line_items or [],
+                key=lambda line_item: (line_item.line_no or 0, str(line_item.id or "")),
+            )
+        ],
         receipt_file_name=item.receipt_file_name,
         receipt_content_type=item.receipt_content_type,
         receipt_storage_key=item.receipt_storage_key,
@@ -155,6 +232,26 @@ def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequ
         approved_at=item.approved_at,
         paid_at=item.paid_at,
         payment_reference=item.payment_reference,
+        accounting_ready=bool(item.accounting_ready),
+        accounting_readiness_errors=item.accounting_readiness_errors or [],
+        flowaccount_sync_status=item.flowaccount_sync_status or "NOT_READY",
+        flowaccount_expense_id=item.flowaccount_expense_id,
+        flowaccount_document_no=item.flowaccount_document_no,
+        flowaccount_external_document_id=item.flowaccount_external_document_id,
+        flowaccount_synced_at=item.flowaccount_synced_at,
+        flowaccount_sync_error=item.flowaccount_sync_error,
+        flowaccount_attachment_status=item.flowaccount_attachment_status or "NOT_READY",
+        flowaccount_attachment_error=item.flowaccount_attachment_error,
+        flowaccount_attachment_synced_at=item.flowaccount_attachment_synced_at,
+        flowaccount_supplier_invoice_status=item.flowaccount_supplier_invoice_status or "NOT_READY",
+        flowaccount_supplier_invoice_error=item.flowaccount_supplier_invoice_error,
+        flowaccount_supplier_invoice_id=item.flowaccount_supplier_invoice_id,
+        flowaccount_supplier_invoice_synced_at=item.flowaccount_supplier_invoice_synced_at,
+        flowaccount_payment_status=item.flowaccount_payment_status or "NOT_READY",
+        flowaccount_payment_error=item.flowaccount_payment_error,
+        flowaccount_payment_synced_at=item.flowaccount_payment_synced_at,
+        flowaccount_linked_manually=bool(item.flowaccount_linked_manually),
+        flowaccount_duplicate_override_reason=item.flowaccount_duplicate_override_reason,
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
@@ -162,6 +259,67 @@ def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequ
 
 def _reviewable_status(status_value: str) -> bool:
     return status_value in {"DRAFT", "PENDING_ADMIN", "REJECTED"}
+
+
+def _editable_status(status_value: str) -> bool:
+    return status_value in {"DRAFT", "PENDING_ADMIN", "REJECTED", "APPROVED"}
+
+
+def _readiness_response(readiness: FlowAccountReadiness) -> FlowAccountReadinessResponse:
+    return FlowAccountReadinessResponse(
+        enabled=readiness.enabled,
+        ready=readiness.ready,
+        can_sync_expense=readiness.can_sync_expense,
+        can_sync_attachment=readiness.can_sync_attachment,
+        can_sync_supplier_invoice=readiness.can_sync_supplier_invoice,
+        can_mark_paid=readiness.can_mark_paid,
+        missing_fields=readiness.missing_fields,
+        errors=readiness.errors,
+        external_document_id=readiness.external_document_id,
+    )
+
+
+def _expense_id_from_request(input_request: InputRequest) -> str:
+    expense_id = _clean_optional_text(input_request.flowaccount_expense_id)
+    if not expense_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="FlowAccount expense id is required before this action.",
+        )
+    return expense_id
+
+
+async def _refresh_accounting_readiness(
+    db: AsyncSession,
+    input_request: InputRequest,
+    project_name: str | None,
+) -> FlowAccountReadiness:
+    readiness = flowaccount_readiness(input_request, project_name=project_name)
+    apply_readiness_to_request(input_request, readiness)
+    await db.flush()
+    return readiness
+
+
+async def _download_request_receipt(input_request: InputRequest) -> bytes:
+    if not input_request.receipt_storage_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Receipt file is required before syncing to FlowAccount.",
+        )
+    try:
+        return await download_storage_key_bytes(input_request.receipt_storage_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Receipt file was not found in storage.",
+        ) from exc
+
+
+def _apply_flowaccount_document_result(input_request: InputRequest, payload: dict) -> None:
+    input_request.flowaccount_expense_id = flowaccount_record_id(payload) or input_request.flowaccount_expense_id
+    input_request.flowaccount_document_no = flowaccount_document_no(payload) or input_request.flowaccount_document_no
+    input_request.flowaccount_sync_error = None
+    input_request.flowaccount_synced_at = datetime.now(timezone.utc)
 
 
 def _resolve_subcontractor_id_for_create(
@@ -310,6 +468,7 @@ async def _get_input_request_with_project(
         await db.execute(
             select(InputRequest, Project.name)
             .join(Project, Project.id == InputRequest.project_id)
+            .options(selectinload(InputRequest.line_items))
             .filter(InputRequest.id == request_id)
         )
     ).first()
@@ -674,6 +833,11 @@ async def create_input_request(
         stored_work_type = None if request.entry_type == "INCOME" else _clean_optional_text(request.work_type)
         stored_request_type = None if request.entry_type == "INCOME" else _clean_optional_text(request.request_type)
         stored_tags = _request_tags(request.tags)
+        stored_amount = (
+            _line_item_total(request.line_items)
+            if request.line_items
+            else Decimal(str(request.amount))
+        )
 
         record = InputRequest(
             project_id=request.project_id,
@@ -692,7 +856,7 @@ async def create_input_request(
             bank_name=_clean_optional_text(request.bank_account.bank_name),
             account_no=_clean_optional_text(request.bank_account.account_no),
             account_name=_clean_optional_text(request.bank_account.account_name),
-            amount=Decimal(str(request.amount)),
+            amount=stored_amount,
             receipt_file_name=_clean_optional_text(request.receipt_file_name),
             receipt_content_type=_clean_optional_text(request.receipt_content_type),
             receipt_storage_key=_clean_optional_text(request.receipt_storage_key),
@@ -700,11 +864,25 @@ async def create_input_request(
             ocr_low_confidence_fields=request.ocr_low_confidence_fields,
             status="PENDING_ADMIN",
         )
+        if request.line_items:
+            record.line_items = _build_line_item_records(
+                request.line_items,
+                entry_type=request.entry_type,
+                fallback_work_type=stored_work_type,
+                fallback_request_type=stored_request_type,
+            )
         db.add(record)
         await db.flush()
         await _apply_duplicate_detection(db, record, exclude_request_id=record.id)
         if stored_work_type:
             await _upsert_option_suggestions(db, OPTION_TYPE_WORK_TYPE, [stored_work_type])
+        line_item_work_types = [
+            line_item.work_type
+            for line_item in record.line_items or []
+            if line_item.work_type
+        ]
+        if line_item_work_types:
+            await _upsert_option_suggestions(db, OPTION_TYPE_WORK_TYPE, line_item_work_types)
         if stored_tags:
             await _upsert_option_suggestions(db, OPTION_TYPE_TAG, stored_tags)
         await db.commit()
@@ -736,7 +914,7 @@ async def list_input_requests(
         query = (
             select(InputRequest, Project.name)
             .join(Project, Project.id == InputRequest.project_id)
-            .options(noload("*"))
+            .options(selectinload(InputRequest.line_items), noload(InputRequest.project))
             .order_by(InputRequest.created_at.desc())
         )
         query = _filter_input_requests_for_user(query, user)
@@ -775,6 +953,7 @@ async def list_admin_input_requests(
         query = (
             select(InputRequest, Project.name)
             .join(Project, Project.id == InputRequest.project_id)
+            .options(selectinload(InputRequest.line_items), noload(InputRequest.project))
             .order_by(InputRequest.created_at.desc())
         )
 
@@ -894,13 +1073,24 @@ async def update_admin_input_request(
     try:
         input_request, project_name = await _get_input_request_with_project(db, request_id)
 
-        if not _reviewable_status(input_request.status):
+        if not _editable_status(input_request.status):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Input request in status '{input_request.status}' can no longer be edited.",
             )
+        if input_request.status == "APPROVED" and input_request.flowaccount_payment_status == "PAYMENT_SYNCED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Input request can no longer be edited after FlowAccount payment sync.",
+            )
+        if input_request.status == "APPROVED" and input_request.flowaccount_expense_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Input request can no longer be edited after a FlowAccount document is linked or created.",
+            )
 
-        updates = request.model_dump(exclude_none=True)
+        line_item_updates = request.line_items
+        updates = request.model_dump(exclude_none=True, exclude={"line_items"})
         if not updates:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -920,14 +1110,28 @@ async def update_admin_input_request(
                 input_request.amount = Decimal(str(value))
             elif field == "receipt_no":
                 input_request.receipt_no = _normalize_receipt_no(value)
+            elif field == "accounting_wht_rate":
+                input_request.accounting_wht_rate = Decimal(str(value)) if value is not None else None
             elif isinstance(value, str):
                 setattr(input_request, field, _clean_optional_text(value))
             else:
                 setattr(input_request, field, value)
 
+        if line_item_updates is not None:
+            input_request.line_items = _build_line_item_records(
+                line_item_updates,
+                entry_type=input_request.entry_type,
+                fallback_work_type=input_request.work_type,
+                fallback_request_type=input_request.request_type,
+            )
+            input_request.amount = _line_item_total(line_item_updates)
+
         if input_request.entry_type == "INCOME":
             input_request.work_type = None
             input_request.request_type = None
+            for line_item in input_request.line_items or []:
+                line_item.work_type = None
+                line_item.request_type = None
             if "tags" in updates and not _request_tags(input_request.tags):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -942,8 +1146,17 @@ async def update_admin_input_request(
         await _apply_duplicate_detection(db, input_request, exclude_request_id=input_request.id)
         if input_request.work_type:
             await _upsert_option_suggestions(db, OPTION_TYPE_WORK_TYPE, [input_request.work_type])
+        line_item_work_types = [
+            line_item.work_type
+            for line_item in input_request.line_items or []
+            if line_item.work_type
+        ]
+        if line_item_work_types:
+            await _upsert_option_suggestions(db, OPTION_TYPE_WORK_TYPE, line_item_work_types)
         if input_request.tags:
             await _upsert_option_suggestions(db, OPTION_TYPE_TAG, _request_tags(input_request.tags))
+        if input_request.status == "APPROVED":
+            await _refresh_accounting_readiness(db, input_request, project_name)
         await db.commit()
         await db.refresh(input_request)
 
@@ -985,6 +1198,15 @@ async def approve_admin_input_request(
             )
 
         now = datetime.now(timezone.utc)
+        if request.line_items is not None:
+            input_request.line_items = _build_line_item_records(
+                request.line_items,
+                entry_type=input_request.entry_type,
+                fallback_work_type=input_request.work_type,
+                fallback_request_type=input_request.request_type,
+            )
+            input_request.amount = _line_item_total(request.line_items)
+            approved_amount = float(input_request.amount or 0)
         input_request.approved_amount = Decimal(str(approved_amount))
         input_request.review_note = (request.review_note or "").strip() or None
         input_request.receipt_storage_key = await move_input_receipt_to_perm_storage(
@@ -995,6 +1217,15 @@ async def approve_admin_input_request(
         input_request.reviewed_at = now
         input_request.approved_at = now
 
+        await _apply_duplicate_detection(db, input_request, exclude_request_id=input_request.id)
+        line_item_work_types = [
+            line_item.work_type
+            for line_item in input_request.line_items or []
+            if line_item.work_type
+        ]
+        if line_item_work_types:
+            await _upsert_option_suggestions(db, OPTION_TYPE_WORK_TYPE, line_item_work_types)
+        await _refresh_accounting_readiness(db, input_request, project_name)
         await db.commit()
         await db.refresh(input_request)
 
@@ -1050,6 +1281,295 @@ async def reject_admin_input_request(
         ) from exc
 
 
+@router.get(
+    "/admin/requests/{request_id}/accounting-readiness",
+    response_model=StandardResponse[FlowAccountReadinessResponse],
+)
+async def get_input_request_accounting_readiness(
+    request_id: UUID,
+    _user: AuthenticatedUser = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        input_request, project_name = await _get_input_request_with_project(db, request_id)
+        readiness = await _refresh_accounting_readiness(db, input_request, project_name)
+        await db.commit()
+        return StandardResponse(data=_readiness_response(readiness))
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check accounting readiness: {exc}",
+        ) from exc
+
+
+@router.post("/admin/requests/{request_id}/sync-flowaccount", response_model=StandardResponse[InputRequestItem])
+async def sync_input_request_to_flowaccount(
+    request_id: UUID,
+    request: FlowAccountSyncAction,
+    _user: AuthenticatedUser = Depends(require_owner_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        input_request, project_name = await _get_input_request_with_project(db, request_id)
+
+        if input_request.is_duplicate_flag and not input_request.flowaccount_duplicate_override_reason:
+            if not request.override_duplicate:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Duplicate-flagged requests require Owner confirmation before FlowAccount sync.",
+                )
+            input_request.flowaccount_duplicate_override_reason = (
+                request.override_reason or "Owner confirmed duplicate FlowAccount sync in Approval."
+            )
+
+        readiness = await _refresh_accounting_readiness(db, input_request, project_name)
+        if not readiness.can_sync_expense:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="FlowAccount sync is not ready: " + "; ".join(readiness.missing_fields + readiness.errors),
+            )
+
+        service = FlowAccountService()
+        now = datetime.now(timezone.utc)
+
+        if not input_request.flowaccount_expense_id:
+            input_request.flowaccount_sync_status = "SYNCING"
+            input_request.flowaccount_sync_error = None
+            await db.flush()
+            try:
+                payload = await service.create_expense(input_request, project_name=project_name)
+            except FlowAccountError as exc:
+                input_request.flowaccount_sync_status = "FAILED"
+                input_request.flowaccount_sync_error = str(exc)
+                await db.commit()
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+            _apply_flowaccount_document_result(input_request, payload)
+            input_request.flowaccount_sync_status = "SYNCED"
+
+        receipt_bytes: bytes | None = None
+        if input_request.receipt_storage_key and input_request.flowaccount_attachment_status != "SYNCED":
+            input_request.flowaccount_attachment_status = "SYNCING"
+            input_request.flowaccount_attachment_error = None
+            await db.flush()
+            try:
+                receipt_bytes = await _download_request_receipt(input_request)
+                await service.attach_expense_receipt(
+                    expense_id=_expense_id_from_request(input_request),
+                    file_bytes=receipt_bytes,
+                    file_name=input_request.receipt_file_name,
+                    content_type=input_request.receipt_content_type,
+                )
+                input_request.flowaccount_attachment_status = "SYNCED"
+                input_request.flowaccount_attachment_synced_at = now
+            except (FlowAccountError, HTTPException) as exc:
+                input_request.flowaccount_sync_status = "PARTIAL_SYNC"
+                input_request.flowaccount_attachment_status = "FAILED"
+                input_request.flowaccount_attachment_error = str(exc.detail if isinstance(exc, HTTPException) else exc)
+
+        if (
+            input_request.accounting_vat_mode in {"vat_inclusive", "vat_exclusive"}
+            and input_request.flowaccount_supplier_invoice_status != "SYNCED"
+        ):
+            input_request.flowaccount_supplier_invoice_status = "SYNCING"
+            input_request.flowaccount_supplier_invoice_error = None
+            await db.flush()
+            try:
+                if receipt_bytes is None:
+                    receipt_bytes = await _download_request_receipt(input_request)
+                payload = await service.create_supplier_invoice(
+                    input_request,
+                    expense_id=_expense_id_from_request(input_request),
+                    file_bytes=receipt_bytes,
+                    file_name=input_request.receipt_file_name,
+                )
+                supplier_data = flowaccount_document_data(payload)
+                input_request.flowaccount_supplier_invoice_id = (
+                    str(supplier_data.get("recordId") or supplier_data.get("documentId") or "")
+                    or input_request.flowaccount_supplier_invoice_id
+                )
+                input_request.flowaccount_supplier_invoice_status = "SYNCED"
+                input_request.flowaccount_supplier_invoice_synced_at = now
+            except (FlowAccountError, HTTPException) as exc:
+                input_request.flowaccount_sync_status = "PARTIAL_SYNC"
+                input_request.flowaccount_supplier_invoice_status = "FAILED"
+                input_request.flowaccount_supplier_invoice_error = str(exc.detail if isinstance(exc, HTTPException) else exc)
+
+        await _refresh_accounting_readiness(db, input_request, project_name)
+        await db.commit()
+        await db.refresh(input_request)
+        return StandardResponse(data=_serialize_input_request(input_request, project_name))
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to sync FlowAccount expense: {exc}",
+        ) from exc
+
+
+@router.post("/admin/requests/{request_id}/retry-flowaccount-attachment", response_model=StandardResponse[InputRequestItem])
+async def retry_input_request_flowaccount_attachment(
+    request_id: UUID,
+    _user: AuthenticatedUser = Depends(require_owner_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        input_request, project_name = await _get_input_request_with_project(db, request_id)
+        service = FlowAccountService()
+        input_request.flowaccount_attachment_status = "SYNCING"
+        input_request.flowaccount_attachment_error = None
+        await db.flush()
+        try:
+            receipt_bytes = await _download_request_receipt(input_request)
+            await service.attach_expense_receipt(
+                expense_id=_expense_id_from_request(input_request),
+                file_bytes=receipt_bytes,
+                file_name=input_request.receipt_file_name,
+                content_type=input_request.receipt_content_type,
+            )
+            input_request.flowaccount_attachment_status = "SYNCED"
+            input_request.flowaccount_attachment_synced_at = datetime.now(timezone.utc)
+            supplier_synced_or_not_needed = (
+                input_request.accounting_vat_mode not in {"vat_inclusive", "vat_exclusive"}
+                or input_request.flowaccount_supplier_invoice_status == "SYNCED"
+            )
+            if input_request.flowaccount_sync_status == "PARTIAL_SYNC" and supplier_synced_or_not_needed:
+                input_request.flowaccount_sync_status = "SYNCED"
+        except (FlowAccountError, HTTPException) as exc:
+            input_request.flowaccount_attachment_status = "FAILED"
+            input_request.flowaccount_attachment_error = str(exc.detail if isinstance(exc, HTTPException) else exc)
+
+        await _refresh_accounting_readiness(db, input_request, project_name)
+        await db.commit()
+        await db.refresh(input_request)
+        return StandardResponse(data=_serialize_input_request(input_request, project_name))
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retry FlowAccount attachment: {exc}",
+        ) from exc
+
+
+@router.post("/admin/requests/{request_id}/retry-flowaccount-supplier-invoice", response_model=StandardResponse[InputRequestItem])
+async def retry_input_request_flowaccount_supplier_invoice(
+    request_id: UUID,
+    _user: AuthenticatedUser = Depends(require_owner_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        input_request, project_name = await _get_input_request_with_project(db, request_id)
+        readiness = await _refresh_accounting_readiness(db, input_request, project_name)
+        if not readiness.can_sync_supplier_invoice:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Supplier Invoice is not ready: " + "; ".join(readiness.missing_fields + readiness.errors),
+            )
+
+        service = FlowAccountService()
+        input_request.flowaccount_supplier_invoice_status = "SYNCING"
+        input_request.flowaccount_supplier_invoice_error = None
+        await db.flush()
+        try:
+            receipt_bytes = await _download_request_receipt(input_request)
+            payload = await service.create_supplier_invoice(
+                input_request,
+                expense_id=_expense_id_from_request(input_request),
+                file_bytes=receipt_bytes,
+                file_name=input_request.receipt_file_name,
+            )
+            supplier_data = flowaccount_document_data(payload)
+            input_request.flowaccount_supplier_invoice_id = (
+                str(supplier_data.get("recordId") or supplier_data.get("documentId") or "")
+                or input_request.flowaccount_supplier_invoice_id
+            )
+            input_request.flowaccount_supplier_invoice_status = "SYNCED"
+            input_request.flowaccount_supplier_invoice_synced_at = datetime.now(timezone.utc)
+            if (
+                input_request.flowaccount_sync_status == "PARTIAL_SYNC"
+                and input_request.flowaccount_attachment_status == "SYNCED"
+            ):
+                input_request.flowaccount_sync_status = "SYNCED"
+        except (FlowAccountError, HTTPException) as exc:
+            input_request.flowaccount_supplier_invoice_status = "FAILED"
+            input_request.flowaccount_supplier_invoice_error = str(exc.detail if isinstance(exc, HTTPException) else exc)
+
+        await _refresh_accounting_readiness(db, input_request, project_name)
+        await db.commit()
+        await db.refresh(input_request)
+        return StandardResponse(data=_serialize_input_request(input_request, project_name))
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retry FlowAccount Supplier Invoice: {exc}",
+        ) from exc
+
+
+@router.post("/admin/requests/{request_id}/link-flowaccount-document", response_model=StandardResponse[InputRequestItem])
+async def link_existing_flowaccount_document(
+    request_id: UUID,
+    request: FlowAccountLinkExistingAction,
+    _user: AuthenticatedUser = Depends(require_owner_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        input_request, project_name = await _get_input_request_with_project(db, request_id)
+
+        if input_request.entry_type != "EXPENSE":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only expense input requests can be linked to FlowAccount documents.",
+            )
+        if input_request.status != "APPROVED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only approved requests can be linked to FlowAccount documents.",
+            )
+
+        input_request.flowaccount_expense_id = request.expense_id
+        input_request.flowaccount_document_no = request.document_no
+        input_request.flowaccount_external_document_id = request.external_document_id or flowaccount_external_document_id(input_request.id)
+        input_request.flowaccount_linked_manually = True
+        input_request.flowaccount_sync_status = "SYNCED"
+        input_request.flowaccount_sync_error = None
+        input_request.flowaccount_synced_at = datetime.now(timezone.utc)
+        if request.note:
+            input_request.review_note = request.note
+
+        await _refresh_accounting_readiness(db, input_request, project_name)
+        await db.commit()
+        await db.refresh(input_request)
+        return StandardResponse(data=_serialize_input_request(input_request, project_name))
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to link FlowAccount document: {exc}",
+        ) from exc
+
+
 @router.post("/admin/requests/{request_id}/mark-paid", response_model=StandardResponse[InputRequestItem])
 async def mark_paid_admin_input_request(
     request_id: UUID,
@@ -1068,12 +1588,51 @@ async def mark_paid_admin_input_request(
             )
 
         now = datetime.now(timezone.utc)
+        payment_reference = _clean_optional_text(request.payment_reference)
+        if not payment_reference:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="payment_reference is required before marking paid.",
+            )
+        input_request.payment_reference = payment_reference
+        if request.review_note is not None:
+            input_request.review_note = _clean_optional_text(request.review_note)
+
+        if is_flowaccount_configured():
+            if not request.payment_date:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="payment_date is required before FlowAccount payment sync.",
+                )
+            readiness = await _refresh_accounting_readiness(db, input_request, project_name)
+            if not readiness.can_mark_paid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="FlowAccount payment is not ready: " + "; ".join(readiness.missing_fields + readiness.errors),
+                )
+
+            input_request.flowaccount_payment_status = "SYNCING"
+            input_request.flowaccount_payment_error = None
+            await db.flush()
+            try:
+                service = FlowAccountService()
+                await service.create_expense_payment(
+                    input_request,
+                    expense_id=_expense_id_from_request(input_request),
+                    payment_date=request.payment_date,
+                )
+                input_request.flowaccount_payment_status = "PAYMENT_SYNCED"
+                input_request.flowaccount_payment_synced_at = now
+                input_request.flowaccount_payment_error = None
+            except FlowAccountError as exc:
+                input_request.flowaccount_payment_status = "PAYMENT_FAILED"
+                input_request.flowaccount_payment_error = str(exc)
+                await db.commit()
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
         input_request.status = "PAID"
         input_request.paid_at = now
         input_request.reviewed_at = now
-        input_request.payment_reference = _clean_optional_text(request.payment_reference)
-        if request.review_note is not None:
-            input_request.review_note = _clean_optional_text(request.review_note)
 
         await db.commit()
         await db.refresh(input_request)

@@ -1273,6 +1273,41 @@ export async function markPaidAdminInputRequest(requestId, payload = {}) {
   });
 }
 
+export async function getInputRequestAccountingReadiness(requestId) {
+  return apiRequest(`/api/v1/input/admin/requests/${requestId}/accounting-readiness`);
+}
+
+export async function syncInputRequestFlowAccount(requestId, payload = {}) {
+  return apiRequest(`/api/v1/input/admin/requests/${requestId}/sync-flowaccount`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    timeoutMs: 90000,
+  });
+}
+
+export async function retryInputRequestFlowAccountAttachment(requestId) {
+  return apiRequest(`/api/v1/input/admin/requests/${requestId}/retry-flowaccount-attachment`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+    timeoutMs: 90000,
+  });
+}
+
+export async function retryInputRequestFlowAccountSupplierInvoice(requestId) {
+  return apiRequest(`/api/v1/input/admin/requests/${requestId}/retry-flowaccount-supplier-invoice`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+    timeoutMs: 90000,
+  });
+}
+
+export async function linkInputRequestFlowAccountDocument(requestId, payload) {
+  return apiRequest(`/api/v1/input/admin/requests/${requestId}/link-flowaccount-document`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function getInsightWarehouseFilters() {
   const data = await apiRequest('/api/v1/insights/filters');
 
