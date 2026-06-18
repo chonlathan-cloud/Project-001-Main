@@ -24,7 +24,7 @@ from app.services.gcs_storage_service import upload_kyc_image_to_storage
 from app.services.identity_service import (
     create_subcontractor_profile,
     ensure_bootstrap_admin,
-    get_authorized_admin_role,
+    get_authorized_admin_roles,
     get_subcontractor_by_line_uid,
     update_subcontractor_profile,
 )
@@ -78,15 +78,17 @@ def _create_firebase_custom_token(uid: str, claims: dict | None = None) -> str |
 
 
 def _subcontractor_session_response(*, line_uid: str, subcontractor_id: str, name: str) -> AuthSessionResponse:
+    roles = ["subcontractor"]
     session_token = issue_session_token(
         subject=line_uid,
         role="subcontractor",
+        roles=roles,
         display_name=name,
         subcontractor_id=subcontractor_id,
     )
     firebase_custom_token = _create_firebase_custom_token(
         line_uid,
-        claims={"role": "subcontractor", "subcontractor_id": subcontractor_id},
+        claims={"role": "subcontractor", "roles": roles, "subcontractor_id": subcontractor_id},
     )
     return AuthSessionResponse(
         status="SUCCESS",
@@ -94,10 +96,11 @@ def _subcontractor_session_response(*, line_uid: str, subcontractor_id: str, nam
         firebase_custom_token=firebase_custom_token,
         user=SessionUserPayload(
             role="subcontractor",
+            roles=roles,
             display_name=name,
             subcontractor_id=subcontractor_id,
             line_uid=line_uid,
-            permissions=role_permissions("subcontractor"),
+            permissions=role_permissions("subcontractor", roles),
         ),
     )
 
@@ -228,26 +231,35 @@ async def admin_login(request: AdminLoginRequest):
                 detail="Admin email is required.",
             )
 
-        authorized_role = get_authorized_admin_role(email)
-        if authorized_role is None:
+        authorized_roles = get_authorized_admin_roles(email)
+        if not authorized_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This email is not authorized as an admin.",
             )
+        authorized_role = (
+            "owner"
+            if "owner" in authorized_roles
+            else "admin"
+            if "admin" in authorized_roles
+            else authorized_roles[0]
+        )
 
         bootstrap_entry = ensure_bootstrap_admin(email, display_name)
         if bootstrap_entry is not None:
             authorized_role = bootstrap_entry.role
+            authorized_roles = bootstrap_entry.roles
 
         session_token = issue_session_token(
             subject=email,
             role=authorized_role,
+            roles=authorized_roles,
             email=email,
             display_name=display_name,
         )
         firebase_custom_token = _create_firebase_custom_token(
             email,
-            claims={"role": authorized_role, "email": email},
+            claims={"role": authorized_role, "roles": authorized_roles, "email": email},
         )
         return StandardResponse(
             data=AuthSessionResponse(
@@ -256,9 +268,10 @@ async def admin_login(request: AdminLoginRequest):
                 firebase_custom_token=firebase_custom_token,
                 user=SessionUserPayload(
                     role=authorized_role,
+                    roles=authorized_roles,
                     email=email,
                     display_name=display_name,
-                    permissions=role_permissions(authorized_role),
+                    permissions=role_permissions(authorized_role, authorized_roles),
                 ),
             )
         )
@@ -277,9 +290,10 @@ async def get_current_session_user(user: AuthenticatedUser = Depends(get_current
     return StandardResponse(
         data=SessionUserPayload(
             role=user.role,
+            roles=list(user.roles),
             email=user.email,
             display_name=user.display_name,
             subcontractor_id=user.subcontractor_id,
-            permissions=role_permissions(user.role),
+            permissions=role_permissions(user.role, user.roles),
         )
     )

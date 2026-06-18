@@ -8,7 +8,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-ADMIN_ROLE_VALUES = {"admin", "owner"}
+ADMIN_ROLE_VALUES = {"admin", "owner", "inspector"}
 
 
 def _normalize_admin_role(value: str | None, *, default: str = "admin") -> str:
@@ -16,8 +16,23 @@ def _normalize_admin_role(value: str | None, *, default: str = "admin") -> str:
     if not cleaned:
         return default
     if cleaned not in ADMIN_ROLE_VALUES:
-        raise ValueError("role must be either 'admin' or 'owner'.")
+        raise ValueError("role must be one of 'admin', 'owner', or 'inspector'.")
     return cleaned
+
+
+def _normalize_admin_roles(value: list[str] | None, *, fallback: str = "admin") -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value or []:
+        cleaned = _normalize_admin_role(item, default=fallback)
+        if cleaned not in seen:
+            normalized.append(cleaned)
+            seen.add(cleaned)
+
+    fallback_role = _normalize_admin_role(fallback)
+    if fallback_role not in seen:
+        normalized.insert(0, fallback_role)
+    return normalized
 
 
 class BankAccountInfo(BaseModel):
@@ -74,6 +89,7 @@ class AdminDirectoryItem(BaseModel):
     email: str
     display_name: str | None = None
     role: str = "admin"
+    roles: list[str] = Field(default_factory=list)
     is_active: bool = True
     granted_by: str | None = None
     created_at: datetime | None = None
@@ -84,11 +100,17 @@ class AdminDirectoryItem(BaseModel):
     def validate_role(cls, value: str | None) -> str:
         return _normalize_admin_role(value)
 
+    @field_validator("roles", mode="before")
+    @classmethod
+    def validate_roles(cls, value: list[str] | None) -> list[str]:
+        return _normalize_admin_roles(value)
+
 
 class UpsertAdminRequest(BaseModel):
     email: str
     display_name: str | None = None
     role: str = "admin"
+    roles: list[str] | None = None
     is_active: bool = True
 
     @field_validator("role", mode="before")
@@ -100,6 +122,7 @@ class UpsertAdminRequest(BaseModel):
 class UpdateAdminRequest(BaseModel):
     display_name: str | None = None
     role: str | None = None
+    roles: list[str] | None = None
     is_active: bool | None = None
 
     @field_validator("role", mode="before")
@@ -109,9 +132,17 @@ class UpdateAdminRequest(BaseModel):
             return None
         return _normalize_admin_role(value)
 
+    @field_validator("roles", mode="before")
+    @classmethod
+    def validate_roles(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_admin_roles(value)
+
 
 class SessionUserPayload(BaseModel):
     role: str
+    roles: list[str] = Field(default_factory=list)
     email: str | None = None
     display_name: str | None = None
     subcontractor_id: str | None = None

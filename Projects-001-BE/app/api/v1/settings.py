@@ -192,12 +192,13 @@ async def create_admin(
     _reject_self_role_or_status_update(
         user,
         doc_id,
-        {"role": request.role, "is_active": request.is_active},
+        {"role": request.role, "roles": request.roles, "is_active": request.is_active},
     )
     entry = upsert_admin(
         email=str(request.email),
         display_name=request.display_name,
         role=request.role,
+        roles=request.roles,
         is_active=request.is_active,
         granted_by=user.email or user.subject,
     )

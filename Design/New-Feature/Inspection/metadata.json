@@ -1,0 +1,6 @@
+{
+  "name": "Rayadee Defect",
+  "description": "Professional construction site defect management and inspection dashboard for tracking issues, severity breakdowns, and contractor reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

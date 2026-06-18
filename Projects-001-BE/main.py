@@ -13,6 +13,7 @@ from app.api.v1 import (
     chat,
     dashboard,
     insights,
+    inspection,
     input_requests,
     profile,
     projects,
@@ -47,6 +48,7 @@ API_V1_PREFIX = "/api/v1"
 app.include_router(auth.router, prefix=API_V1_PREFIX)
 app.include_router(dashboard.router, prefix=API_V1_PREFIX)
 app.include_router(insights.router, prefix=API_V1_PREFIX)
+app.include_router(inspection.router, prefix=API_V1_PREFIX)
 app.include_router(projects.router, prefix=API_V1_PREFIX)
 app.include_router(bills.router, prefix=API_V1_PREFIX)
 app.include_router(input_requests.router, prefix=API_V1_PREFIX)

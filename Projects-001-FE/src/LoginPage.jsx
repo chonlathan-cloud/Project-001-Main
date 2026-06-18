@@ -134,7 +134,7 @@ const LoginPage = () => {
 
         <div style={{ padding: '32px' }}>
           <div style={{ marginBottom: '26px' }}>
-            <h1 style={{ fontSize: '32px', marginBottom: '8px', color: 'var(--text-main)' }}>Projects-001</h1>
+            <h1 style={{ fontSize: '32px', marginBottom: '8px', color: 'var(--text-main)' }}>RAYADEE</h1>
             <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
               Subcontractor Portal access with LINE LIFF. Admins can continue with Google sign-in.
             </p>

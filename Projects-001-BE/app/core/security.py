@@ -38,6 +38,7 @@ def issue_session_token(
     *,
     subject: str,
     role: str,
+    roles: list[str] | None = None,
     email: str | None = None,
     display_name: str | None = None,
     subcontractor_id: str | None = None,
@@ -49,6 +50,7 @@ def issue_session_token(
     payload = {
         "sub": subject,
         "role": role,
+        "roles": roles or [role],
         "email": email,
         "display_name": display_name,
         "subcontractor_id": subcontractor_id,

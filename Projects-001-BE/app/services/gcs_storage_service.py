@@ -28,6 +28,8 @@ _KYC_PREFIX = _settings.gcs_kyc_prefix.strip().strip("/")
 _PROFILE_PREFIX = _settings.gcs_profile_prefix.strip().strip("/")
 _TEMP_BILLS_PREFIX = _settings.gcs_temp_bills_prefix.strip().strip("/")
 _PERM_BILLS_PREFIX = _settings.gcs_perm_bills_prefix.strip().strip("/")
+_INSPECTION_BUCKET = _settings.inspection_gcs_bucket or _settings.gcs_bucket_name
+_INSPECTION_PREFIX = _settings.inspection_gcs_prefix.strip().strip("/")
 
 _storage_client = None
 
@@ -52,6 +54,10 @@ def _require_bucket_name(bucket_name: str | None, env_name: str) -> str:
 
 def get_default_bucket_name() -> str:
     return _require_bucket_name(_DEFAULT_BUCKET, "GCS_BUCKET_NAME")
+
+
+def get_inspection_bucket_name() -> str:
+    return _require_bucket_name(_INSPECTION_BUCKET, "INSPECTION_GCS_BUCKET")
 
 
 def _sanitize_filename(file_name: str | None) -> str:
@@ -100,6 +106,32 @@ def _build_kyc_object_name(file_name: str | None, entity_key: str) -> str:
 def _build_profile_object_name(file_name: str | None, entity_key: str) -> str:
     safe_name = _sanitize_filename(file_name or f"{entity_key}.jpg")
     return f"{_PROFILE_PREFIX}/{entity_key}/{uuid4()}-{safe_name}"
+
+
+def _build_inspection_object_name(
+    *,
+    project_id: str,
+    round_id: str,
+    file_id: str,
+    file_name: str | None,
+    kind: str,
+    zone_id: str | None = None,
+    defect_id: str | None = None,
+) -> str:
+    safe_name = _sanitize_filename(file_name or f"{file_id}")
+    safe_kind = str(kind or "").strip().upper()
+    if safe_kind == "PLAN_IMAGE":
+        zone_part = _sanitize_filename(zone_id or "zone")
+        return f"{_INSPECTION_PREFIX}/{project_id}/{round_id}/plans/{zone_part}/{file_id}-{safe_name}"
+    if safe_kind == "BEFORE_PHOTO":
+        defect_part = _sanitize_filename(defect_id or "defect")
+        return f"{_INSPECTION_PREFIX}/{project_id}/{round_id}/defects/{defect_part}/before/{file_id}-{safe_name}"
+    if safe_kind == "AFTER_PHOTO":
+        defect_part = _sanitize_filename(defect_id or "defect")
+        return f"{_INSPECTION_PREFIX}/{project_id}/{round_id}/defects/{defect_part}/after/{file_id}-{safe_name}"
+    if safe_kind == "REPORT_PDF":
+        return f"{_INSPECTION_PREFIX}/{project_id}/{round_id}/reports/{file_id}-{safe_name}"
+    return f"{_INSPECTION_PREFIX}/{project_id}/{round_id}/files/{file_id}-{safe_name}"
 
 
 def _upload_bytes_to_bucket_sync(
@@ -163,6 +195,37 @@ async def upload_profile_image_to_storage(
 ) -> str:
     bucket_name = get_default_bucket_name()
     object_name = _build_profile_object_name(file_name, entity_key)
+    return await asyncio.to_thread(
+        _upload_bytes_to_bucket_sync,
+        bucket_name=bucket_name,
+        object_name=object_name,
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+
+
+async def upload_inspection_file_to_storage(
+    *,
+    project_id: str,
+    round_id: str,
+    file_id: str,
+    kind: str,
+    file_bytes: bytes,
+    file_name: str | None,
+    content_type: str | None,
+    zone_id: str | None = None,
+    defect_id: str | None = None,
+) -> str:
+    bucket_name = get_inspection_bucket_name()
+    object_name = _build_inspection_object_name(
+        project_id=project_id,
+        round_id=round_id,
+        file_id=file_id,
+        file_name=file_name,
+        kind=kind,
+        zone_id=zone_id,
+        defect_id=defect_id,
+    )
     return await asyncio.to_thread(
         _upload_bytes_to_bucket_sync,
         bucket_name=bucket_name,

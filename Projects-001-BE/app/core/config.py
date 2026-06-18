@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     gcs_profile_prefix: str = Field(default="profile_images", alias="GCS_PROFILE_PREFIX")
     gcs_temp_bills_prefix: str = Field(default="temp_bills", alias="GCS_TEMP_BILLS_PREFIX")
     gcs_perm_bills_prefix: str = Field(default="perm_bills", alias="GCS_PERM_BILLS_PREFIX")
+    inspection_gcs_bucket: str | None = Field(default=None, alias="INSPECTION_GCS_BUCKET")
+    inspection_gcs_prefix: str = Field(default="inspection", alias="INSPECTION_GCS_PREFIX")
+    inspection_photo_max_bytes: int = Field(default=10 * 1024 * 1024, alias="INSPECTION_PHOTO_MAX_BYTES")
+    inspection_plan_max_bytes: int = Field(default=25 * 1024 * 1024, alias="INSPECTION_PLAN_MAX_BYTES")
     signed_url_expires_minutes: int = Field(default=15, alias="SIGNED_URL_EXPIRES_MINUTES")
 
     gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")

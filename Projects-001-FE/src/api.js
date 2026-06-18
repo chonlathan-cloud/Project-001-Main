@@ -998,6 +998,154 @@ export async function getProjectDetailData(projectId) {
   };
 }
 
+const inspectionProjectPath = (projectId) => `/api/v1/inspection/projects/${projectId}`;
+const inspectionRoundPath = (projectId, roundId) => `${inspectionProjectPath(projectId)}/rounds/${roundId}`;
+
+function buildInspectionDefectQuery(filters = {}) {
+  const searchParams = new URLSearchParams();
+  if (filters.zoneId || filters.zone_id) searchParams.set('zone_id', filters.zoneId || filters.zone_id);
+  appendArrayParams(searchParams, 'status', filters.status);
+  appendArrayParams(searchParams, 'severity', filters.severity);
+  if (filters.category) searchParams.set('category', filters.category);
+  if (filters.assignedSubcontractorId || filters.assigned_subcontractor_id) {
+    searchParams.set(
+      'assigned_subcontractor_id',
+      filters.assignedSubcontractorId || filters.assigned_subcontractor_id
+    );
+  }
+  if (filters.search) searchParams.set('search', filters.search);
+  if (filters.dueBefore || filters.due_before) searchParams.set('due_before', filters.dueBefore || filters.due_before);
+  if (filters.overdue) searchParams.set('overdue', 'true');
+  return searchParams.toString();
+}
+
+export async function getInspectionCategories(projectId) {
+  return apiRequest(`${inspectionProjectPath(projectId)}/categories`);
+}
+
+export async function updateInspectionCategories(projectId, payload) {
+  return apiRequest(`${inspectionProjectPath(projectId)}/categories`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getInspectionRounds(projectId) {
+  return apiRequest(`${inspectionProjectPath(projectId)}/rounds`);
+}
+
+export async function createInspectionRound(projectId, payload) {
+  return apiRequest(`${inspectionProjectPath(projectId)}/rounds`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getInspectionRound(projectId, roundId) {
+  return apiRequest(inspectionRoundPath(projectId, roundId));
+}
+
+export async function updateInspectionRound(projectId, roundId, payload) {
+  return apiRequest(inspectionRoundPath(projectId, roundId), {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getInspectionZones(projectId, roundId) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/zones`);
+}
+
+export async function createInspectionZone(projectId, roundId, payload) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/zones`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateInspectionZone(projectId, roundId, zoneId, payload) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/zones/${zoneId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getInspectionDefects(projectId, roundId, filters = {}) {
+  const query = buildInspectionDefectQuery(filters);
+  const path = `${inspectionRoundPath(projectId, roundId)}/defects`;
+  return apiRequest(query ? `${path}?${query}` : path);
+}
+
+export async function createInspectionDefect(projectId, roundId, payload) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/defects`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getInspectionDefect(projectId, roundId, defectId) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/defects/${defectId}`);
+}
+
+export async function updateInspectionDefect(projectId, roundId, defectId, payload) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/defects/${defectId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateInspectionDefectStatus(projectId, roundId, defectId, payload) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/defects/${defectId}/status`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createInspectionDefectComment(projectId, roundId, defectId, payload) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/defects/${defectId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getInspectionEvents(projectId, roundId, defectId = '') {
+  const query = defectId ? `?defect_id=${encodeURIComponent(defectId)}` : '';
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/events${query}`);
+}
+
+export async function uploadInspectionFile(projectId, roundId, formData) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/files`, {
+    method: 'POST',
+    body: formData,
+    timeoutMs: 60000,
+  });
+}
+
+export async function getInspectionFileSignedUrl(fileId) {
+  return apiRequest(`/api/v1/inspection/files/${fileId}/signed-url`);
+}
+
+export async function deleteInspectionFile(fileId) {
+  return apiRequest(`/api/v1/inspection/files/${fileId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function getInspectionSummary(projectId, roundId) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/summary`);
+}
+
+export async function createInspectionReportLog(projectId, roundId, payload) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/report-logs`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getInspectionReportLogs(projectId, roundId) {
+  return apiRequest(`${inspectionRoundPath(projectId, roundId)}/report-logs`);
+}
+
 export async function getInputProjectOptions() {
   const data = await apiRequest('/api/v1/input/projects');
   if (!Array.isArray(data)) return [];

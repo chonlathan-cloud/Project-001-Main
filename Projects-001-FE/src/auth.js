@@ -3,7 +3,7 @@ const SESSION_USER_KEY = 'app_auth_user';
 const PENDING_LINE_AUTH_KEY = 'app_pending_line_auth';
 const AUTH_NOTICE_KEY = 'app_auth_notice';
 const AUTH_EVENT_NAME = 'app-auth-changed';
-const ADMIN_ROLES = new Set(['admin', 'owner', 'super_admin']);
+const ADMIN_ROLES = new Set(['admin', 'owner', 'super_admin', 'inspector']);
 
 function parseJson(value, fallback = null) {
   try {
@@ -135,15 +135,24 @@ export function resolvePostLoginPath(user) {
 }
 
 const normalizeRole = (user) => String(user?.role || '').trim().toLowerCase();
+const normalizeRoles = (user) => {
+  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  const normalized = roles.map((role) => String(role || '').trim().toLowerCase()).filter(Boolean);
+  const role = normalizeRole(user);
+  return role && !normalized.includes(role) ? [role, ...normalized] : normalized;
+};
 const normalizeAccessLevel = (user) => String(user?.access_level || user?.accessLevel || '').trim().toLowerCase();
 
 export function isOwnerUser(user) {
   const role = normalizeRole(user);
+  const roles = normalizeRoles(user);
   const accessLevel = normalizeAccessLevel(user);
 
   return (
     role === 'owner' ||
     role === 'super_admin' ||
+    roles.includes('owner') ||
+    roles.includes('super_admin') ||
     accessLevel === 'owner' ||
     user?.is_owner === true ||
     // Preserve the existing production contract until backend sends owner/admin separately.
@@ -152,7 +161,7 @@ export function isOwnerUser(user) {
 }
 
 export function isAdminUser(user) {
-  return ADMIN_ROLES.has(normalizeRole(user));
+  return normalizeRoles(user).some((role) => ADMIN_ROLES.has(role));
 }
 
 export function isAdminPortalUser(user) {
@@ -160,7 +169,7 @@ export function isAdminPortalUser(user) {
 }
 
 export function isSubcontractorUser(user) {
-  return normalizeRole(user) === 'subcontractor';
+  return normalizeRoles(user).includes('subcontractor');
 }
 
 export function canAccessOwnerArea(user) {

@@ -37,7 +37,7 @@ function SupportPage() {
             Support
           </h1>
           <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: '680px' }}>
-            Operational status and support references for the Projects-001 admin portal.
+            Operational status and support references for the RAYADEE admin portal.
           </p>
         </div>
 

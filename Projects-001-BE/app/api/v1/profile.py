@@ -32,7 +32,7 @@ from app.services.identity_service import (
 )
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
-ADMIN_ROLES = {"admin", "owner"}
+ADMIN_ROLES = {"admin", "owner", "inspector"}
 
 
 def _money_value(value: object) -> float:
@@ -230,7 +230,14 @@ async def _build_admin_profile(db: AsyncSession, user: AuthenticatedUser) -> dic
 
     admin_profile = get_admin_by_email(user.email) if user.email else None
     role_key = admin_profile.role if admin_profile else user.role
-    role_label = "Owner" if role_key == "owner" else "Admin / Project Manager"
+    role_values = admin_profile.roles if admin_profile else list(user.roles)
+    role_label = (
+        "Owner"
+        if role_key == "owner"
+        else "Inspector"
+        if role_key == "inspector"
+        else "Admin / Project Manager"
+    )
     profile_image_url = None
     if admin_profile and admin_profile.profile_image_storage_key:
         profile_image_url = await generate_signed_url_for_storage_key(
@@ -257,7 +264,8 @@ async def _build_admin_profile(db: AsyncSession, user: AuthenticatedUser) -> dic
             "company": company,
             "role": role_label,
             "role_key": role_key,
-            "permissions": role_permissions(role_key),
+            "roles": role_values,
+            "permissions": role_permissions(role_key, role_values),
             "time": timezone,
             "email": user.email,
             "profile_image_url": profile_image_url,

@@ -139,7 +139,7 @@ const Sidebar = () => {
           <Wrench size={18} strokeWidth={2.25} />
         </div>
         <div>
-          <div className="sidebar-brand-title">Projects-001</div>
+          <div className="sidebar-brand-title">RAYADEE</div>
           <div className="sidebar-brand-subtitle">
             {isAdminUser ? 'Admin Portal' : 'พื้นที่ผู้รับเหมา'}
           </div>

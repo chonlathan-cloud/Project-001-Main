@@ -19,7 +19,9 @@ USERS_COLLECTION = "users"
 ADMINS_COLLECTION = "admins"
 OWNER_ROLE = "owner"
 ADMIN_ROLE = "admin"
-ADMIN_ROLES = {OWNER_ROLE, ADMIN_ROLE}
+INSPECTOR_ROLE = "inspector"
+ADMIN_ROLES = {OWNER_ROLE, ADMIN_ROLE, INSPECTOR_ROLE}
+ADMIN_ACCESS_ROLES = {OWNER_ROLE, ADMIN_ROLE}
 
 
 def _now_utc() -> datetime:
@@ -55,6 +57,32 @@ def _normalize_admin_role(value: object, *, default: str = ADMIN_ROLE) -> str:
     if cleaned not in ADMIN_ROLES:
         return default
     return cleaned
+
+
+def _normalize_admin_roles(value: object, *, default_role: str = ADMIN_ROLE) -> list[str]:
+    raw_values = value if isinstance(value, list) else []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_values:
+        cleaned = str(item or "").strip().lower()
+        if cleaned in ADMIN_ROLES and cleaned not in seen:
+            normalized.append(cleaned)
+            seen.add(cleaned)
+
+    fallback = _normalize_admin_role(default_role)
+    if fallback not in seen:
+        normalized.insert(0, fallback)
+    return normalized
+
+
+def _primary_role_for_roles(roles: list[str]) -> str:
+    if OWNER_ROLE in roles:
+        return OWNER_ROLE
+    if ADMIN_ROLE in roles:
+        return ADMIN_ROLE
+    if INSPECTOR_ROLE in roles:
+        return INSPECTOR_ROLE
+    return ADMIN_ROLE
 
 
 def _email_doc_id(email: str) -> str:
@@ -110,6 +138,7 @@ class AdminDirectoryEntry:
     time: str | None
     profile_image_storage_key: str | None
     role: str
+    roles: list[str]
     is_active: bool
     granted_by: str | None
     created_at: datetime | None
@@ -143,6 +172,9 @@ def _subcontractor_from_dict(doc_id: str, payload: dict[str, Any]) -> Subcontrac
 
 
 def _admin_from_dict(doc_id: str, payload: dict[str, Any]) -> AdminDirectoryEntry:
+    primary_role = _normalize_admin_role(payload.get("role"), default=OWNER_ROLE)
+    roles = _normalize_admin_roles(payload.get("roles"), default_role=primary_role)
+    primary_role = _primary_role_for_roles(roles)
     return AdminDirectoryEntry(
         id=doc_id,
         email=_normalize_email(str(payload.get("email") or "")),
@@ -159,7 +191,8 @@ def _admin_from_dict(doc_id: str, payload: dict[str, Any]) -> AdminDirectoryEntr
         profile_image_storage_key=_normalize_optional_text(payload.get("profile_image_storage_key")),
         # Existing managed admin records predate role support. Treat them as
         # owners so old full-access admins do not silently lose permissions.
-        role=_normalize_admin_role(payload.get("role"), default=OWNER_ROLE),
+        role=primary_role,
+        roles=roles,
         is_active=bool(payload.get("is_active", True)),
         granted_by=_normalize_optional_text(payload.get("granted_by")),
         created_at=_datetime_value(payload.get("created_at")),
@@ -356,18 +389,21 @@ def _active_owner_count() -> int:
     return sum(
         1
         for entry in list_admins()
-        if entry.is_active and entry.role == OWNER_ROLE
+        if entry.is_active and OWNER_ROLE in entry.roles
     )
 
 
 def _ensure_can_remove_owner(current: AdminDirectoryEntry, payload: dict[str, Any]) -> None:
-    next_role = _normalize_admin_role(payload.get("role"), default=current.role)
+    next_roles = _normalize_admin_roles(
+        payload.get("roles"),
+        default_role=_normalize_admin_role(payload.get("role"), default=current.role),
+    )
     next_is_active = bool(payload.get("is_active", current.is_active))
 
     removes_owner_access = (
-        current.role == OWNER_ROLE
+        OWNER_ROLE in current.roles
         and current.is_active
-        and (next_role != OWNER_ROLE or not next_is_active)
+        and (OWNER_ROLE not in next_roles or not next_is_active)
     )
     if removes_owner_access and _active_owner_count() <= 1:
         raise HTTPException(
@@ -381,6 +417,7 @@ def upsert_admin(
     email: str,
     display_name: str | None,
     role: str = ADMIN_ROLE,
+    roles: list[str] | None = None,
     is_active: bool,
     granted_by: str | None,
 ) -> AdminDirectoryEntry:
@@ -389,11 +426,13 @@ def upsert_admin(
     doc_id = _email_doc_id(normalized_email)
     existing = get_admin_by_email(normalized_email)
     now = _now_utc()
-    normalized_role = _normalize_admin_role(role)
+    normalized_roles = _normalize_admin_roles(roles, default_role=role)
+    normalized_role = _primary_role_for_roles(normalized_roles)
     payload = {
         "email": normalized_email,
         "display_name": _normalize_optional_text(display_name),
         "role": normalized_role,
+        "roles": normalized_roles,
         "is_active": bool(is_active),
         "granted_by": _normalize_optional_text(granted_by),
         "updated_at": now,
@@ -424,7 +463,14 @@ def update_admin(doc_id: str, *, updates: dict[str, Any]) -> AdminDirectoryEntry
     if "display_name" in updates:
         payload["display_name"] = _normalize_optional_text(updates["display_name"])
     if "role" in updates:
-        payload["role"] = _normalize_admin_role(updates["role"])
+        payload["roles"] = _normalize_admin_roles(
+            updates.get("roles"),
+            default_role=_normalize_admin_role(updates["role"]),
+        )
+        payload["role"] = _primary_role_for_roles(payload["roles"])
+    elif "roles" in updates:
+        payload["roles"] = _normalize_admin_roles(updates["roles"], default_role=current.role)
+        payload["role"] = _primary_role_for_roles(payload["roles"])
     if "is_active" in updates:
         payload["is_active"] = bool(updates["is_active"])
 
@@ -449,7 +495,8 @@ def update_admin_profile(
     payload: dict[str, Any] = {"email": normalized_email, "updated_at": now}
 
     if existing is None:
-        payload["role"] = _normalize_admin_role(role)
+        payload["roles"] = _normalize_admin_roles(None, default_role=role)
+        payload["role"] = _primary_role_for_roles(payload["roles"])
         payload["is_active"] = True
         payload["created_at"] = now
 
@@ -483,20 +530,27 @@ def update_admin_profile(
     return _admin_from_dict(doc_id, merged)
 
 
-def get_authorized_admin_role(email: str) -> str | None:
+def get_authorized_admin_roles(email: str) -> list[str]:
     normalized_email = _normalize_email(email)
     managed_admin = get_admin_by_email(normalized_email)
     if managed_admin is not None:
-        return managed_admin.role if managed_admin.is_active else None
+        return managed_admin.roles if managed_admin.is_active else []
 
     settings = get_settings()
     if normalized_email in settings.admin_emails:
-        return ADMIN_ROLE
+        return [ADMIN_ROLE]
 
     domain = settings.admin_email_domain
     if domain and normalized_email.endswith(f"@{domain}"):
-        return ADMIN_ROLE
-    return None
+        return [ADMIN_ROLE]
+    return []
+
+
+def get_authorized_admin_role(email: str) -> str | None:
+    roles = get_authorized_admin_roles(email)
+    if not roles:
+        return None
+    return _primary_role_for_roles(roles)
 
 
 def is_email_authorized_admin(email: str) -> bool:

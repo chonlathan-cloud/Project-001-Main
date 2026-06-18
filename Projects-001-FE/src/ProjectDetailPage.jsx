@@ -4,6 +4,8 @@ import {
   ArrowLeftRight,
   Building2,
   Calculator,
+  ClipboardCheck,
+  Database,
   Layers3,
   TriangleAlert,
   Wallet,
@@ -21,6 +23,7 @@ import {
 import { getInsightWarehouseRows, getProjectDetailData } from './api';
 import BoqSheetCharts from './components/BoqSheetCharts';
 import BoqWorkbench from './components/BoqWorkbench';
+import InspectionWorkspace from './components/inspection/InspectionWorkspace';
 import Loading from './components/Loading';
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
@@ -107,6 +110,12 @@ const baseChartTooltipStyle = {
   border: '1px solid #e5e7eb',
   boxShadow: 'none',
 };
+
+const PROJECT_SECTION_TABS = [
+  { value: 'compare', label: 'Compare / BOQ', icon: Calculator },
+  { value: 'warehouse', label: 'Warehouse Records', icon: Database },
+  { value: 'inspection', label: 'Inspection', icon: ClipboardCheck },
+];
 
 function SummaryCard({ icon, label, value, subtext, tone = 'neutral' }) {
   const toneStyles = {
@@ -385,8 +394,17 @@ function ProjectDetailPage() {
   const [projectRowsError, setProjectRowsError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeProjectSection, setActiveProjectSection] = useState(
+    () => (deepLinkInstallmentId || deepLinkTransactionId || deepLinkSource ? 'warehouse' : 'compare')
+  );
   const [activeView, setActiveView] = useState('compare');
   const [sheetFilter, setSheetFilter] = useState('ALL');
+
+  useEffect(() => {
+    if (deepLinkInstallmentId || deepLinkTransactionId || deepLinkSource) {
+      setActiveProjectSection('warehouse');
+    }
+  }, [deepLinkInstallmentId, deepLinkSource, deepLinkTransactionId]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -665,288 +683,319 @@ function ProjectDetailPage() {
         </div>
       </section>
 
-      {!hasCustomerBoq || !hasSubcontractorBoq ? (
-        <section
-          className="card"
-          style={{
-            backgroundColor: '#fff7ed',
-            border: '1px solid #fdba74',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '12px',
-          }}
-        >
-          <TriangleAlert size={20} color="#c2410c" />
-          <div>
-            <div style={{ fontSize: '15px', fontWeight: '800', color: '#9a3412' }}>
-              Dual BOQ ยังไม่ครบ
-            </div>
-            <div style={{ marginTop: '6px', fontSize: '13px', lineHeight: 1.6, color: '#c2410c' }}>
-              {hasCustomerBoq && !hasSubcontractorBoq
-                ? 'พบ Customer BOQ แล้ว แต่ยังไม่มี Subcontractor BOQ'
-                : !hasCustomerBoq && hasSubcontractorBoq
-                  ? 'พบ Subcontractor BOQ แล้ว แต่ยังไม่มี Customer BOQ'
-                  : 'ยังไม่พบทั้ง Customer BOQ และ Subcontractor BOQ สำหรับโครงการนี้'}
-            </div>
-          </div>
-        </section>
-      ) : null}
+      <nav className="project-detail-local-tabs" aria-label="Project detail sections">
+        {PROJECT_SECTION_TABS.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeProjectSection === tab.value;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              className={isActive ? 'active' : ''}
+              onClick={() => setActiveProjectSection(tab.value)}
+              aria-pressed={isActive}
+            >
+              <Icon size={16} />
+              {tab.label}
+            </button>
+          );
+        })}
+      </nav>
 
-      <section className="project-detail-summary-grid">
-        <SummaryCard
-          icon={Building2}
-          label="Customer BOQ"
-          value={formatCurrency(compareSummary.customerTotalBudget)}
-          subtext="มูลค่างบรวมฝั่ง Customer ที่ sync เข้ามาในปัจจุบัน"
-        />
-        <SummaryCard
-          icon={Wallet}
-          label="Subcontractor BOQ"
-          value={formatCurrency(compareSummary.subcontractorTotalBudget)}
-          subtext="มูลค่างบรวมฝั่ง Subcontractor ที่ sync เข้ามาในปัจจุบัน"
-        />
-        <SummaryCard
-          icon={ArrowLeftRight}
-          label="Total Variance"
-          value={formatCurrency(compareSummary.totalVariance)}
-          subtext={
-            compareSummary.marginPercent == null
-              ? 'ยังคำนวณ margin ไม่ได้เพราะไม่มี Customer BOQ total'
-              : `Margin ${formatPercent(compareSummary.marginPercent)} จากฐาน Customer BOQ`
-          }
-          tone={compareTone}
-        />
-        <SummaryCard
-          icon={Calculator}
-          label="Matching Coverage"
-          value={`${compareSummary.matchedCount || 0} matched`}
-          subtext={`Customer only ${compareSummary.customerOnlyCount || 0} • Subcontractor only ${compareSummary.subcontractorOnlyCount || 0}`}
-          tone={(compareSummary.customerOnlyCount || 0) + (compareSummary.subcontractorOnlyCount || 0) > 0 ? 'warning' : 'positive'}
-        />
-      </section>
-
-      <section className="project-detail-chart-grid">
-        <BoqSheetCharts wbsSummary={wbsSummary} />
-
-        <ChartCard
-          title="Execution Status"
-          description="ดูผลกระทบด้าน execution ของโครงการจาก approved transactions, rejected requests และ input requests"
-        >
-          {executionChartData.length ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
-              <div style={{ flex: 1, minHeight: '220px' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={executionChartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
-                    <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="shortLabel"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fontSize: 12, fill: '#6b7280' }}
-                    />
-                    <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fontSize: 12, fill: '#6b7280' }}
-                      tickFormatter={(value) => compactCurrencyFormatter.format(Number(value || 0))}
-                    />
-                    <Tooltip
-                      formatter={(value, _name, item) => [
-                        `${formatCurrency(value)} • ${item?.payload?.count || 0} items`,
-                        item?.payload?.label || 'Execution Status',
-                      ]}
-                      labelFormatter={(_, payload) => payload?.[0]?.payload?.label || '-'}
-                      contentStyle={baseChartTooltipStyle}
-                    />
-                    <Bar dataKey="amount" radius={[8, 8, 0, 0]}>
-                      {executionChartData.map((entry) => (
-                        <Cell key={entry.key} fill={entry.fill} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              <div className="project-detail-execution-grid">
-                {executionChartData.map((item) => {
-                  const tone = executionToneStyles[item.tone] || executionToneStyles.neutral;
-                  return (
-                    <div
-                      key={item.key}
-                      style={{
-                        border: `1px solid ${tone.border}`,
-                        backgroundColor: tone.background,
-                        borderRadius: '16px',
-                        padding: '14px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '8px',
-                      }}
-                    >
-                      <div style={{ fontSize: '12px', fontWeight: '700', color: tone.text }}>{item.label}</div>
-                      <div style={{ fontSize: '18px', fontWeight: '800', color: '#111827' }}>
-                        {formatCurrency(item.amount)}
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#6b7280' }}>{item.count} records</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <ChartEmptyState message="ยังไม่มี execution summary ของโครงการนี้" />
-          )}
-        </ChartCard>
-      </section>
-
-      <BoqWorkbench
-        activeView={activeView}
-        onActiveViewChange={setActiveView}
-        sheetFilter={sheetFilter}
-        onSheetFilterChange={setSheetFilter}
-        sheetNames={sheetNames}
-        customerTree={customerTree}
-        subcontractorTree={subcontractorTree}
-        compareTree={compareTree}
-      />
-
-      <div
-        className="card"
-        style={{
-          backgroundColor: 'white',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '18px',
-        }}
-      >
-        <div>
-          <h2 style={{ fontSize: '22px', marginBottom: '8px' }}>Project Warehouse Records</h2>
-          <p style={{ color: '#666', margin: 0 }}>
-            แสดงรายการระดับโครงการทั้งหมดจาก warehouse สำหรับ installments และ transactions
-          </p>
-        </div>
-
-        {projectRowsLoading ? (
-          <div style={{ color: '#666' }}>กำลังโหลด project-level records...</div>
-        ) : null}
-
-        {projectRowsError ? (
-          <div
-            style={{
-              color: '#912018',
-              backgroundColor: '#fde8e8',
-              border: '1px solid #de5b52',
-              borderRadius: '12px',
-              padding: '10px 12px',
-            }}
-          >
-            {projectRowsError}
-          </div>
-        ) : null}
-
-        {!projectRowsLoading && !projectRowsError ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
-            <section style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '18px' }}>Installments</h3>
-                <p style={{ margin: '6px 0 0', color: '#666', fontSize: '14px' }}>
-                  {projectInstallmentRows.length} records in this project
-                </p>
-              </div>
-
-              {projectInstallmentRows.length === 0 ? (
-                <div style={{ color: '#666' }}>ไม่พบ installment records สำหรับโครงการนี้</div>
-              ) : (
-                <div className="project-detail-record-grid">
-                  {projectInstallmentRows.map((row) => (
-                    <WarehouseRecordCard
-                      key={row.id}
-                      row={row}
-                      projectName={passedProjectName || data.name}
-                      highlight={Boolean(deepLinkInstallmentId && row.sourceId === deepLinkInstallmentId)}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '18px' }}>Transactions</h3>
-                <p style={{ margin: '6px 0 0', color: '#666', fontSize: '14px' }}>
-                  {projectTransactionRows.length} records in this project
-                </p>
-              </div>
-
-              {projectTransactionRows.length === 0 ? (
-                <div style={{ color: '#666' }}>ไม่พบ transaction records สำหรับโครงการนี้</div>
-              ) : (
-                <div className="project-detail-record-grid">
-                  {projectTransactionRows.map((row) => (
-                    <WarehouseRecordCard
-                      key={row.id}
-                      row={row}
-                      projectName={passedProjectName || data.name}
-                      highlight={Boolean(deepLinkTransactionId && row.sourceId === deepLinkTransactionId)}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-          </div>
-        ) : null}
-      </div>
-
-      {deepLinkInstallmentId || deepLinkTransactionId ? (
-        <div
-          className="card"
-          style={{
-            backgroundColor: 'white',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '18px',
-          }}
-        >
-          <div>
-            <h2 style={{ fontSize: '22px', marginBottom: '8px' }}>Focused Records</h2>
-            <p style={{ color: '#666', margin: 0 }}>
-              แสดงรายการที่ถูก deep link มาจาก Insight Warehouse โดยตรง
-            </p>
-          </div>
-
-          {focusedRowsLoading ? (
-            <div style={{ color: '#666' }}>กำลังโหลด focused records...</div>
-          ) : null}
-
-          {focusedRowsError ? (
-            <div
+      {activeProjectSection === 'compare' ? (
+        <>
+          {!hasCustomerBoq || !hasSubcontractorBoq ? (
+            <section
+              className="card"
               style={{
-                color: '#912018',
-                backgroundColor: '#fde8e8',
-                border: '1px solid #de5b52',
-                borderRadius: '12px',
-                padding: '10px 12px',
+                backgroundColor: '#fff7ed',
+                border: '1px solid #fdba74',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '12px',
               }}
             >
-              {focusedRowsError}
+              <TriangleAlert size={20} color="#c2410c" />
+              <div>
+                <div style={{ fontSize: '15px', fontWeight: '800', color: '#9a3412' }}>
+                  Dual BOQ ยังไม่ครบ
+                </div>
+                <div style={{ marginTop: '6px', fontSize: '13px', lineHeight: 1.6, color: '#c2410c' }}>
+                  {hasCustomerBoq && !hasSubcontractorBoq
+                    ? 'พบ Customer BOQ แล้ว แต่ยังไม่มี Subcontractor BOQ'
+                    : !hasCustomerBoq && hasSubcontractorBoq
+                      ? 'พบ Subcontractor BOQ แล้ว แต่ยังไม่มี Customer BOQ'
+                      : 'ยังไม่พบทั้ง Customer BOQ และ Subcontractor BOQ สำหรับโครงการนี้'}
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          <section className="project-detail-summary-grid">
+            <SummaryCard
+              icon={Building2}
+              label="Customer BOQ"
+              value={formatCurrency(compareSummary.customerTotalBudget)}
+              subtext="มูลค่างบรวมฝั่ง Customer ที่ sync เข้ามาในปัจจุบัน"
+            />
+            <SummaryCard
+              icon={Wallet}
+              label="Subcontractor BOQ"
+              value={formatCurrency(compareSummary.subcontractorTotalBudget)}
+              subtext="มูลค่างบรวมฝั่ง Subcontractor ที่ sync เข้ามาในปัจจุบัน"
+            />
+            <SummaryCard
+              icon={ArrowLeftRight}
+              label="Total Variance"
+              value={formatCurrency(compareSummary.totalVariance)}
+              subtext={
+                compareSummary.marginPercent == null
+                  ? 'ยังคำนวณ margin ไม่ได้เพราะไม่มี Customer BOQ total'
+                  : `Margin ${formatPercent(compareSummary.marginPercent)} จากฐาน Customer BOQ`
+              }
+              tone={compareTone}
+            />
+            <SummaryCard
+              icon={Calculator}
+              label="Matching Coverage"
+              value={`${compareSummary.matchedCount || 0} matched`}
+              subtext={`Customer only ${compareSummary.customerOnlyCount || 0} • Subcontractor only ${compareSummary.subcontractorOnlyCount || 0}`}
+              tone={(compareSummary.customerOnlyCount || 0) + (compareSummary.subcontractorOnlyCount || 0) > 0 ? 'warning' : 'positive'}
+            />
+          </section>
+
+          <section className="project-detail-chart-grid">
+            <BoqSheetCharts wbsSummary={wbsSummary} />
+
+            <ChartCard
+              title="Execution Status"
+              description="ดูผลกระทบด้าน execution ของโครงการจาก approved transactions, rejected requests และ input requests"
+            >
+              {executionChartData.length ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
+                  <div style={{ flex: 1, minHeight: '220px' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={executionChartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+                        <CartesianGrid stroke="#efe8dc" strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="shortLabel"
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 12, fill: '#6b7280' }}
+                        />
+                        <YAxis
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 12, fill: '#6b7280' }}
+                          tickFormatter={(value) => compactCurrencyFormatter.format(Number(value || 0))}
+                        />
+                        <Tooltip
+                          formatter={(value, _name, item) => [
+                            `${formatCurrency(value)} • ${item?.payload?.count || 0} items`,
+                            item?.payload?.label || 'Execution Status',
+                          ]}
+                          labelFormatter={(_, payload) => payload?.[0]?.payload?.label || '-'}
+                          contentStyle={baseChartTooltipStyle}
+                        />
+                        <Bar dataKey="amount" radius={[8, 8, 0, 0]}>
+                          {executionChartData.map((entry) => (
+                            <Cell key={entry.key} fill={entry.fill} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="project-detail-execution-grid">
+                    {executionChartData.map((item) => {
+                      const tone = executionToneStyles[item.tone] || executionToneStyles.neutral;
+                      return (
+                        <div
+                          key={item.key}
+                          style={{
+                            border: `1px solid ${tone.border}`,
+                            backgroundColor: tone.background,
+                            borderRadius: '16px',
+                            padding: '14px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px',
+                          }}
+                        >
+                          <div style={{ fontSize: '12px', fontWeight: '700', color: tone.text }}>{item.label}</div>
+                          <div style={{ fontSize: '18px', fontWeight: '800', color: '#111827' }}>
+                            {formatCurrency(item.amount)}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6b7280' }}>{item.count} records</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <ChartEmptyState message="ยังไม่มี execution summary ของโครงการนี้" />
+              )}
+            </ChartCard>
+          </section>
+
+          <BoqWorkbench
+            activeView={activeView}
+            onActiveViewChange={setActiveView}
+            sheetFilter={sheetFilter}
+            onSheetFilterChange={setSheetFilter}
+            sheetNames={sheetNames}
+            customerTree={customerTree}
+            subcontractorTree={subcontractorTree}
+            compareTree={compareTree}
+          />
+        </>
+      ) : null}
+
+      {activeProjectSection === 'warehouse' ? (
+        <>
+          <div
+            className="card"
+            style={{
+              backgroundColor: 'white',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '18px',
+            }}
+          >
+            <div>
+              <h2 style={{ fontSize: '22px', marginBottom: '8px' }}>Project Warehouse Records</h2>
+              <p style={{ color: '#666', margin: 0 }}>
+                แสดงรายการระดับโครงการทั้งหมดจาก warehouse สำหรับ installments และ transactions
+              </p>
+            </div>
+
+            {projectRowsLoading ? (
+              <div style={{ color: '#666' }}>กำลังโหลด project-level records...</div>
+            ) : null}
+
+            {projectRowsError ? (
+              <div
+                style={{
+                  color: '#912018',
+                  backgroundColor: '#fde8e8',
+                  border: '1px solid #de5b52',
+                  borderRadius: '12px',
+                  padding: '10px 12px',
+                }}
+              >
+                {projectRowsError}
+              </div>
+            ) : null}
+
+            {!projectRowsLoading && !projectRowsError ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
+                <section style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '18px' }}>Installments</h3>
+                    <p style={{ margin: '6px 0 0', color: '#666', fontSize: '14px' }}>
+                      {projectInstallmentRows.length} records in this project
+                    </p>
+                  </div>
+
+                  {projectInstallmentRows.length === 0 ? (
+                    <div style={{ color: '#666' }}>ไม่พบ installment records สำหรับโครงการนี้</div>
+                  ) : (
+                    <div className="project-detail-record-grid">
+                      {projectInstallmentRows.map((row) => (
+                        <WarehouseRecordCard
+                          key={row.id}
+                          row={row}
+                          projectName={passedProjectName || data.name}
+                          highlight={Boolean(deepLinkInstallmentId && row.sourceId === deepLinkInstallmentId)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                <section style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '18px' }}>Transactions</h3>
+                    <p style={{ margin: '6px 0 0', color: '#666', fontSize: '14px' }}>
+                      {projectTransactionRows.length} records in this project
+                    </p>
+                  </div>
+
+                  {projectTransactionRows.length === 0 ? (
+                    <div style={{ color: '#666' }}>ไม่พบ transaction records สำหรับโครงการนี้</div>
+                  ) : (
+                    <div className="project-detail-record-grid">
+                      {projectTransactionRows.map((row) => (
+                        <WarehouseRecordCard
+                          key={row.id}
+                          row={row}
+                          projectName={passedProjectName || data.name}
+                          highlight={Boolean(deepLinkTransactionId && row.sourceId === deepLinkTransactionId)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </div>
+            ) : null}
+          </div>
+
+          {deepLinkInstallmentId || deepLinkTransactionId ? (
+            <div
+              className="card"
+              style={{
+                backgroundColor: 'white',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '18px',
+              }}
+            >
+              <div>
+                <h2 style={{ fontSize: '22px', marginBottom: '8px' }}>Focused Records</h2>
+                <p style={{ color: '#666', margin: 0 }}>
+                  แสดงรายการที่ถูก deep link มาจาก Insight Warehouse โดยตรง
+                </p>
+              </div>
+
+              {focusedRowsLoading ? (
+                <div style={{ color: '#666' }}>กำลังโหลด focused records...</div>
+              ) : null}
+
+              {focusedRowsError ? (
+                <div
+                  style={{
+                    color: '#912018',
+                    backgroundColor: '#fde8e8',
+                    border: '1px solid #de5b52',
+                    borderRadius: '12px',
+                    padding: '10px 12px',
+                  }}
+                >
+                  {focusedRowsError}
+                </div>
+              ) : null}
+
+              {!focusedRowsLoading && !focusedRowsError && focusedRows.length === 0 ? (
+                <div style={{ color: '#666' }}>ไม่พบรายการที่ตรงกับ deep link นี้ใน warehouse records</div>
+              ) : null}
+
+              <div className="project-detail-record-grid">
+                {focusedRows.map((row) => (
+                  <WarehouseRecordCard
+                    key={row.id}
+                    row={row}
+                    projectName={passedProjectName || data.name}
+                    highlight
+                  />
+                ))}
+              </div>
             </div>
           ) : null}
+        </>
+      ) : null}
 
-          {!focusedRowsLoading && !focusedRowsError && focusedRows.length === 0 ? (
-            <div style={{ color: '#666' }}>ไม่พบรายการที่ตรงกับ deep link นี้ใน warehouse records</div>
-          ) : null}
-
-          <div className="project-detail-record-grid">
-            {focusedRows.map((row) => (
-              <WarehouseRecordCard
-                key={row.id}
-                row={row}
-                projectName={passedProjectName || data.name}
-                highlight
-              />
-            ))}
-          </div>
-        </div>
+      {activeProjectSection === 'inspection' ? (
+        <InspectionWorkspace projectId={projectId} projectName={passedProjectName || data.name} />
       ) : null}
     </div>
   );

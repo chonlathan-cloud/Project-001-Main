@@ -1,0 +1,75 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-brand-background: #fdf9f5;
+  --color-brand-on-background: #1c1b1a;
+  --color-brand-surface: #ffffff;
+  --color-brand-surface-dim: #ddd9d6;
+  --color-brand-surface-bright: #fdf9f5;
+  --color-brand-surface-container-lowest: #ffffff;
+  --color-brand-surface-container-low: #f7f3ef;
+  --color-brand-surface-container: #f1edea;
+  --color-brand-surface-container-high: #ebe7e4;
+  --color-brand-surface-container-highest: #e6e2de;
+  --color-brand-on-surface: #1c1b1a;
+  --color-brand-on-surface-variant: #414845;
+  --color-brand-outline: #717975;
+  --color-brand-outline-variant: #c1c8c4;
+  --color-brand-primary: #37574c;
+  --color-brand-on-primary: #ffffff;
+  --color-brand-primary-container: #4f6f64;
+  --color-brand-on-primary-container: #cdf1e3;
+  --color-brand-secondary: #705b32;
+  --color-brand-secondary-fixed-dim: #dfc391;
+  --color-brand-tertiary-container: #875e59;
+  --color-brand-error: #ba1a1a;
+  --color-brand-error-container: #ffdad6;
+  --color-brand-on-error-container: #93000a;
+  --color-brand-border-subtle: #e8e3df;
+  --color-brand-text-secondary: rgba(47, 46, 44, 0.6);
+  --color-brand-surface-tint: #45655a;
+  --color-brand-inverse-primary: #abcec1;
+  --color-brand-primary-fixed-dim: #abcec1;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+body {
+  background-color: var(--color-brand-background);
+  color: var(--color-brand-on-background);
+  font-family: var(--font-sans);
+}
+
+/* Custom Scrollbars */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-brand-outline-variant);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-brand-outline);
+}
+
+/* Print Styles */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+}
