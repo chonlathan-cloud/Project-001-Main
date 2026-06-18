@@ -1,4 +1,4 @@
-# Design System: Projects-001 Admin Portal (Modern Minimal)
+# Design System: RAYADEE-LIMITED (Modern Minimal)
 
 ## 1. Visual Identity & Vibe
 - **Core Concept:** "Modern Minimal Construction Management" — Clean, spacious, and highly legible for complex data (BOQs, Financials).
