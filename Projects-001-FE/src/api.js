@@ -1325,7 +1325,7 @@ export async function extractInputReceipt(file) {
     method: 'POST',
     headers: {},
     body: formData,
-    timeoutMs: 45000,
+    timeoutMs: 180000,
   });
 }
 

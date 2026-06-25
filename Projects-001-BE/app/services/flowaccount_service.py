@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -22,10 +23,20 @@ import httpx
 from app.core.config import Settings, get_settings
 from app.models.input_request import InputRequest
 
+logger = logging.getLogger(__name__)
+
 VAT_RATE = Decimal("0.07")
 LABOR_WHT_RATE = Decimal("3.00")
 TOKEN_REFRESH_SKEW_SECONDS = 300
 VAT_MODES = {"no_vat", "vat_inclusive", "vat_exclusive"}
+FLOWACCOUNT_CATEGORY_INT_FIELDS = {
+    "systemCode",
+    "categoryId",
+    "creditId",
+    "creditCategory",
+    "debitId",
+    "debitCategory",
+}
 
 _token_cache: dict[str, object] = {"access_token": None, "expires_at": 0.0}
 
@@ -92,7 +103,30 @@ def _format_quantity(value: object) -> float:
 
 def _safe_flowaccount_message(payload: Any, fallback: str) -> str:
     if isinstance(payload, dict):
-        for key in ("message", "error", "detail"):
+        validation_messages: list[str] = []
+
+        def collect_validation_messages(value: Any, path: str = "") -> None:
+            if len(validation_messages) >= 8:
+                return
+            if isinstance(value, dict):
+                for child_key, child_value in value.items():
+                    child_path = f"{path}.{child_key}" if path else str(child_key)
+                    collect_validation_messages(child_value, child_path)
+            elif isinstance(value, list):
+                for index, child_value in enumerate(value):
+                    collect_validation_messages(child_value, f"{path}[{index}]")
+            else:
+                message = _clean_text(value)
+                if message:
+                    validation_messages.append(f"{path}: {message}" if path else message)
+
+        for key in ("errors", "Errors", "modelState", "ModelState", "validationErrors", "ValidationErrors", "data", "Data"):
+            if key in payload:
+                collect_validation_messages(payload.get(key), key)
+        if validation_messages:
+            return "; ".join(validation_messages)[:500]
+
+        for key in ("message", "Message", "error", "Error", "detail", "Detail", "title", "Title"):
             value = _clean_text(payload.get(key))
             if value:
                 return value[:500]
@@ -102,10 +136,28 @@ def _safe_flowaccount_message(payload: Any, fallback: str) -> str:
     return fallback
 
 
+def _flowaccount_log_payload(payload: Any) -> str:
+    try:
+        return json.dumps(payload, ensure_ascii=False, default=str)[:2000]
+    except TypeError:
+        return str(payload)[:2000]
+
+
 def flowaccount_external_document_id(request_id: UUID | str, settings: Settings | None = None) -> str:
-    settings = settings or get_settings()
-    env_name = _clean_text(settings.app_env) or "development"
-    return f"projects-001:{env_name}:input-request:{request_id}"
+    cleaned = _clean_text(request_id)
+    if not cleaned:
+        return ""
+    try:
+        return str(UUID(cleaned))
+    except (TypeError, ValueError):
+        return cleaned[:36]
+
+
+def _request_external_document_id(input_request: InputRequest, settings: Settings | None = None) -> str:
+    saved_external_id = _clean_text(input_request.flowaccount_external_document_id)
+    if saved_external_id and len(saved_external_id) <= 36:
+        return saved_external_id
+    return flowaccount_external_document_id(input_request.id, settings)
 
 
 def is_flowaccount_configured(settings: Settings | None = None) -> bool:
@@ -118,17 +170,36 @@ def parse_expense_category_mapping(settings: Settings | None = None) -> dict[str
     raw_mapping = settings.flowaccount_expense_category_mapping_json
     if not raw_mapping:
         return {}
+    cleaned_mapping = raw_mapping.strip()
+    if (
+        len(cleaned_mapping) >= 2
+        and cleaned_mapping[0] == cleaned_mapping[-1]
+        and cleaned_mapping[0] in {"'", '"'}
+        and cleaned_mapping[1] == "{"
+    ):
+        cleaned_mapping = cleaned_mapping[1:-1]
     try:
-        parsed = json.loads(raw_mapping)
+        parsed = json.loads(cleaned_mapping)
     except json.JSONDecodeError as exc:
         raise FlowAccountError("FlowAccount expense category mapping JSON is invalid.") from exc
     if not isinstance(parsed, dict):
         raise FlowAccountError("FlowAccount expense category mapping must be a JSON object.")
-    return {
-        str(key): value
-        for key, value in parsed.items()
-        if isinstance(value, dict)
-    }
+    normalized_mapping: dict[str, dict[str, Any]] = {}
+    for key, value in parsed.items():
+        if not isinstance(value, dict):
+            continue
+        normalized_category = dict(value)
+        for field_name in FLOWACCOUNT_CATEGORY_INT_FIELDS:
+            if field_name not in normalized_category:
+                continue
+            try:
+                normalized_category[field_name] = int(str(normalized_category[field_name]).strip())
+            except (TypeError, ValueError) as exc:
+                raise FlowAccountError(
+                    f"FlowAccount category mapping field {key}.{field_name} must be numeric."
+                ) from exc
+        normalized_mapping[str(key)] = normalized_category
+    return normalized_mapping
 
 
 def request_wht_rate(input_request: InputRequest) -> Decimal:
@@ -151,7 +222,7 @@ def flowaccount_readiness(
     supplier_missing: list[str] = []
     supplier_errors: list[str] = []
     payment_missing: list[str] = []
-    external_id = input_request.flowaccount_external_document_id or flowaccount_external_document_id(input_request.id, settings)
+    external_id = _request_external_document_id(input_request, settings)
 
     if not settings.flowaccount_enabled:
         expense_errors.append("FlowAccount integration is disabled.")
@@ -215,9 +286,6 @@ def flowaccount_readiness(
             supplier_errors.append("vendor_tax_id must be 13 digits for P.P.30 Supplier Invoice.")
             supplier_invoice_ready = False
 
-    if input_request.is_duplicate_flag and not _clean_text(input_request.flowaccount_duplicate_override_reason):
-        expense_errors.append("Duplicate-flagged requests require Owner duplicate override before FlowAccount sync.")
-
     wht_rate = request_wht_rate(input_request)
     if wht_rate >= 100:
         expense_errors.append("accounting_wht_rate must be less than 100.")
@@ -260,8 +328,6 @@ def flowaccount_readiness(
         payment_missing.append("FLOWACCOUNT_DEFAULT_BANK_ACCOUNT_ID numeric value")
     if not _clean_text(input_request.payment_reference):
         payment_missing.append("payment_reference")
-    if vat_mode not in (None, "no_vat") and input_request.flowaccount_supplier_invoice_status != "SYNCED":
-        payment_missing.append("flowaccount_supplier_invoice_status")
 
     can_mark_paid = (
         settings.flowaccount_enabled
@@ -271,7 +337,8 @@ def flowaccount_readiness(
         and not payment_missing
     )
 
-    readiness_missing = list(dict.fromkeys(expense_missing + supplier_missing + payment_missing))
+    visible_payment_missing = payment_missing if expense_exists else []
+    readiness_missing = list(dict.fromkeys(expense_missing + supplier_missing + visible_payment_missing))
     readiness_errors = list(dict.fromkeys(expense_errors + supplier_errors))
     return FlowAccountReadiness(
         enabled=settings.flowaccount_enabled,
@@ -292,6 +359,12 @@ def apply_readiness_to_request(input_request: InputRequest, readiness: FlowAccou
     input_request.flowaccount_external_document_id = readiness.external_document_id
     if input_request.flowaccount_sync_status in (None, "", "NOT_READY") and readiness.ready:
         input_request.flowaccount_sync_status = "READY"
+    if (
+        input_request.flowaccount_sync_status == "PARTIAL_SYNC"
+        and _clean_text(input_request.flowaccount_expense_id)
+        and input_request.flowaccount_attachment_status != "FAILED"
+    ):
+        input_request.flowaccount_sync_status = "SYNCED"
 
 
 def _require_flowaccount_settings(settings: Settings) -> None:
@@ -327,11 +400,8 @@ def _document_amounts(input_request: InputRequest) -> dict[str, Decimal]:
         sub_total = grand_total
         wht_base = vatable_amount
     elif vat_mode == "vat_exclusive":
-        if wht_rate > 0:
-            divisor = Decimal("1") + VAT_RATE - wht_fraction
-            vatable_amount = (net_amount / divisor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        else:
-            vatable_amount = net_amount
+        divisor = Decimal("1") + VAT_RATE - wht_fraction
+        vatable_amount = (net_amount / divisor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         sub_total = vatable_amount
         total_after_discount = vatable_amount
         vat_amount = (vatable_amount * VAT_RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -478,6 +548,13 @@ class FlowAccountService:
             or response_status is False
             or code not in (None, 0, "0")
         ):
+            logger.warning(
+                "FlowAccount request failed method=%s path=%s status_code=%s payload=%s",
+                method,
+                path,
+                response.status_code,
+                _flowaccount_log_payload(payload),
+            )
             raise FlowAccountError(
                 _safe_flowaccount_message(payload, "FlowAccount request failed."),
                 status_code=response.status_code,
@@ -491,6 +568,7 @@ class FlowAccountService:
         amounts = _document_amounts(input_request)
         vat_mode = _clean_text(input_request.accounting_vat_mode) or "no_vat"
         wht_rate = amounts["wht_rate"]
+        use_inline_vat = True
 
         payload = {
             "expenseStructureType": "ExpenseInlineDocument",
@@ -501,7 +579,7 @@ class FlowAccountService:
             "publishedOn": _date_text(input_request.document_date or input_request.request_date),
             "projectName": project_name or "",
             "reference": input_request.receipt_no or "",
-            "externalDocumentId": input_request.flowaccount_external_document_id or flowaccount_external_document_id(input_request.id, self.settings),
+            "externalDocumentId": _request_external_document_id(input_request, self.settings),
             "isVatInclusive": vat_mode == "vat_inclusive",
             "isVat": vat_mode in {"vat_inclusive", "vat_exclusive"},
             "isManualVat": False,
@@ -512,7 +590,7 @@ class FlowAccountService:
             "totalAfterDiscount": _format_amount(amounts["total_after_discount"]),
             "vatAmount": _format_amount(amounts["vat_amount"]),
             "grandTotal": _format_amount(amounts["grand_total"]),
-            "documentShowWithholdingTax": wht_rate > 0,
+            "documentShowWithholdingTax": use_inline_vat or wht_rate > 0,
             "documentWithholdingTaxPercentage": _format_amount(wht_rate),
             "documentWithholdingTaxAmount": _format_amount(amounts["wht_amount"]),
             "remarks": input_request.note or "",
@@ -523,7 +601,7 @@ class FlowAccountService:
             "dueDate": _date_text(input_request.document_date or input_request.request_date),
             "discountType": 1,
             "useInlineDiscount": True,
-            "useInlineVat": True,
+            "useInlineVat": use_inline_vat,
             "exemptAmount": 0 if vat_mode in {"vat_inclusive", "vat_exclusive"} else _format_amount(amounts["total_after_discount"]),
             "vatableAmount": _format_amount(amounts["vatable_amount"]),
             "items": _line_item_payloads(input_request, mapping, amounts),

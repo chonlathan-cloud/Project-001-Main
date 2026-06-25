@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { CheckCheck, CircleDollarSign, ExternalLink, Filter, LoaderCircle, OctagonX, Save, TriangleAlert } from 'lucide-react';
+import { CheckCheck, CircleDollarSign, ExternalLink, Filter, LoaderCircle, OctagonX, Save, TriangleAlert, X } from 'lucide-react';
 import Loading from './components/Loading';
 import {
   approveAdminInputRequest,
@@ -56,6 +56,14 @@ const WORK_TYPE_OPTIONS = [
   { value: 'งานสถาปัตย์', label: 'งานสถาปัตย์' },
   { value: 'งานระบบ', label: 'งานระบบ' },
   { value: 'งานบริหารโครงการ', label: 'งานบริหารโครงการ' },
+];
+
+const REJECT_REASON_OPTIONS = [
+  'ข้อมูลไม่ครบ',
+  'ยอดเงินไม่ตรง',
+  'เอกสารไม่ชัดเจน',
+  'โปรเจ็คไม่ถูกต้อง',
+  'ข้อมูลภาษีไม่ครบ',
 ];
 
 const inputStyle = {
@@ -186,6 +194,9 @@ function ApprovalPage() {
   const [receiptPreviewError, setReceiptPreviewError] = useState('');
   const [technicalDetailsOpen, setTechnicalDetailsOpen] = useState(false);
   const [accountingReadiness, setAccountingReadiness] = useState(null);
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectDialogError, setRejectDialogError] = useState('');
 
   const selectedRequest = useMemo(
     () => requests.find((item) => item.request_id === selectedRequestId) || null,
@@ -320,6 +331,9 @@ function ApprovalPage() {
 
   useEffect(() => {
     setTechnicalDetailsOpen(false);
+    setRejectDialogOpen(false);
+    setRejectReason('');
+    setRejectDialogError('');
   }, [selectedRequestId]);
 
   useEffect(() => {
@@ -432,44 +446,68 @@ function ApprovalPage() {
 
   const handleSave = async () => {
     if (!selectedRequest) return;
-    const lineItemsForSave = normalizeLineItemsForSave(editor.line_items, selectedRequest);
-    const lineItemTotal = sumLineItems(lineItemsForSave);
 
-    if (!lineItemsForSave.length) {
-      setActionError('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ');
-      return;
-    }
-    if (lineItemTotal <= 0) {
-      setActionError('ยอดรวมรายการต้องมากกว่า 0');
+    if (!canSaveChanges) {
+      setActionError('รายการนี้ไม่สามารถบันทึกการแก้ไขได้');
       return;
     }
 
     try {
       setBusyAction('save');
       setActionError('');
-      const updated = await updateAdminInputRequest(selectedRequest.request_id, {
-        requester_name: editor.requester_name.trim(),
-        phone: editor.phone.trim() || null,
-        request_date: editor.request_date,
-        document_date: editor.document_date || null,
-        work_type: editor.work_type || null,
-        request_type: editor.request_type || null,
-        note: editor.note.trim() || null,
-        vendor_name: editor.vendor_name.trim() || null,
-        vendor_tax_id: editor.vendor_tax_id.trim() || null,
-        vendor_branch: editor.vendor_branch.trim() || null,
-        vendor_address: editor.vendor_address.trim() || null,
-        accounting_vat_mode: editor.accounting_vat_mode || null,
-        accounting_wht_rate: editor.accounting_wht_rate === '' ? null : Number(editor.accounting_wht_rate),
-        bank_account: {
-          bank_name: editor.bank_name.trim() || null,
-          account_no: editor.account_no.trim() || null,
-          account_name: editor.account_name.trim() || null,
-        },
-        receipt_no: editor.receipt_no.trim() || null,
-        amount: Number(lineItemTotal.toFixed(2)),
-        line_items: lineItemsForSave,
-      });
+      const savePayload = {
+        review_note: editor.review_note.trim() || null,
+        payment_reference: editor.payment_reference.trim() || null,
+      };
+
+      if (canEdit) {
+        const lineItemsForSave = normalizeLineItemsForSave(editor.line_items, selectedRequest);
+        const lineItemTotal = sumLineItems(lineItemsForSave);
+
+        if (!lineItemsForSave.length) {
+          setActionError('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ');
+          return;
+        }
+        if (lineItemTotal <= 0) {
+          setActionError('ยอดรวมรายการต้องมากกว่า 0');
+          return;
+        }
+
+        Object.assign(savePayload, {
+          requester_name: editor.requester_name.trim(),
+          phone: editor.phone.trim() || null,
+          request_date: editor.request_date,
+          document_date: editor.document_date || null,
+          work_type: editor.work_type || null,
+          request_type: editor.request_type || null,
+          note: editor.note.trim() || null,
+          vendor_name: editor.vendor_name.trim() || null,
+          vendor_tax_id: editor.vendor_tax_id.trim() || null,
+          vendor_branch: editor.vendor_branch.trim() || null,
+          vendor_address: editor.vendor_address.trim() || null,
+          accounting_vat_mode: editor.accounting_vat_mode || null,
+          accounting_wht_rate: editor.accounting_wht_rate === '' ? null : Number(editor.accounting_wht_rate),
+          bank_account: {
+            bank_name: editor.bank_name.trim() || null,
+            account_no: editor.account_no.trim() || null,
+            account_name: editor.account_name.trim() || null,
+          },
+          receipt_no: editor.receipt_no.trim() || null,
+          amount: Number(lineItemTotal.toFixed(2)),
+          line_items: lineItemsForSave,
+        });
+      }
+
+      if (canEditTaxFilingFields) {
+        Object.assign(savePayload, {
+          vendor_tax_id: editor.vendor_tax_id.trim() || null,
+          vendor_branch: editor.vendor_branch.trim() || null,
+          vendor_address: editor.vendor_address.trim() || null,
+          receipt_no: editor.receipt_no.trim() || null,
+        });
+      }
+
+      const updated = await updateAdminInputRequest(selectedRequest.request_id, savePayload);
       replaceRequest(updated);
       await refreshReceiptPreview(updated);
       setFlashMessage('บันทึกการแก้ไขเรียบร้อย');
@@ -507,19 +545,51 @@ function ApprovalPage() {
     }
   };
 
+  const openRejectDialog = () => {
+    if (!selectedRequest) return;
+    if (!canReject) {
+      setActionError('รายการนี้ไม่สามารถ reject ได้');
+      return;
+    }
+    setRejectReason(editor.review_note.trim());
+    setRejectDialogError('');
+    setActionError('');
+    setFlashMessage('');
+    setRejectDialogOpen(true);
+  };
+
+  const closeRejectDialog = () => {
+    if (busyAction === 'reject') return;
+    setRejectDialogOpen(false);
+    setRejectDialogError('');
+  };
+
+  const applyRejectReasonOption = (reason) => {
+    setRejectReason((current) => {
+      const trimmed = current.trim();
+      if (!trimmed) return reason;
+      if (trimmed.includes(reason)) return trimmed;
+      return `${trimmed}\n${reason}`;
+    });
+    setRejectDialogError('');
+  };
+
   const handleReject = async () => {
     if (!selectedRequest) return;
-    if (!editor.review_note.trim()) {
-      setActionError('กรุณาระบุเหตุผลก่อน reject');
+    const trimmedReason = rejectReason.trim();
+    if (!trimmedReason) {
+      setRejectDialogError('กรุณาระบุเหตุผลก่อน reject');
       return;
     }
 
     try {
       setBusyAction('reject');
       setActionError('');
+      setRejectDialogError('');
       const rejected = await rejectAdminInputRequest(selectedRequest.request_id, {
-        review_note: editor.review_note.trim(),
+        review_note: trimmedReason,
       });
+      setRejectDialogOpen(false);
       if (matchesFilters(rejected, filters)) {
         replaceRequest(rejected);
         await refreshReceiptPreview(rejected);
@@ -653,6 +723,18 @@ function ApprovalPage() {
   const canMutateApprovals = canMutateAdminData(getStoredAuthUser());
   const hasFlowAccountDocument = Boolean(selectedRequest?.flowaccount_expense_id);
   const canEdit = canMutateApprovals && selectedRequest ? isEditableStatus(selectedRequest.status) && !hasFlowAccountDocument : false;
+  const canEditTaxFilingFields =
+    canMutateApprovals &&
+    selectedRequest &&
+    selectedRequest.status === 'APPROVED' &&
+    hasFlowAccountDocument &&
+    selectedRequest.flowaccount_payment_status !== 'PAYMENT_SYNCED';
+  const canSaveMetadata =
+    canMutateApprovals &&
+    selectedRequest &&
+    isEditableStatus(selectedRequest.status) &&
+    selectedRequest.flowaccount_payment_status !== 'PAYMENT_SYNCED';
+  const canSaveChanges = canEdit || canSaveMetadata;
   const canApprove = canMutateApprovals && selectedRequest ? isReviewableStatus(selectedRequest.status) : false;
   const canReject = canApprove;
   const flowAccountEnabled = Boolean(accountingReadiness?.enabled);
@@ -668,16 +750,44 @@ function ApprovalPage() {
   const canRetrySupplierInvoice =
     canMutateApprovals &&
     hasFlowAccountDocument &&
-    selectedRequest?.flowaccount_supplier_invoice_status === 'FAILED';
+    selectedRequest?.accounting_vat_mode !== 'no_vat' &&
+    selectedRequest?.flowaccount_supplier_invoice_status !== 'SYNCED' &&
+    accountingReadiness?.can_sync_supplier_invoice;
   const canLinkFlowAccount =
     canMutateApprovals &&
     selectedRequest?.status === 'APPROVED' &&
     selectedRequest?.entry_type === 'EXPENSE' &&
     !hasFlowAccountDocument;
+  const readinessIssues = [
+    ...(accountingReadiness?.missing_fields || []),
+    ...(accountingReadiness?.errors || []),
+  ].map((item) => String(item || ''));
+  const hasPaymentConfigBlocker = readinessIssues.some((item) =>
+    item === 'FLOWACCOUNT_CLIENT_ID' ||
+    item === 'FLOWACCOUNT_CLIENT_SECRET' ||
+    item === 'FLOWACCOUNT_DEFAULT_PAYMENT_METHOD=transfer' ||
+    item === 'FLOWACCOUNT_DEFAULT_BANK_ACCOUNT_ID' ||
+    item === 'FLOWACCOUNT_DEFAULT_BANK_ACCOUNT_ID numeric value'
+  );
+  const hasDraftPaymentInputs = Boolean(cleanText(editor.payment_reference)) && Boolean(cleanText(editor.payment_date));
+  const canMarkPaidWithDraftPayment =
+    flowAccountEnabled &&
+    Boolean(accountingReadiness) &&
+    hasFlowAccountDocument &&
+    hasDraftPaymentInputs &&
+    !hasPaymentConfigBlocker;
   const canMarkPaid =
     canMutateApprovals &&
     selectedRequest?.status === 'APPROVED' &&
-    (!flowAccountEnabled || accountingReadiness?.can_mark_paid);
+    (!flowAccountEnabled || accountingReadiness?.can_mark_paid || canMarkPaidWithDraftPayment);
+  const inputVatNotReady =
+    selectedRequest?.accounting_vat_mode &&
+    selectedRequest.accounting_vat_mode !== 'no_vat' &&
+    hasFlowAccountDocument &&
+    selectedRequest?.flowaccount_supplier_invoice_status !== 'SYNCED' &&
+    !accountingReadiness?.can_sync_supplier_invoice;
+  const attachmentSandboxNote =
+    selectedRequest?.flowaccount_attachment_status === 'SYNCED';
   const canPreviewReceipt = Boolean(receiptPreview?.signed_url);
   const isPreviewImage = (receiptPreview?.content_type || '').startsWith('image/');
   const isPreviewPdf = (receiptPreview?.content_type || '') === 'application/pdf';
@@ -873,6 +983,18 @@ function ApprovalPage() {
                   </div>
                 ) : null}
 
+                {inputVatNotReady ? (
+                  <div style={{ color: '#8b5a00', backgroundColor: '#fff8e8', border: '1px solid #f0c36a', borderRadius: '12px', padding: '10px 12px', fontSize: '13px' }}>
+                    Expense can stay synced. Not ready for Input VAT / Supplier Invoice until vendor tax ID, branch, address, and receipt number are complete.
+                  </div>
+                ) : null}
+
+                {attachmentSandboxNote ? (
+                  <div style={{ color: '#44546a', backgroundColor: '#f4f7fb', border: '1px solid #cbd5e1', borderRadius: '12px', padding: '10px 12px', fontSize: '13px' }}>
+                    Receipt was uploaded to FlowAccount. Sandbox preview or download can still fail inside FlowAccount even when upload succeeded.
+                  </div>
+                ) : null}
+
                 {[selectedRequest.flowaccount_sync_error, selectedRequest.flowaccount_attachment_error, selectedRequest.flowaccount_supplier_invoice_error, selectedRequest.flowaccount_payment_error].filter(Boolean).length ? (
                   <div style={{ color: '#912018', backgroundColor: '#fde8e8', border: '1px solid #de5b52', borderRadius: '12px', padding: '10px 12px', fontSize: '13px' }}>
                     {[selectedRequest.flowaccount_sync_error, selectedRequest.flowaccount_attachment_error, selectedRequest.flowaccount_supplier_invoice_error, selectedRequest.flowaccount_payment_error].filter(Boolean).join(' | ')}
@@ -931,7 +1053,7 @@ function ApprovalPage() {
                         opacity: canRetrySupplierInvoice ? 1 : 0.55,
                       }}
                     >
-                      Retry Supplier Invoice
+                      {selectedRequest.flowaccount_supplier_invoice_status === 'FAILED' ? 'Retry Supplier Invoice' : 'Sync Supplier Invoice'}
                     </button>
 
                     <button
@@ -1136,7 +1258,7 @@ function ApprovalPage() {
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Receipt No</span>
-                  <input style={inputStyle} value={editor.receipt_no} onChange={handleEditorChange('receipt_no')} disabled={!canEdit} />
+                  <input style={inputStyle} value={editor.receipt_no} onChange={handleEditorChange('receipt_no')} disabled={!canEdit && !canEditTaxFilingFields} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Document Date</span>
@@ -1178,15 +1300,15 @@ function ApprovalPage() {
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor Tax ID</span>
-                  <input style={inputStyle} value={editor.vendor_tax_id} onChange={handleEditorChange('vendor_tax_id')} disabled={!canEdit} />
+                  <input style={inputStyle} value={editor.vendor_tax_id} onChange={handleEditorChange('vendor_tax_id')} disabled={!canEdit && !canEditTaxFilingFields} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor Branch</span>
-                  <input style={inputStyle} value={editor.vendor_branch} onChange={handleEditorChange('vendor_branch')} disabled={!canEdit} placeholder="สำนักงานใหญ่ / 00000" />
+                  <input style={inputStyle} value={editor.vendor_branch} onChange={handleEditorChange('vendor_branch')} disabled={!canEdit && !canEditTaxFilingFields} placeholder="สำนักงานใหญ่ / 00000" />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', gridColumn: '1 / -1' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor Address</span>
-                  <input style={inputStyle} value={editor.vendor_address} onChange={handleEditorChange('vendor_address')} disabled={!canEdit} />
+                  <input style={inputStyle} value={editor.vendor_address} onChange={handleEditorChange('vendor_address')} disabled={!canEdit && !canEditTaxFilingFields} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>WHT Rate (%)</span>
@@ -1194,7 +1316,7 @@ function ApprovalPage() {
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Payment Reference</span>
-                  <input style={inputStyle} value={editor.payment_reference} onChange={handleEditorChange('payment_reference')} disabled={!canMutateApprovals} />
+                  <input style={inputStyle} value={editor.payment_reference} onChange={handleEditorChange('payment_reference')} disabled={!canSaveMetadata} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: '600' }}>Payment Date</span>
@@ -1233,7 +1355,7 @@ function ApprovalPage() {
                   style={{ ...inputStyle, resize: 'vertical', minHeight: '78px' }}
                   value={editor.review_note}
                   onChange={handleEditorChange('review_note')}
-                  disabled={!canMutateApprovals}
+                  disabled={!canSaveMetadata}
                 />
               </label>
 
@@ -1242,7 +1364,7 @@ function ApprovalPage() {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={!!busyAction || !canEdit}
+                  disabled={!!busyAction || !canSaveChanges}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -1251,8 +1373,8 @@ function ApprovalPage() {
                     borderRadius: '12px',
                     border: '1px solid #d8cfbf',
                     backgroundColor: 'white',
-                    cursor: busyAction || !canEdit ? 'wait' : 'pointer',
-                    opacity: canEdit ? 1 : 0.55,
+                    cursor: busyAction || !canSaveChanges ? 'wait' : 'pointer',
+                    opacity: canSaveChanges ? 1 : 0.55,
                   }}
                 >
                   <Save size={16} />
@@ -1282,7 +1404,7 @@ function ApprovalPage() {
 
                 <button
                   type="button"
-                  onClick={handleReject}
+                  onClick={openRejectDialog}
                   disabled={!!busyAction || !canReject}
                   style={{
                     display: 'inline-flex',
@@ -1356,6 +1478,115 @@ function ApprovalPage() {
           )}
         </div>
       </div>
+
+      {rejectDialogOpen && selectedRequest ? (
+        <div className="approval-reject-scrim" onMouseDown={closeRejectDialog}>
+          <section
+            className="approval-reject-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="approval-reject-title"
+            aria-describedby="approval-reject-description"
+            onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') closeRejectDialog();
+            }}
+          >
+            <header className="approval-reject-header">
+              <div>
+                <span className="approval-reject-kicker">
+                  <OctagonX size={15} />
+                  Reject Request
+                </span>
+                <h3 id="approval-reject-title">ระบุเหตุผลการปฏิเสธ</h3>
+                <p id="approval-reject-description">
+                  เหตุผลนี้จะถูกบันทึกเป็น Review Note และแสดงในประวัติของคำขอ
+                </p>
+              </div>
+              <button
+                type="button"
+                className="approval-reject-close"
+                onClick={closeRejectDialog}
+                disabled={busyAction === 'reject'}
+                aria-label="Close reject dialog"
+              >
+                <X size={18} />
+              </button>
+            </header>
+
+            <div className="approval-reject-summary">
+              <div>
+                <span>Project</span>
+                <strong>{selectedRequest.project_name || '-'}</strong>
+              </div>
+              <div>
+                <span>Vendor</span>
+                <strong>{selectedRequest.vendor_name || '-'}</strong>
+              </div>
+              <div>
+                <span>Amount</span>
+                <strong>{Number(selectedRequest.approved_amount ?? selectedRequest.amount ?? 0).toLocaleString()} THB</strong>
+              </div>
+              <div>
+                <span>Receipt No.</span>
+                <strong>{selectedRequest.receipt_no || '-'}</strong>
+              </div>
+            </div>
+
+            <div className="approval-reject-reasons" aria-label="Quick reject reasons">
+              {REJECT_REASON_OPTIONS.map((reason) => (
+                <button
+                  type="button"
+                  key={reason}
+                  onClick={() => applyRejectReasonOption(reason)}
+                  disabled={busyAction === 'reject'}
+                >
+                  {reason}
+                </button>
+              ))}
+            </div>
+
+            <label className="approval-reject-field">
+              <span>เหตุผลการปฏิเสธ</span>
+              <textarea
+                rows={5}
+                value={rejectReason}
+                onChange={(event) => {
+                  setRejectReason(event.target.value);
+                  setRejectDialogError('');
+                }}
+                placeholder="เช่น ยอดเงินในใบเสร็จไม่ตรงกับยอดที่ขอเบิก กรุณาแก้ไขและส่งใหม่"
+                disabled={busyAction === 'reject'}
+                autoFocus
+              />
+            </label>
+
+            {rejectDialogError ? (
+              <div className="approval-reject-error">{rejectDialogError}</div>
+            ) : null}
+
+            <footer className="approval-reject-actions">
+              <button
+                type="button"
+                className="approval-reject-secondary"
+                onClick={closeRejectDialog}
+                disabled={busyAction === 'reject'}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="approval-reject-primary"
+                onClick={handleReject}
+                disabled={busyAction === 'reject' || !rejectReason.trim()}
+              >
+                <OctagonX size={16} />
+                {busyAction === 'reject' ? 'Rejecting...' : 'Confirm Reject'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </>
   );
 }

@@ -89,6 +89,11 @@ def _normalize_receipt_no(value: str | None) -> str | None:
     return cleaned.upper() if cleaned else None
 
 
+def _normalize_vendor_tax_id(value: str | None) -> str | None:
+    cleaned = "".join(character for character in str(value or "") if character.isdigit())
+    return cleaned or None
+
+
 def _duplicate_flag_value(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -631,10 +636,21 @@ async def extract_input_receipt(
             file_size_bytes=file_size_bytes,
             suggested_entry_type=extracted["suggested_entry_type"],
             vendor_name=extracted["vendor_name"],
+            vendor_tax_id=extracted["vendor_tax_id"],
+            vendor_branch=extracted["vendor_branch"],
+            vendor_address=extracted["vendor_address"],
             receipt_no=extracted["receipt_no"],
             document_date=extracted["document_date"],
             suggested_request_type=extracted["suggested_request_type"],
+            suggested_accounting_vat_mode=extracted["suggested_accounting_vat_mode"],
             total_amount=extracted["total_amount"],
+            subtotal_amount=extracted["subtotal_amount"],
+            vat_amount=extracted["vat_amount"],
+            vat_rate=extracted["vat_rate"],
+            line_items_total=extracted["line_items_total"],
+            line_items_complete=extracted["line_items_complete"],
+            page_count=extracted["page_count"],
+            warnings=extracted["warnings"],
             items=extracted["items"],
             ocr_raw_json=extracted["ocr_raw_json"],
             low_confidence_fields=extracted["low_confidence_fields"],
@@ -833,11 +849,7 @@ async def create_input_request(
         stored_work_type = None if request.entry_type == "INCOME" else _clean_optional_text(request.work_type)
         stored_request_type = None if request.entry_type == "INCOME" else _clean_optional_text(request.request_type)
         stored_tags = _request_tags(request.tags)
-        stored_amount = (
-            _line_item_total(request.line_items)
-            if request.line_items
-            else Decimal(str(request.amount))
-        )
+        stored_amount = _decimal_money(request.amount)
 
         record = InputRequest(
             project_id=request.project_id,
@@ -851,8 +863,12 @@ async def create_input_request(
             tags=stored_tags,
             note=_clean_optional_text(request.note),
             vendor_name=_clean_optional_text(request.vendor_name),
+            vendor_tax_id=_normalize_vendor_tax_id(request.vendor_tax_id),
+            vendor_branch=_clean_optional_text(request.vendor_branch),
+            vendor_address=_clean_optional_text(request.vendor_address),
             receipt_no=_normalize_receipt_no(request.receipt_no),
             document_date=request.document_date,
+            accounting_vat_mode=_clean_optional_text(request.accounting_vat_mode),
             bank_name=_clean_optional_text(request.bank_account.bank_name),
             account_no=_clean_optional_text(request.bank_account.account_no),
             account_name=_clean_optional_text(request.bank_account.account_name),
@@ -1078,20 +1094,42 @@ async def update_admin_input_request(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Input request in status '{input_request.status}' can no longer be edited.",
             )
+        requested_fields = set(request.model_fields_set)
+        has_line_item_updates = "line_items" in requested_fields
+        update_field_names = requested_fields - {"line_items"}
+        flowaccount_safe_update_fields = {
+            "review_note",
+            "payment_reference",
+            "vendor_tax_id",
+            "vendor_branch",
+            "vendor_address",
+            "receipt_no",
+        }
+        is_flowaccount_safe_update = not has_line_item_updates and update_field_names <= flowaccount_safe_update_fields
+
         if input_request.status == "APPROVED" and input_request.flowaccount_payment_status == "PAYMENT_SYNCED":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Input request can no longer be edited after FlowAccount payment sync.",
             )
-        if input_request.status == "APPROVED" and input_request.flowaccount_expense_id:
+        if (
+            input_request.status == "APPROVED"
+            and input_request.flowaccount_expense_id
+            and not is_flowaccount_safe_update
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Input request can no longer be edited after a FlowAccount document is linked or created.",
             )
 
-        line_item_updates = request.line_items
-        updates = request.model_dump(exclude_none=True, exclude={"line_items"})
-        if not updates:
+        line_item_updates = request.line_items if has_line_item_updates else None
+        if has_line_item_updates and line_item_updates is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="line_items cannot be null when provided.",
+            )
+        updates = request.model_dump(exclude_unset=True, exclude={"line_items"})
+        if not updates and not has_line_item_updates:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="At least one field is required for admin review update.",
@@ -1099,9 +1137,9 @@ async def update_admin_input_request(
 
         for field, value in updates.items():
             if field == "bank_account":
-                input_request.bank_name = _clean_optional_text(value.get("bank_name"))
-                input_request.account_no = _clean_optional_text(value.get("account_no"))
-                input_request.account_name = _clean_optional_text(value.get("account_name"))
+                input_request.bank_name = _clean_optional_text(value.get("bank_name")) if value else None
+                input_request.account_no = _clean_optional_text(value.get("account_no")) if value else None
+                input_request.account_name = _clean_optional_text(value.get("account_name")) if value else None
             elif field == "tags":
                 input_request.tags = _request_tags(value)
             elif field == "subcontractor_id":
@@ -1110,6 +1148,8 @@ async def update_admin_input_request(
                 input_request.amount = Decimal(str(value))
             elif field == "receipt_no":
                 input_request.receipt_no = _normalize_receipt_no(value)
+            elif field == "vendor_tax_id":
+                input_request.vendor_tax_id = _normalize_vendor_tax_id(value)
             elif field == "accounting_wht_rate":
                 input_request.accounting_wht_rate = Decimal(str(value)) if value is not None else None
             elif isinstance(value, str):
@@ -1372,33 +1412,37 @@ async def sync_input_request_to_flowaccount(
                 input_request.flowaccount_attachment_status = "FAILED"
                 input_request.flowaccount_attachment_error = str(exc.detail if isinstance(exc, HTTPException) else exc)
 
-        if (
-            input_request.accounting_vat_mode in {"vat_inclusive", "vat_exclusive"}
-            and input_request.flowaccount_supplier_invoice_status != "SYNCED"
-        ):
-            input_request.flowaccount_supplier_invoice_status = "SYNCING"
+        readiness = await _refresh_accounting_readiness(db, input_request, project_name)
+        if input_request.accounting_vat_mode in {"vat_inclusive", "vat_exclusive"}:
+            if input_request.flowaccount_supplier_invoice_status != "SYNCED" and readiness.can_sync_supplier_invoice:
+                input_request.flowaccount_supplier_invoice_status = "SYNCING"
+                input_request.flowaccount_supplier_invoice_error = None
+                await db.flush()
+                try:
+                    if receipt_bytes is None:
+                        receipt_bytes = await _download_request_receipt(input_request)
+                    payload = await service.create_supplier_invoice(
+                        input_request,
+                        expense_id=_expense_id_from_request(input_request),
+                        file_bytes=receipt_bytes,
+                        file_name=input_request.receipt_file_name,
+                    )
+                    supplier_data = flowaccount_document_data(payload)
+                    input_request.flowaccount_supplier_invoice_id = (
+                        str(supplier_data.get("recordId") or supplier_data.get("documentId") or "")
+                        or input_request.flowaccount_supplier_invoice_id
+                    )
+                    input_request.flowaccount_supplier_invoice_status = "SYNCED"
+                    input_request.flowaccount_supplier_invoice_synced_at = now
+                except (FlowAccountError, HTTPException) as exc:
+                    input_request.flowaccount_supplier_invoice_status = "FAILED"
+                    input_request.flowaccount_supplier_invoice_error = str(exc.detail if isinstance(exc, HTTPException) else exc)
+            elif input_request.flowaccount_supplier_invoice_status != "SYNCED":
+                input_request.flowaccount_supplier_invoice_status = "NOT_READY"
+                input_request.flowaccount_supplier_invoice_error = None
+        elif input_request.flowaccount_supplier_invoice_status != "SYNCED":
+            input_request.flowaccount_supplier_invoice_status = "NOT_REQUIRED"
             input_request.flowaccount_supplier_invoice_error = None
-            await db.flush()
-            try:
-                if receipt_bytes is None:
-                    receipt_bytes = await _download_request_receipt(input_request)
-                payload = await service.create_supplier_invoice(
-                    input_request,
-                    expense_id=_expense_id_from_request(input_request),
-                    file_bytes=receipt_bytes,
-                    file_name=input_request.receipt_file_name,
-                )
-                supplier_data = flowaccount_document_data(payload)
-                input_request.flowaccount_supplier_invoice_id = (
-                    str(supplier_data.get("recordId") or supplier_data.get("documentId") or "")
-                    or input_request.flowaccount_supplier_invoice_id
-                )
-                input_request.flowaccount_supplier_invoice_status = "SYNCED"
-                input_request.flowaccount_supplier_invoice_synced_at = now
-            except (FlowAccountError, HTTPException) as exc:
-                input_request.flowaccount_sync_status = "PARTIAL_SYNC"
-                input_request.flowaccount_supplier_invoice_status = "FAILED"
-                input_request.flowaccount_supplier_invoice_error = str(exc.detail if isinstance(exc, HTTPException) else exc)
 
         await _refresh_accounting_readiness(db, input_request, project_name)
         await db.commit()
@@ -1438,11 +1482,7 @@ async def retry_input_request_flowaccount_attachment(
             )
             input_request.flowaccount_attachment_status = "SYNCED"
             input_request.flowaccount_attachment_synced_at = datetime.now(timezone.utc)
-            supplier_synced_or_not_needed = (
-                input_request.accounting_vat_mode not in {"vat_inclusive", "vat_exclusive"}
-                or input_request.flowaccount_supplier_invoice_status == "SYNCED"
-            )
-            if input_request.flowaccount_sync_status == "PARTIAL_SYNC" and supplier_synced_or_not_needed:
+            if input_request.flowaccount_sync_status == "PARTIAL_SYNC":
                 input_request.flowaccount_sync_status = "SYNCED"
         except (FlowAccountError, HTTPException) as exc:
             input_request.flowaccount_attachment_status = "FAILED"
@@ -1603,6 +1643,11 @@ async def mark_paid_admin_input_request(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="payment_date is required before FlowAccount payment sync.",
+                )
+            if not _clean_optional_text(input_request.flowaccount_expense_id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Sync FlowAccount expense before marking paid.",
                 )
             readiness = await _refresh_accounting_readiness(db, input_request, project_name)
             if not readiness.can_mark_paid:

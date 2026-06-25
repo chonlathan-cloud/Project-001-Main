@@ -211,8 +211,12 @@ class InputRequestCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
     note: str | None = None
     vendor_name: str | None = None
+    vendor_tax_id: str | None = None
+    vendor_branch: str | None = None
+    vendor_address: str | None = None
     receipt_no: str | None = None
     document_date: date | None = None
+    accounting_vat_mode: str | None = None
     bank_account: BankAccountPayload = Field(default_factory=BankAccountPayload)
     amount: float | None = Field(default=None, gt=0)
     line_items: list[InputRequestLineItemPayload] = Field(default_factory=list)
@@ -243,7 +247,11 @@ class InputRequestCreate(BaseModel):
         "subcontractor_id",
         "note",
         "vendor_name",
+        "vendor_tax_id",
+        "vendor_branch",
+        "vendor_address",
         "receipt_no",
+        "accounting_vat_mode",
         "receipt_file_name",
         "receipt_content_type",
         "receipt_storage_key",
@@ -268,6 +276,15 @@ class InputRequestCreate(BaseModel):
             raise ValueError("Unsupported request_type.")
         return normalized
 
+    @field_validator("accounting_vat_mode")
+    @classmethod
+    def validate_accounting_vat_mode(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ACCOUNTING_VAT_MODE_VALUES:
+            raise ValueError("accounting_vat_mode must be no_vat, vat_inclusive, or vat_exclusive.")
+        return value
+
     @field_validator("request_date", "document_date", mode="before")
     @classmethod
     def validate_dates(cls, value: object) -> date | None:
@@ -284,7 +301,10 @@ class InputRequestCreate(BaseModel):
             total_amount = _line_items_total(self.line_items)
             if total_amount <= 0:
                 raise ValueError("line_items total amount must be greater than 0.")
-            self.amount = total_amount
+            if self.amount is None or self.amount <= 0:
+                self.amount = total_amount
+            else:
+                self.amount = _to_money(self.amount)
         elif self.amount is None or self.amount <= 0:
             raise ValueError("amount is required when line_items are not provided.")
 
@@ -428,6 +448,8 @@ class InputRequestAdminUpdate(BaseModel):
     accounting_vat_mode: str | None = None
     accounting_wht_rate: float | None = Field(default=None, ge=0, le=100)
     bank_account: BankAccountPayload | None = None
+    review_note: str | None = None
+    payment_reference: str | None = None
     amount: float | None = Field(default=None, gt=0)
     line_items: list[InputRequestLineItemPayload] | None = None
 
@@ -451,6 +473,8 @@ class InputRequestAdminUpdate(BaseModel):
         "vendor_address",
         "receipt_no",
         "accounting_vat_mode",
+        "review_note",
+        "payment_reference",
         mode="before",
     )
     @classmethod
@@ -611,10 +635,21 @@ class ReceiptExtractResponse(BaseModel):
     file_size_bytes: int
     suggested_entry_type: str
     vendor_name: str | None = None
+    vendor_tax_id: str | None = None
+    vendor_branch: str | None = None
+    vendor_address: str | None = None
     receipt_no: str | None = None
     document_date: str | None = None
     suggested_request_type: str | None = None
+    suggested_accounting_vat_mode: str | None = None
     total_amount: float = 0.0
+    subtotal_amount: float = 0.0
+    vat_amount: float = 0.0
+    vat_rate: float = 0.0
+    line_items_total: float = 0.0
+    line_items_complete: bool = True
+    page_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
     items: list[ReceiptExtractItem] = Field(default_factory=list)
     ocr_raw_json: dict | None = None
     low_confidence_fields: list[str] = Field(default_factory=list)

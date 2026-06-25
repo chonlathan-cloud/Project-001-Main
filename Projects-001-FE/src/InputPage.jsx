@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, CheckCircle2, ExternalLink, LoaderCircle, Plus, ReceiptText, RotateCcw, TriangleAlert, X } from 'lucide-react';
+import { ArrowUp, CheckCircle2, LoaderCircle, Plus, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Loading from './components/Loading';
 import ConstructionAnimation from './components/ConstructionAnimation';
@@ -13,6 +13,7 @@ import {
 } from './api';
 import { getStoredAuthUser } from './auth';
 import InputLineItemsEditor from './components/InputLineItemsEditor';
+import ReceiptOcrInspector from './components/ReceiptOcrInspector';
 import { createEmptyLineItem, sumLineItems } from './components/inputLineItemsUtils';
 
 const MotionDiv = motion.div;
@@ -56,6 +57,12 @@ const REQUEST_TYPE_OPTIONS = [
   { value: 'ค่าใช้จ่ายทั่วไป', label: 'ค่าใช้จ่ายทั่วไป' },
 ];
 
+const ACCOUNTING_VAT_MODE_OPTIONS = [
+  { value: 'no_vat', label: 'ไม่มี VAT' },
+  { value: 'vat_inclusive', label: 'VAT รวมในราคา' },
+  { value: 'vat_exclusive', label: 'VAT แยกจากราคา' },
+];
+
 const WORK_TYPE_ALIAS_MAP = {
   งานบริหาร: 'งานบริหารโครงการ',
 };
@@ -88,6 +95,11 @@ const normalizeRequestType = (value) => {
   return REQUEST_TYPE_OPTIONS.some((option) => option.value === normalized) ? normalized : '';
 };
 
+const normalizeAccountingVatMode = (value) => {
+  const cleaned = String(value || '').trim();
+  return ACCOUNTING_VAT_MODE_OPTIONS.some((option) => option.value === cleaned) ? cleaned : '';
+};
+
 const normalizeDateInputValue = (value) => {
   const cleaned = String(value || '').trim();
   if (!cleaned) return '';
@@ -117,7 +129,11 @@ const initialFormState = {
   tags: [],
   note: '',
   vendorName: '',
+  vendorTaxId: '',
+  vendorBranch: '',
+  vendorAddress: '',
   receiptNo: '',
+  accountingVatMode: '',
   bankName: '',
   accountNo: '',
   accountName: '',
@@ -130,6 +146,35 @@ const cleanText = (value) => String(value || '').trim();
 const toFiniteNumber = (value, fallback = 0) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+};
+
+const formatMoneyValue = (value) =>
+  toFiniteNumber(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+const getOcrWarnings = (data = {}) => {
+  const source =
+    data?.warnings ||
+    data?.ocr_raw_json?.normalized?.warnings ||
+    data?.ocr_raw_json?.warnings ||
+    [];
+  return Array.isArray(source) ? source.map(cleanText).filter(Boolean) : [];
+};
+
+const getOcrLineItemsTotal = (data = {}) => {
+  if (data?.line_items_total != null) return toFiniteNumber(data.line_items_total);
+  if (data?.ocr_raw_json?.normalized?.line_items_total != null) {
+    return toFiniteNumber(data.ocr_raw_json.normalized.line_items_total);
+  }
+  return Array.isArray(data?.items) ? sumLineItems(data.items) : 0;
+};
+
+const getPayableAmountFromOcr = (data = {}) => {
+  const totalAmount = toFiniteNumber(data?.total_amount);
+  if (totalAmount > 0) return totalAmount;
+  return getOcrLineItemsTotal(data);
 };
 
 const mergeTextValues = (...groups) => {
@@ -617,13 +662,41 @@ const formatOcrFieldLabel = (fieldName) => {
   const labels = {
     suggested_entry_type: 'ประเภทรายการ',
     vendor_name: 'ผู้ขาย / ร้านค้า',
+    vendor_tax_id: 'เลขผู้เสียภาษีผู้ขาย',
+    vendor_branch: 'สาขาผู้ขาย',
+    vendor_address: 'ที่อยู่ผู้ขาย',
     receipt_no: 'เลขที่ใบเสร็จ',
     document_date: 'วันที่เอกสาร',
     suggested_request_type: 'ประเภทการเบิก',
-    total_amount: 'ยอดรวม',
+    suggested_accounting_vat_mode: 'รูปแบบ VAT',
+    total_amount: 'ยอดชำระจริง',
+    subtotal_amount: 'ยอดก่อน VAT',
+    vat_amount: 'VAT',
+    vat_rate: 'อัตรา VAT',
+    line_items_total: 'รวมรายการ',
+    line_items_complete: 'ความครบถ้วนของรายการ',
     items: 'รายการสินค้า/บริการ',
   };
   return labels[fieldName] || fieldName;
+};
+
+const buildOcrWarningText = (data = {}) => {
+  const parts = [];
+  const lowConfidenceFields = Array.isArray(data?.low_confidence_fields)
+    ? data.low_confidence_fields
+    : Array.isArray(data?.ocr_low_confidence_fields)
+      ? data.ocr_low_confidence_fields
+      : [];
+  const warnings = getOcrWarnings(data);
+
+  if (lowConfidenceFields.length) {
+    parts.push(`OCR ยังไม่มั่นใจในบางช่อง: ${lowConfidenceFields.map(formatOcrFieldLabel).join(', ')}`);
+  }
+  if (warnings.length) {
+    parts.push(warnings.join(' '));
+  }
+
+  return parts.length ? `${parts.join(' ')} กรุณาตรวจและแก้ไขก่อนส่ง` : '';
 };
 
 const InputPage = () => {
@@ -754,7 +827,11 @@ const InputPage = () => {
     setForm((current) => ({
       ...current,
       lineItems: normalizedLineItems,
-      amount: totalAmount ? String(Number(totalAmount.toFixed(2))) : '',
+      amount: extractData && current.amount
+        ? current.amount
+        : totalAmount
+          ? String(Number(totalAmount.toFixed(2)))
+          : '',
     }));
   };
 
@@ -845,6 +922,7 @@ const InputPage = () => {
         suggested_entry_type:
           normalizeEntryType(extracted.suggested_entry_type) || initialFormState.entryType,
         suggested_request_type: normalizeRequestType(extracted.suggested_request_type),
+        suggested_accounting_vat_mode: normalizeAccountingVatMode(extracted.suggested_accounting_vat_mode),
       };
 
       setExtractData(normalizedExtracted);
@@ -863,24 +941,30 @@ const InputPage = () => {
               requestType: nextRequestType,
             });
         const nextLineItemTotal = sumLineItems(nextLineItems);
+        const nextPayableAmount = getPayableAmountFromOcr(normalizedExtracted);
         const nextRequestDetail = current.note || (hasMeaningfulLineItems(nextLineItems) ? '' : buildRequestDetailFromOcr(normalizedExtracted));
+        const resolvedAmount =
+          current.amount ||
+          (nextPayableAmount > 0
+            ? String(Number(nextPayableAmount.toFixed(2)))
+            : nextLineItemTotal > 0
+              ? String(Number(nextLineItemTotal.toFixed(2)))
+              : '');
 
         return {
           ...current,
           entryType: nextEntryType,
-          amount: current.amount
-            ? current.amount
-            : nextLineItemTotal
-              ? String(Number(nextLineItemTotal.toFixed(2)))
-              : normalizedExtracted.total_amount == null
-                ? ''
-                : String(normalizedExtracted.total_amount),
+          amount: resolvedAmount,
           documentDate: current.documentDate || normalizeDateInputValue(normalizedExtracted.document_date),
           workType: nextEntryType === 'INCOME' ? '' : current.workType,
           customWorkType: nextEntryType === 'INCOME' ? '' : current.customWorkType,
           requestType: nextEntryType === 'INCOME' ? '' : nextRequestType,
           vendorName: current.vendorName || normalizedExtracted.vendor_name || '',
+          vendorTaxId: current.vendorTaxId || normalizedExtracted.vendor_tax_id || '',
+          vendorBranch: current.vendorBranch || normalizedExtracted.vendor_branch || '',
+          vendorAddress: current.vendorAddress || normalizedExtracted.vendor_address || '',
           receiptNo: current.receiptNo || normalizedExtracted.receipt_no || '',
+          accountingVatMode: current.accountingVatMode || normalizedExtracted.suggested_accounting_vat_mode || '',
           note: nextRequestDetail,
           lineItems: nextLineItems,
         };
@@ -946,7 +1030,8 @@ const InputPage = () => {
       workType: normalizedWorkType,
       requestType: normalizedRequestType,
     });
-    const numericAmount = Number(sumLineItems(normalizedLineItems).toFixed(2));
+    const enteredAmount = toFiniteNumber(form.amount);
+    const numericAmount = Number((enteredAmount > 0 ? enteredAmount : sumLineItems(normalizedLineItems)).toFixed(2));
 
     if (isIncomeRequest && normalizedTags.length === 0) {
       setSubmitError('รายการรายรับต้องมีแท็กอย่างน้อย 1 รายการ');
@@ -994,7 +1079,11 @@ const InputPage = () => {
         tags: normalizedTags,
         note: form.note.trim() || null,
         vendor_name: form.vendorName.trim() || null,
+        vendor_tax_id: form.vendorTaxId.trim() || null,
+        vendor_branch: form.vendorBranch.trim() || null,
+        vendor_address: form.vendorAddress.trim() || null,
         receipt_no: form.receiptNo.trim() || null,
+        accounting_vat_mode: normalizeAccountingVatMode(form.accountingVatMode) || null,
         bank_account: {
           bank_name: form.bankName.trim() || null,
           account_no: form.accountNo.trim() || null,
@@ -1054,12 +1143,6 @@ const InputPage = () => {
   }
 
   const isIncome = form.entryType === 'INCOME';
-  const canPreviewLocalReceipt = Boolean(localReceiptPreviewUrl && selectedFile);
-  const isLocalReceiptImage = (selectedFile?.type || '').startsWith('image/');
-  const isLocalReceiptPdf = (selectedFile?.type || '') === 'application/pdf';
-  const canPreviewSubmittedReceipt = Boolean(submitReceiptPreview?.signed_url);
-  const isSubmittedReceiptImage = (submitReceiptPreview?.content_type || '').startsWith('image/');
-  const isSubmittedReceiptPdf = (submitReceiptPreview?.content_type || '') === 'application/pdf';
   const projectOptions = projects.map((project) => ({
     value: project.project_id,
     label: project.name,
@@ -1069,7 +1152,11 @@ const InputPage = () => {
   const selectedTags = normalizeTags(form.tags);
   const formLineItems = normalizeFormLineItems(form.lineItems);
   const numericFormAmount = sumLineItems(formLineItems);
+  const numericPayableAmount = toFiniteNumber(form.amount);
   const hasValidLineItems = formLineItems.some((item) => cleanText(item.description)) && numericFormAmount > 0;
+  const hasValidPayableAmount = numericPayableAmount > 0 || numericFormAmount > 0;
+  const extractWarningText = buildOcrWarningText(extractData);
+  const submitOcrWarningText = buildOcrWarningText(submitResult);
   const isSubmitDisabled =
     isSubmitting ||
     isExtracting ||
@@ -1078,6 +1165,7 @@ const InputPage = () => {
     !form.requesterName.trim() ||
     !form.requestDate ||
     !hasValidLineItems ||
+    !hasValidPayableAmount ||
     (isIncome && selectedTags.length === 0) ||
     (!isIncome && form.workType === OTHER_WORK_TYPE_VALUE && !form.customWorkType.trim()) ||
     (!selectedFile && !uploadedReceipt);
@@ -1355,6 +1443,38 @@ const InputPage = () => {
                 onChange={handleFieldChange('vendorName')}
               />
 
+              <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                <InputField
+                  label="เลขผู้เสียภาษีผู้ขาย"
+                  placeholder="ถ้ามีในใบเสร็จ"
+                  inputMode="numeric"
+                  value={form.vendorTaxId}
+                  onChange={handleFieldChange('vendorTaxId')}
+                />
+                <InputField
+                  label="สาขาผู้ขาย"
+                  placeholder="สำนักงานใหญ่ / เลขสาขา"
+                  value={form.vendorBranch}
+                  onChange={handleFieldChange('vendorBranch')}
+                />
+              </div>
+
+              <TextAreaField
+                label="ที่อยู่ผู้ขาย"
+                placeholder="ถ้ามีในใบเสร็จ"
+                value={form.vendorAddress}
+                onChange={handleFieldChange('vendorAddress')}
+                style={{ width: '100%' }}
+              />
+
+              <SelectField
+                label="รูปแบบ VAT"
+                placeholder="กรุณาเลือกถ้ามี VAT"
+                options={ACCOUNTING_VAT_MODE_OPTIONS}
+                value={form.accountingVatMode}
+                onChange={handleFieldChange('accountingVatMode')}
+              />
+
               <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
                 3. บัญชีรับเงิน
               </div>
@@ -1366,15 +1486,20 @@ const InputPage = () => {
                   value={form.bankName}
                   onChange={handleFieldChange('bankName')}
                 />
-                <InputField
-                  label="ยอดรวมจากรายการ"
-                  placeholder="คำนวณจาก line items"
-                  type="number"
-                  inputMode="decimal"
-                  value={numericFormAmount ? Number(numericFormAmount.toFixed(2)) : ''}
-                  onChange={handleFieldChange('amount')}
-                  disabled
-                />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <InputField
+                    label="ยอดชำระจริง"
+                    placeholder="ยอดที่จ่ายตามเอกสาร"
+                    type="number"
+                    inputMode="decimal"
+                    value={form.amount}
+                    onChange={handleFieldChange('amount')}
+                    disabled={isExtracting || isSubmitting}
+                  />
+                  <div style={{ color: 'var(--text-muted)', fontSize: '12px', lineHeight: 1.4 }}>
+                    รวม line items: {formatMoneyValue(numericFormAmount)} บาท
+                  </div>
+                </div>
               </div>
 
               <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
@@ -1439,19 +1564,23 @@ const InputPage = () => {
           className="input-preview-panel"
           layout
           style={{
-            flex: 1,
+            flex: '0 0 min(520px, 42vw)',
+            maxWidth: '520px',
             backgroundColor: 'var(--bg-primary)',
-            minHeight: '760px',
+            minHeight: '640px',
             borderRadius: '12px',
             display: 'flex',
             alignItems: 'stretch',
-            justifyContent: 'center',
-            position: 'relative',
-            overflow: 'hidden',
+            justifyContent: 'stretch',
+            position: 'sticky',
+            top: '20px',
+            maxHeight: 'calc(100vh - 40px)',
+            overflowY: 'auto',
+            overflowX: 'hidden',
             border: '1px solid var(--border-color)',
           }}
         >
-          <div style={{ width: '100%', padding: '28px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="input-preview-panel-shell">
             <AnimatePresence mode="wait">
               {submitResult ? (
                 <MotionDiv
@@ -1459,7 +1588,7 @@ const InputPage = () => {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
-                  style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}
+                  className="input-preview-stack"
                 >
                   <StatusBanner
                     tone="success"
@@ -1471,143 +1600,16 @@ const InputPage = () => {
                       text={submitResult.duplicate_reason || 'พบรายการซ้ำตามกฎเลขที่ใบเสร็จ + วันที่ + จำนวนเงิน'}
                     />
                   ) : null}
-                  {submitResult.ocr_low_confidence_fields?.length ? (
-                    <StatusBanner
-                      tone="warning"
-                      text={`OCR ยังไม่มั่นใจในบางช่อง: ${submitResult.ocr_low_confidence_fields.map(formatOcrFieldLabel).join(', ')}`}
-                    />
-                  ) : null}
-                  <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
-                    <h2 style={{ fontSize: '22px', marginBottom: '16px' }}>สรุปคำขอ</h2>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                      <div><strong>เลขคำขอ:</strong> {submitResult.request_id}</div>
-                      <div><strong>โครงการ:</strong> {submitResult.project_name}</div>
-                      <div><strong>ประเภทรายการ:</strong> {formatEntryTypeLabel(submitResult.entry_type)}</div>
-                      <div><strong>ผู้ส่งคำขอ:</strong> {submitResult.requester_name}</div>
-                      <div><strong>ผู้ขาย / ร้านค้า:</strong> {submitResult.vendor_name || '-'}</div>
-                      <div><strong>เลขที่ใบเสร็จ:</strong> {submitResult.receipt_no || '-'}</div>
-                      <div><strong>ประเภทงาน:</strong> {submitResult.work_type || '-'}</div>
-                      <div><strong>ประเภทการเบิก:</strong> {submitResult.request_type || '-'}</div>
-                      <div><strong>วันที่เอกสาร:</strong> {submitResult.document_date || '-'}</div>
-                      <div><strong>จำนวนเงิน:</strong> {Number(submitResult.amount || 0).toLocaleString()} บาท</div>
-                      <div><strong>แท็ก:</strong> {normalizeTags(submitResult.tags).join(', ') || '-'}</div>
-                      <div><strong>สถานะ:</strong> {formatStatusLabel(submitResult.status)}</div>
-                    </div>
-                  </div>
-                  {submitResult.line_items?.length ? (
-                    <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
-                      <h2 style={{ fontSize: '22px', marginBottom: '16px' }}>รายการที่บันทึก</h2>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {submitResult.line_items.map((item) => (
-                          <div
-                            key={item.id || `${item.line_no}-${item.description}`}
-                            style={{
-                              display: 'grid',
-                              gridTemplateColumns: '1fr auto',
-                              gap: '12px',
-                              padding: '10px 12px',
-                              borderRadius: '8px',
-                              backgroundColor: 'var(--bg-primary)',
-                              fontSize: '13px',
-                            }}
-                          >
-                            <span>{item.description}</span>
-                            <strong>{Number(item.amount || 0).toLocaleString()} บาท</strong>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
-                      <div>
-                        <h2 style={{ fontSize: '22px', margin: 0 }}>ตัวอย่างใบเสร็จ</h2>
-                        <div style={{ color: '#666', marginTop: '6px', fontSize: '13px' }}>
-                          {submitResult.receipt_file_name || 'ไม่มีไฟล์แนบ'}
-                        </div>
-                      </div>
-                      {canPreviewSubmittedReceipt ? (
-                        <a
-                          href={submitReceiptPreview.signed_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            textDecoration: 'none',
-                            color: 'var(--secondary)',
-                            backgroundColor: 'var(--card-bg)',
-                            border: '1px solid var(--secondary)',
-                            borderRadius: '8px',
-                            padding: '10px 12px',
-                            fontSize: '13px',
-                            fontWeight: '600',
-                          }}
-                        >
-                          <ExternalLink size={16} />
-                          <span>เปิดใบเสร็จ</span>
-                        </a>
-                      ) : null}
-                    </div>
-
-                    {submitReceiptPreviewLoading ? (
-                      <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
-                        กำลังโหลดลิงก์ไฟล์...
-                      </div>
-                    ) : null}
-
-                    {submitReceiptPreviewError ? (
-                      <div style={{ color: '#912018', backgroundColor: '#fde8e8', border: '1px solid #de5b52', borderRadius: '12px', padding: '12px 14px' }}>
-                        {submitReceiptPreviewError}
-                      </div>
-                    ) : null}
-
-                    {!submitResult.receipt_storage_key && !submitReceiptPreviewLoading ? (
-                      <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
-                        คำขอนี้ไม่มีไฟล์ใบเสร็จที่เก็บไว้
-                      </div>
-                    ) : null}
-
-                    {canPreviewSubmittedReceipt && isSubmittedReceiptImage ? (
-                      <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
-                        <img
-                          src={submitReceiptPreview.signed_url}
-                          alt={submitReceiptPreview.file_name || 'ตัวอย่างใบเสร็จ'}
-                          style={{
-                            width: '100%',
-                            maxHeight: '360px',
-                            objectFit: 'contain',
-                            borderRadius: '12px',
-                            display: 'block',
-                            backgroundColor: 'var(--card-bg)',
-                          }}
-                        />
-                      </div>
-                    ) : null}
-
-                    {canPreviewSubmittedReceipt && isSubmittedReceiptPdf ? (
-                      <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
-                        <iframe
-                          src={submitReceiptPreview.signed_url}
-                          title={submitReceiptPreview.file_name || 'ตัวอย่างใบเสร็จ PDF'}
-                          style={{
-                            width: '100%',
-                            height: '520px',
-                            border: 'none',
-                            borderRadius: '12px',
-                            backgroundColor: 'var(--card-bg)',
-                          }}
-                        />
-                      </div>
-                    ) : null}
-
-                    {canPreviewSubmittedReceipt && !isSubmittedReceiptImage && !isSubmittedReceiptPdf ? (
-                      <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
-                        ไฟล์นี้ไม่ใช่รูปภาพ ใช้ปุ่มเปิดใบเสร็จเพื่อเปิดไฟล์ต้นฉบับ
-                      </div>
-                    ) : null}
-                  </div>
+                  <ReceiptOcrInspector
+                    mode="submitted"
+                    submitResult={submitResult}
+                    warningText={submitOcrWarningText}
+                    submitReceiptPreview={submitReceiptPreview}
+                    submitReceiptPreviewLoading={submitReceiptPreviewLoading}
+                    submitReceiptPreviewError={submitReceiptPreviewError}
+                    formatEntryTypeLabel={formatEntryTypeLabel}
+                    formatStatusLabel={formatStatusLabel}
+                  />
                 </MotionDiv>
               ) : extractData ? (
                 <MotionDiv
@@ -1615,91 +1617,16 @@ const InputPage = () => {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
-                  style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}
+                  className="input-preview-stack"
                 >
-                  {extractData.low_confidence_fields?.length ? (
-                    <StatusBanner
-                      tone="warning"
-                      text={`OCR ยังไม่มั่นใจในบางช่อง: ${extractData.low_confidence_fields.map(formatOcrFieldLabel).join(', ')} กรุณาตรวจและแก้ไขก่อนส่ง`}
-                    />
-                  ) : null}
-                  <div className="card" style={{ backgroundColor: 'var(--card-bg)', borderRadius: '12px', padding: '24px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                      <ReceiptText size={20} />
-                      <h2 style={{ fontSize: '22px', margin: 0 }}>ตัวอย่างข้อมูล OCR</h2>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '18px' }}>
-                      <strong>ใบเสร็จที่อัปโหลด</strong>
-
-                      {canPreviewLocalReceipt && isLocalReceiptImage ? (
-                        <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
-                          <img
-                            src={localReceiptPreviewUrl}
-                            alt={selectedFile?.name || 'ตัวอย่างใบเสร็จที่อัปโหลด'}
-                            style={{
-                              width: '100%',
-                              maxHeight: '360px',
-                              objectFit: 'contain',
-                              borderRadius: '12px',
-                              display: 'block',
-                              backgroundColor: 'var(--card-bg)',
-                            }}
-                          />
-                        </div>
-                      ) : null}
-
-                      {canPreviewLocalReceipt && isLocalReceiptPdf ? (
-                        <div style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px' }}>
-                          <iframe
-                            src={localReceiptPreviewUrl}
-                            title={selectedFile?.name || 'ตัวอย่างใบเสร็จ PDF ที่อัปโหลด'}
-                            style={{
-                              width: '100%',
-                              height: '520px',
-                              border: 'none',
-                              borderRadius: '12px',
-                              backgroundColor: 'var(--card-bg)',
-                            }}
-                          />
-                        </div>
-                      ) : null}
-
-                      {canPreviewLocalReceipt && !isLocalReceiptImage && !isLocalReceiptPdf ? (
-                        <div style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px 16px' }}>
-                          ไฟล์นี้ไม่สามารถแสดงตัวอย่างในเบราว์เซอร์ได้ แต่ระบบยังใช้ไฟล์นี้อ่าน OCR ได้
-                        </div>
-                      ) : null}
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '18px' }}>
-                      <div><strong>ไฟล์:</strong> {extractData.file_name}</div>
-                      <div><strong>ผู้ขาย / ร้านค้า:</strong> {extractData.vendor_name || '-'}</div>
-                      <div><strong>เลขที่ใบเสร็จ:</strong> {extractData.receipt_no || '-'}</div>
-                      <div><strong>วันที่:</strong> {extractData.document_date || '-'}</div>
-                      <div><strong>ประเภทที่ระบบแนะนำ:</strong> {extractData.suggested_request_type || '-'}</div>
-                      <div><strong>ยอดรวม:</strong> {Number(extractData.total_amount || 0).toLocaleString()} บาท</div>
-                      <div><strong>ประเภทรายการ:</strong> {formatEntryTypeLabel(extractData.suggested_entry_type)}</div>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {extractData.items?.map((item, index) => (
-                        <div
-                          key={`${item.description}-${index}`}
-                          style={{
-                            backgroundColor: 'var(--bg-primary)',
-                            borderRadius: '14px',
-                            padding: '12px 14px',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            gap: '12px',
-                          }}
-                        >
-                          <span>{item.description}</span>
-                          <span>
-                            {toFiniteNumber(item.qty, 1)} x {toFiniteNumber(item.price).toLocaleString()} = {toFiniteNumber(item.amount, toFiniteNumber(item.qty, 1) * toFiniteNumber(item.price)).toLocaleString()} บาท
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <ReceiptOcrInspector
+                    mode="extract"
+                    extractData={extractData}
+                    warningText={extractWarningText}
+                    selectedFile={selectedFile}
+                    localReceiptPreviewUrl={localReceiptPreviewUrl}
+                    formatEntryTypeLabel={formatEntryTypeLabel}
+                  />
                 </MotionDiv>
               ) : (
                 <MotionDiv
