@@ -1594,8 +1594,39 @@ export async function signUpSubcontractor(payload) {
   });
 }
 
+export async function submitAccessRequest(payload) {
+  const formData = new FormData();
+  formData.append('provider', payload.provider || 'line');
+  formData.append('email', payload.email || '');
+  formData.append('line_uid', payload.lineUid || '');
+  formData.append('picture_url', payload.pictureUrl || payload.linePictureUrl || '');
+  formData.append('display_name', payload.displayName || payload.name || '');
+  formData.append('requested_account_type', payload.requestedAccountType || '');
+  formData.append('company_name', payload.companyName || payload.name || '');
+  formData.append('contact_name', payload.contactName || '');
+  formData.append('phone', payload.phone || '');
+  formData.append('tax_id', payload.taxId || '');
+  formData.append('bank_name', payload.bankName || '');
+  formData.append('account_no', payload.accountNo || '');
+  formData.append('account_name', payload.accountName || '');
+  if (payload.kycImage) {
+    formData.append('kyc_image', payload.kycImage);
+  }
+
+  return apiRequest('/api/v1/auth/access-request', {
+    method: 'POST',
+    headers: {},
+    body: formData,
+    timeoutMs: 90000,
+  });
+}
+
 export async function getCurrentSessionUser() {
   return apiRequest('/api/v1/auth/me');
+}
+
+export async function getAccessRequestStatus() {
+  return apiRequest('/api/v1/auth/access-request/status');
 }
 
 export async function updateCurrentProfile(payload) {
@@ -1603,6 +1634,10 @@ export async function updateCurrentProfile(payload) {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+}
+
+export async function getCurrentProfile() {
+  return apiRequest('/api/v1/profile/me');
 }
 
 export async function uploadProfileAvatar(file) {
@@ -1660,6 +1695,26 @@ export async function updateSettingAdmin(adminId, payload) {
   return apiRequest(`/api/v1/settings/admins/${adminId}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
+  });
+}
+
+export async function getSettingAccessRequests(status = 'pending') {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  const data = await apiRequest(`/api/v1/settings/access-requests${query}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function approveSettingAccessRequest(requestId, payload) {
+  return apiRequest(`/api/v1/settings/access-requests/${requestId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function rejectSettingAccessRequest(requestId, payload) {
+  return apiRequest(`/api/v1/settings/access-requests/${requestId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify(payload || {}),
   });
 }
 

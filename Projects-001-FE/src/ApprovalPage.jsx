@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { CheckCheck, CircleDollarSign, ExternalLink, Filter, LoaderCircle, OctagonX, Save, TriangleAlert, X } from 'lucide-react';
+import { CheckCheck, CircleDollarSign, OctagonX, Save, X } from 'lucide-react';
 import Loading from './components/Loading';
 import {
   approveAdminInputRequest,
@@ -17,7 +17,17 @@ import {
   updateAdminInputRequest,
 } from './api';
 import { canMutateAdminData, getStoredAuthUser } from './auth';
-import ApprovalPaymentInstructions from './components/ApprovalPaymentInstructions';
+import {
+  ApprovalActionBar,
+  ApprovalAlertStack,
+  ApprovalEvidencePanel,
+  ApprovalField,
+  ApprovalFlowAccountChecklist,
+  ApprovalFormSection,
+  ApprovalQueuePanel,
+  ApprovalRequestHeader,
+  ApprovalSummaryStrip,
+} from './components/ApprovalWorkspace';
 import InputLineItemsEditor from './components/InputLineItemsEditor';
 import { createEmptyLineItem, sumLineItems } from './components/inputLineItemsUtils';
 
@@ -66,14 +76,11 @@ const REJECT_REASON_OPTIONS = [
   'ข้อมูลภาษีไม่ครบ',
 ];
 
-const inputStyle = {
-  width: '100%',
-  padding: '10px 12px',
-  borderRadius: '12px',
-  border: '1px solid #d8cfbf',
-  backgroundColor: '#faf7f1',
-  fontSize: '14px',
-  outline: 'none',
+const approvalActionIcons = {
+  save: Save,
+  approve: CheckCheck,
+  reject: OctagonX,
+  paid: CircleDollarSign,
 };
 
 const emptyEditor = {
@@ -125,6 +132,11 @@ const toNumber = (value, fallback = 0) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
 };
+const formatDialogAmount = (value) =>
+  `${Number(value || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} THB`;
 const normalizeEditorLineItems = (items = [], fallbackRequest = null) => {
   const sourceItems = Array.isArray(items) && items.length ? items : [];
   if (!sourceItems.length && fallbackRequest) {
@@ -197,6 +209,7 @@ function ApprovalPage() {
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectDialogError, setRejectDialogError] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const selectedRequest = useMemo(
     () => requests.find((item) => item.request_id === selectedRequestId) || null,
@@ -574,6 +587,123 @@ function ApprovalPage() {
     setRejectDialogError('');
   };
 
+  const closeConfirmDialog = () => {
+    if (confirmDialog?.busyAction && busyAction === confirmDialog.busyAction) return;
+    setConfirmDialog(null);
+  };
+
+  const requestSummary = (request = selectedRequest) => [
+    { label: 'Project', value: request?.project_name || '-' },
+    { label: 'Vendor', value: request?.vendor_name || request?.requester_name || '-' },
+    { label: 'Amount', value: formatDialogAmount(request?.approved_amount ?? request?.amount) },
+    { label: 'Receipt No.', value: request?.receipt_no || '-' },
+  ];
+
+  const openSaveDialog = () => {
+    if (!selectedRequest) return;
+    setActionError('');
+    setFlashMessage('');
+    setConfirmDialog({
+      type: 'save',
+      busyAction: 'save',
+      icon: Save,
+      tone: hasFlowAccountDocument ? 'warning' : 'neutral',
+      kicker: 'Save Changes',
+      title: 'Confirm request changes',
+      description: hasFlowAccountDocument
+        ? 'This request is already linked to FlowAccount. Only safe metadata and payment reference changes should be saved.'
+        : 'Review the current edits before saving them to this request.',
+      confirmLabel: 'Confirm Save',
+      busyLabel: 'Saving...',
+      summary: requestSummary(),
+    });
+  };
+
+  const openApproveDialog = () => {
+    if (!selectedRequest) return;
+    const approvedLineItems = normalizeLineItemsForSave(editor.line_items, selectedRequest);
+    const approvedAmount = sumLineItems(approvedLineItems) || Number(editor.amount || selectedRequest.amount || 0);
+    setActionError('');
+    setFlashMessage('');
+    setConfirmDialog({
+      type: 'approve',
+      busyAction: 'approve',
+      icon: CheckCheck,
+      tone: 'success',
+      kicker: 'Approve Request',
+      title: 'Confirm approval',
+      description: 'This will move the request to APPROVED and make it ready for FlowAccount sync or payment.',
+      confirmLabel: 'Confirm Approve',
+      busyLabel: 'Approving...',
+      summary: [
+        ...requestSummary(),
+        { label: 'Approved Amount', value: formatDialogAmount(approvedAmount) },
+        { label: 'Line Items', value: `${approvedLineItems.length || 0}` },
+      ],
+    });
+  };
+
+  const openSyncFlowAccountDialog = () => {
+    if (!selectedRequest) return;
+    setActionError('');
+    setFlashMessage('');
+    setConfirmDialog({
+      type: 'sync-flowaccount',
+      busyAction: 'sync-flowaccount',
+      icon: CircleDollarSign,
+      tone: selectedRequest.is_duplicate_flag ? 'warning' : 'neutral',
+      kicker: 'Sync FlowAccount',
+      title: selectedRequest.is_duplicate_flag ? 'Confirm duplicate FlowAccount sync' : 'Confirm FlowAccount sync',
+      description: selectedRequest.is_duplicate_flag
+        ? 'This request is flagged as duplicate. Confirming will sync it to FlowAccount anyway.'
+        : 'This will create or update the expense document and related accounting lifecycle in FlowAccount.',
+      confirmLabel: 'Confirm Sync',
+      busyLabel: 'Syncing...',
+      summary: [
+        ...requestSummary(),
+        { label: 'External ID', value: selectedRequest.flowaccount_external_document_id || '-' },
+        { label: 'Document', value: selectedRequest.flowaccount_document_no || selectedRequest.flowaccount_expense_id || 'Not linked yet' },
+      ],
+    });
+  };
+
+  const openMarkPaidDialog = () => {
+    if (!selectedRequest) return;
+    setActionError('');
+    setFlashMessage('');
+    setConfirmDialog({
+      type: 'mark-paid',
+      busyAction: 'mark-paid',
+      icon: CircleDollarSign,
+      tone: 'warning',
+      kicker: 'Mark Paid',
+      title: 'Confirm payment completion',
+      description: 'Confirm that the payment has been completed. When FlowAccount is enabled, payment sync must succeed before this request becomes PAID.',
+      confirmLabel: 'Confirm Paid',
+      busyLabel: 'Marking paid...',
+      summary: [
+        ...requestSummary(),
+        { label: 'Payment Reference', value: editor.payment_reference || '-' },
+        { label: 'Payment Date', value: editor.payment_date || '-' },
+      ],
+    });
+  };
+
+  const handleConfirmDialogAction = async () => {
+    if (!confirmDialog) return;
+    const actionType = confirmDialog.type;
+    if (actionType === 'save') {
+      await handleSave();
+    } else if (actionType === 'approve') {
+      await handleApprove();
+    } else if (actionType === 'sync-flowaccount') {
+      await handleSyncFlowAccount(Boolean(selectedRequest?.is_duplicate_flag));
+    } else if (actionType === 'mark-paid') {
+      await handleMarkPaid();
+    }
+    setConfirmDialog(null);
+  };
+
   const handleReject = async () => {
     if (!selectedRequest) return;
     const trimmedReason = rejectReason.trim();
@@ -629,15 +759,8 @@ function ApprovalPage() {
     }
   };
 
-  const handleSyncFlowAccount = async () => {
+  const handleSyncFlowAccount = async (overrideDuplicate = false) => {
     if (!selectedRequest) return;
-    const overrideDuplicate = selectedRequest.is_duplicate_flag
-      ? window.confirm('This request is flagged as duplicate. Confirm sync to FlowAccount anyway?')
-      : false;
-
-    if (selectedRequest.is_duplicate_flag && !overrideDuplicate) {
-      return;
-    }
 
     try {
       setBusyAction('sync-flowaccount');
@@ -792,386 +915,362 @@ function ApprovalPage() {
   const isPreviewImage = (receiptPreview?.content_type || '').startsWith('image/');
   const isPreviewPdf = (receiptPreview?.content_type || '') === 'application/pdf';
   const isDeepLinkedRequest = Boolean(deepLinkRequestId) && selectedRequest?.request_id === deepLinkRequestId;
+  const isPaidRequest = selectedRequest?.status === 'PAID';
+  const flowAccountErrors = [
+    selectedRequest?.flowaccount_sync_error,
+    selectedRequest?.flowaccount_attachment_error,
+    selectedRequest?.flowaccount_supplier_invoice_error,
+    selectedRequest?.flowaccount_payment_error,
+  ].filter(Boolean);
+  const flowAccountStatusValues = [
+    selectedRequest?.flowaccount_sync_status,
+    selectedRequest?.flowaccount_attachment_status,
+    selectedRequest?.flowaccount_supplier_invoice_status,
+    selectedRequest?.flowaccount_payment_status,
+  ].map((value) => String(value || '').trim().toUpperCase());
+  const hasFlowAccountLifecycleState = flowAccountStatusValues.some((value) =>
+    value && !['NOT_READY', 'READY'].includes(value)
+  );
+  const hasFlowAccountHistory = Boolean(
+    hasFlowAccountDocument ||
+    selectedRequest?.flowaccount_linked_manually ||
+    flowAccountErrors.length ||
+    hasFlowAccountLifecycleState
+  );
+  const shouldShowFlowAccountPanel = Boolean(
+    selectedRequest?.entry_type === 'EXPENSE' &&
+    (['APPROVED', 'PAID'].includes(selectedRequest?.status) || hasFlowAccountHistory)
+  );
+  const requestAlerts = selectedRequest ? [
+    flashMessage ? {
+      tone: 'success',
+      title: 'Action completed',
+      message: flashMessage,
+    } : null,
+    actionError ? {
+      tone: 'critical',
+      title: 'Action failed',
+      message: actionError,
+    } : null,
+    selectedRequest.is_duplicate_flag ? {
+      tone: 'warning',
+      title: 'Duplicate red flag',
+      message: selectedRequest.duplicate_reason || 'พบรายการซ้ำตามกฎ Receipt No. + Date + Amount',
+    } : null,
+    selectedRequest.ocr_low_confidence_fields?.length ? {
+      tone: 'warning',
+      title: 'OCR low confidence',
+      message: selectedRequest.ocr_low_confidence_fields.map(formatOcrFieldLabel).join(', '),
+    } : null,
+    shouldShowFlowAccountPanel && readinessIssues.length ? {
+      tone: accountingReadiness?.errors?.length ? 'critical' : 'warning',
+      title: 'Accounting readiness',
+      message: readinessIssues.join(' | '),
+    } : null,
+    shouldShowFlowAccountPanel && inputVatNotReady ? {
+      tone: 'warning',
+      title: 'Input VAT not ready',
+      message: 'Expense can stay synced. Supplier Invoice needs vendor tax ID, branch, address, and receipt number.',
+    } : null,
+    shouldShowFlowAccountPanel && attachmentSandboxNote ? {
+      tone: 'info',
+      title: 'Attachment synced',
+      message: 'Receipt was uploaded to FlowAccount. Sandbox preview can still fail even when upload succeeded.',
+    } : null,
+    shouldShowFlowAccountPanel && flowAccountErrors.length ? {
+      tone: 'critical',
+      title: 'FlowAccount error',
+      message: flowAccountErrors.join(' | '),
+    } : null,
+    receiptPreviewError ? {
+      tone: 'warning',
+      title: 'Receipt preview issue',
+      message: receiptPreviewError,
+    } : null,
+    !selectedRequest.receipt_storage_key ? {
+      tone: 'info',
+      title: 'No receipt file',
+      message: 'รายการนี้ยังไม่มีไฟล์ receipt ที่เก็บไว้',
+    } : null,
+    !canMutateApprovals ? {
+      tone: 'info',
+      title: 'Read-only access',
+      message: 'Owner permission is required to edit, approve, reject, or mark requests as paid.',
+    } : null,
+  ].filter(Boolean) : [];
+  const flowAccountSteps = selectedRequest ? [
+    {
+      label: 'Expense document',
+      status: selectedRequest.flowaccount_sync_status || (selectedRequest.flowaccount_expense_id ? 'SYNCED' : 'NOT_READY'),
+      detail: selectedRequest.flowaccount_document_no || selectedRequest.flowaccount_expense_id || 'No FlowAccount document linked',
+    },
+    {
+      label: 'Receipt attachment',
+      status: selectedRequest.flowaccount_attachment_status || 'NOT_READY',
+      detail: selectedRequest.receipt_file_name || 'No receipt file',
+    },
+    {
+      label: 'Supplier invoice',
+      status: selectedRequest.flowaccount_supplier_invoice_status || 'NOT_READY',
+      detail: selectedRequest.accounting_vat_mode || 'VAT mode not selected',
+    },
+    {
+      label: 'Payment',
+      status: selectedRequest.flowaccount_payment_status || 'NOT_READY',
+      detail: selectedRequest.payment_reference || 'Payment reference not recorded',
+    },
+  ] : [];
+  const flowAccountMessages = shouldShowFlowAccountPanel ? [
+    !flowAccountEnabled ? {
+      tone: 'info',
+      text: 'FlowAccount integration is disabled in backend config.',
+    } : null,
+    !isPaidRequest && readinessIssues.length ? {
+      tone: accountingReadiness?.errors?.length ? 'critical' : 'warning',
+      text: readinessIssues.join(' | '),
+    } : null,
+    !isPaidRequest && inputVatNotReady ? {
+      tone: 'warning',
+      text: 'Input VAT / Supplier Invoice is blocked until tax fields and receipt number are complete.',
+    } : null,
+    !isPaidRequest && attachmentSandboxNote ? {
+      tone: 'info',
+      text: 'Attachment upload succeeded. FlowAccount sandbox preview may still fail.',
+    } : null,
+    flowAccountErrors.length ? {
+      tone: 'critical',
+      text: flowAccountErrors.join(' | '),
+    } : null,
+  ].filter(Boolean) : [];
+  const paidFlowAccountActions = [
+    canRetryAttachment ? {
+      label: 'Retry Attachment',
+      onClick: handleRetryAttachment,
+      disabled: !!busyAction,
+      disabledReason: 'Only failed FlowAccount attachments can be retried.',
+    } : null,
+    canRetrySupplierInvoice ? {
+      label: selectedRequest?.flowaccount_supplier_invoice_status === 'FAILED' ? 'Retry Supplier Invoice' : 'Sync Supplier Invoice',
+      onClick: handleRetrySupplierInvoice,
+      disabled: !!busyAction,
+      disabledReason: 'Supplier Invoice sync needs VAT details and a linked expense document.',
+    } : null,
+  ].filter(Boolean);
+  const reviewFlowAccountActions = [
+    {
+      label: busyAction === 'sync-flowaccount' ? 'Syncing...' : 'Sync FlowAccount',
+      onClick: openSyncFlowAccountDialog,
+      disabled: !!busyAction || !canSyncFlowAccount,
+      disabledReason: 'Available for approved expense requests that are ready to sync.',
+      variant: 'primary',
+    },
+    {
+      label: 'Retry Attachment',
+      onClick: handleRetryAttachment,
+      disabled: !!busyAction || !canRetryAttachment,
+      disabledReason: 'Only failed FlowAccount attachments can be retried.',
+    },
+    {
+      label: selectedRequest?.flowaccount_supplier_invoice_status === 'FAILED' ? 'Retry Supplier Invoice' : 'Sync Supplier Invoice',
+      onClick: handleRetrySupplierInvoice,
+      disabled: !!busyAction || !canRetrySupplierInvoice,
+      disabledReason: 'Supplier Invoice sync needs VAT details and a linked expense document.',
+    },
+    {
+      label: 'Link Existing',
+      onClick: handleLinkFlowAccountDocument,
+      disabled: !!busyAction || !canLinkFlowAccount,
+      disabledReason: 'Available for approved expense requests without a FlowAccount document.',
+    },
+  ];
+  const flowAccountActions = canMutateApprovals && selectedRequest && shouldShowFlowAccountPanel
+    ? (isPaidRequest ? paidFlowAccountActions : reviewFlowAccountActions)
+    : [];
+  const flowAccountPanelReady = isPaidRequest
+    ? selectedRequest?.flowaccount_payment_status === 'PAYMENT_SYNCED'
+    : Boolean(accountingReadiness?.ready);
+  const flowAccountPanelTitle = isPaidRequest ? 'Paid sync summary' : undefined;
+  const flowAccountPanelStatusLabel = isPaidRequest
+    ? (selectedRequest?.flowaccount_payment_status === 'PAYMENT_SYNCED' ? 'PAID' : 'CHECK')
+    : undefined;
+  const shouldShowFieldRequirements = Boolean(selectedRequest && selectedRequest.status !== 'PAID');
+  const isExpenseRequest = selectedRequest?.entry_type === 'EXPENSE';
+  const vatModeForRequirements = editor.accounting_vat_mode || selectedRequest?.accounting_vat_mode || '';
+  const needsVatFields =
+    shouldShowFieldRequirements &&
+    isExpenseRequest &&
+    ['vat_inclusive', 'vat_exclusive'].includes(vatModeForRequirements);
+  const whtRateText = cleanText(editor.accounting_wht_rate);
+  const whtRateNumber = Number(whtRateText || 0);
+  const hasNumericWhtRate = Number.isFinite(whtRateNumber);
+  const needsWhtFields =
+    shouldShowFieldRequirements &&
+    isExpenseRequest &&
+    (editor.request_type === 'ค่าแรง' || (whtRateText && hasNumericWhtRate && whtRateNumber > 0));
+  const needsTaxFields = needsVatFields || needsWhtFields;
+  const needsPaymentFields =
+    shouldShowFieldRequirements &&
+    selectedRequest?.status === 'APPROVED' &&
+    hasFlowAccountDocument;
+  const taxFieldHint = needsVatFields && needsWhtFields
+    ? 'จำเป็นสำหรับ VAT และหัก ณ ที่จ่าย'
+    : needsVatFields
+      ? 'จำเป็นสำหรับ Supplier Invoice'
+      : needsWhtFields
+        ? 'จำเป็นสำหรับหัก ณ ที่จ่าย'
+        : '';
+  const isMissing = (value) => !cleanText(value);
+  const requiredField = (required, value, hint) => ({
+    required: Boolean(required),
+    hint: required ? hint : '',
+    error: required && isMissing(value) ? 'กรุณากรอกข้อมูลนี้' : '',
+  });
+  const taxIdText = cleanText(editor.vendor_tax_id);
+  const whtRateError = (() => {
+    if (!shouldShowFieldRequirements || !whtRateText) return '';
+    if (!hasNumericWhtRate || whtRateNumber < 0 || whtRateNumber >= 100) {
+      return 'อัตราหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0-99';
+    }
+    if (!Number.isInteger(whtRateNumber)) {
+      return 'FlowAccount รับค่า WHT เป็นเลขเต็ม เช่น 0 หรือ 3';
+    }
+    return '';
+  })();
+  const approvalFieldRequirements = {
+    requesterName: requiredField(shouldShowFieldRequirements, editor.requester_name, 'จำเป็นสำหรับคำขอ'),
+    requestDate: requiredField(shouldShowFieldRequirements, editor.request_date, 'จำเป็นสำหรับคำขอ'),
+    approvedAmount: {
+      required: shouldShowFieldRequirements,
+      hint: shouldShowFieldRequirements ? 'ยอดรวมต้องมากกว่า 0' : '',
+      error: shouldShowFieldRequirements && Number(editor.amount || 0) <= 0 ? 'ยอดเงินต้องมากกว่า 0' : '',
+    },
+    requestType: requiredField(
+      shouldShowFieldRequirements && isExpenseRequest,
+      editor.request_type,
+      'จำเป็นสำหรับการ map บัญชี'
+    ),
+    vendorName: requiredField(
+      shouldShowFieldRequirements && isExpenseRequest,
+      editor.vendor_name,
+      'จำเป็นสำหรับ FlowAccount'
+    ),
+    receiptNo: requiredField(needsVatFields, editor.receipt_no, 'จำเป็นเมื่อมี VAT'),
+    documentDate: requiredField(
+      shouldShowFieldRequirements && isExpenseRequest,
+      editor.document_date,
+      'วันที่บนเอกสาร'
+    ),
+    vatMode: requiredField(
+      shouldShowFieldRequirements && isExpenseRequest,
+      editor.accounting_vat_mode,
+      'เลือกก่อน sync'
+    ),
+    vendorTaxId: {
+      required: needsTaxFields,
+      hint: needsTaxFields ? taxFieldHint : '',
+      error: needsTaxFields && isMissing(editor.vendor_tax_id)
+        ? 'กรุณากรอกเลขผู้เสียภาษี 13 หลัก'
+        : taxIdText && taxIdText.length !== 13
+          ? 'เลขผู้เสียภาษีต้องมี 13 หลัก'
+          : '',
+    },
+    vendorBranch: requiredField(needsTaxFields, editor.vendor_branch, taxFieldHint),
+    vendorAddress: requiredField(needsTaxFields, editor.vendor_address, taxFieldHint),
+    whtRate: {
+      required: needsWhtFields,
+      hint: needsWhtFields ? 'ต้องเป็นเลขเต็ม เช่น 0 หรือ 3' : 'ถ้าไม่หัก ณ ที่จ่ายให้ใส่ 0',
+      error: needsWhtFields && isMissing(editor.accounting_wht_rate)
+        ? 'กรุณากรอกอัตราหัก ณ ที่จ่าย'
+        : whtRateError,
+    },
+    paymentReference: requiredField(needsPaymentFields, editor.payment_reference, 'จำเป็นก่อน Mark Paid'),
+    paymentDate: requiredField(needsPaymentFields && flowAccountEnabled, editor.payment_date, 'จำเป็นก่อน Mark Paid'),
+  };
+  const primaryActions = [
+    {
+      label: busyAction === 'save' ? 'Saving...' : 'Save Changes',
+      onClick: openSaveDialog,
+      disabled: !!busyAction || !canSaveChanges,
+      disabledReason: 'No editable fields are available for this request status.',
+      icon: approvalActionIcons.save,
+    },
+    {
+      label: busyAction === 'approve' ? 'Approving...' : 'Approve',
+      onClick: openApproveDialog,
+      disabled: !!busyAction || !canApprove,
+      disabledReason: 'Only draft, pending, or rejected requests can be approved.',
+      icon: approvalActionIcons.approve,
+      variant: 'success',
+    },
+    {
+      label: busyAction === 'reject' ? 'Rejecting...' : 'Reject',
+      onClick: openRejectDialog,
+      disabled: !!busyAction || !canReject,
+      disabledReason: 'Only draft, pending, or rejected requests can be rejected.',
+      icon: approvalActionIcons.reject,
+      variant: 'danger',
+    },
+    {
+      label: busyAction === 'mark-paid' ? 'Marking Paid...' : 'Mark Paid',
+      onClick: openMarkPaidDialog,
+      disabled: !!busyAction || !canMarkPaid,
+      disabledReason: 'Payment can be marked after approval and payment details are ready.',
+      icon: approvalActionIcons.paid,
+      variant: 'primary',
+    },
+  ];
+  const ConfirmIcon = confirmDialog?.icon || Save;
+  const confirmDialogBusy = Boolean(confirmDialog?.busyAction && busyAction === confirmDialog.busyAction);
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '24px' }}>
-        <div>
-          <h1 style={{ fontSize: '32px', marginBottom: '8px' }}>Approval</h1>
-          <p style={{ color: '#666', fontWeight: '500' }}>
-            ตรวจสอบ แก้ไข และอนุมัติคำขอจากหน้า Input ตาม admin review flow
-          </p>
-          {isDeepLinkedRequest ? (
-            <div style={{ marginTop: '10px', color: '#166534', backgroundColor: '#ecfdf5', border: '1px solid #86efac', borderRadius: '12px', padding: '10px 12px', fontSize: '13px', fontWeight: '600' }}>
-              Focused from Insight Warehouse: request {deepLinkRequestId}
-            </div>
-          ) : null}
-        </div>
-        {refreshing ? (
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', color: '#666' }}>
-            <LoaderCircle size={16} />
-            <span>Refreshing...</span>
-          </div>
-        ) : null}
-      </div>
+      <ApprovalSummaryStrip
+        requests={requests}
+        refreshing={refreshing}
+        isDeepLinkedRequest={isDeepLinkedRequest}
+        deepLinkRequestId={deepLinkRequestId}
+      />
 
-      <div className="chart-section" style={{ gridTemplateColumns: '1.05fr 1.35fr' }}>
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Filter size={18} />
-            <h2 style={{ fontSize: '18px' }}>Review Queue</h2>
-          </div>
+      <div className="approval-workspace-grid">
+        <ApprovalQueuePanel
+          filters={filters}
+          onFilterChange={setFilters}
+          statusOptions={STATUS_OPTIONS}
+          entryTypeOptions={ENTRY_TYPE_OPTIONS}
+          projectOptions={projectOptions}
+          requests={requests}
+          selectedRequestId={selectedRequestId}
+          onSelectRequest={setSelectedRequestId}
+          formatEntryType={formatEntryType}
+        />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
-            <select
-              value={filters.status}
-              onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}
-              style={inputStyle}
-            >
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={filters.entryType}
-              onChange={(event) => setFilters((current) => ({ ...current, entryType: event.target.value }))}
-              style={inputStyle}
-            >
-              {ENTRY_TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={filters.projectId}
-              onChange={(event) => setFilters((current) => ({ ...current, projectId: event.target.value }))}
-              style={inputStyle}
-            >
-              {projectOptions.map((option) => (
-                <option key={option.project_id || 'all-projects'} value={option.project_id}>
-                  {option.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '620px', overflowY: 'auto' }}>
-            {requests.length === 0 ? (
-              <div style={{ color: '#666', padding: '24px 8px' }}>ไม่พบรายการในคิวตาม filter ปัจจุบัน</div>
-            ) : (
-              requests.map((item) => {
-                const isActive = item.request_id === selectedRequestId;
-                return (
-                  <button
-                    key={item.request_id}
-                    type="button"
-                    onClick={() => setSelectedRequestId(item.request_id)}
-                    style={{
-                      textAlign: 'left',
-                      border: `1px solid ${isActive ? '#c4a470' : '#e7decd'}`,
-                      backgroundColor: isActive ? '#fcf6ea' : 'white',
-                      borderRadius: '16px',
-                      padding: '14px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '8px',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                      <strong>{item.project_name}</strong>
-                      <span style={{ color: '#666' }}>{formatEntryType(item.entry_type)}</span>
-                    </div>
-                    <div style={{ color: '#555' }}>{item.requester_name}</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', color: '#777', fontSize: '13px' }}>
-                      <span>{item.request_type || 'ไม่ระบุประเภท'}</span>
-                      <span>{Number(item.approved_amount ?? item.amount ?? 0).toLocaleString()} THB</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
-                      <div style={{ color: '#9a8b73', fontSize: '12px' }}>{item.status}</div>
-                      {item.is_duplicate_flag ? (
-                        <div style={{ color: '#8b5a00', backgroundColor: '#fff4de', borderRadius: '999px', padding: '4px 8px', fontSize: '11px', fontWeight: '700' }}>
-                          DUPLICATE FLAG
-                        </div>
-                      ) : null}
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        <div className="approval-review-panel">
           {!selectedRequest ? (
             <div style={{ color: '#666' }}>เลือกรายการจากคิวด้านซ้ายเพื่อเริ่ม review</div>
           ) : (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' }}>
-                <div>
-                  <h2 style={{ fontSize: '22px', marginBottom: '6px' }}>{selectedRequest.project_name}</h2>
-                  <div style={{ color: '#666', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                    <span>{formatEntryType(selectedRequest.entry_type)}</span>
-                    <span>{selectedRequest.status}</span>
-                    <span>{selectedRequest.request_date}</span>
-                  </div>
-                </div>
-              </div>
-
-              {flashMessage ? (
-                <div style={{ color: '#13654b', backgroundColor: '#e6f5ec', border: '1px solid #27a57a', borderRadius: '12px', padding: '10px 12px' }}>
-                  {flashMessage}
-                </div>
-              ) : null}
-
-              {actionError ? (
-                <div style={{ color: '#912018', backgroundColor: '#fde8e8', border: '1px solid #de5b52', borderRadius: '12px', padding: '10px 12px' }}>
-                  {actionError}
-                </div>
-              ) : null}
-
-              {selectedRequest.is_duplicate_flag ? (
-                <div style={{ color: '#8b5a00', backgroundColor: '#fff4de', border: '1px solid #c98c1c', borderRadius: '12px', padding: '12px 14px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                  <TriangleAlert size={18} style={{ flexShrink: 0, marginTop: '1px' }} />
-                  <div>
-                    <strong style={{ display: 'block', marginBottom: '4px' }}>Duplicate Red Flag</strong>
-                    <span>{selectedRequest.duplicate_reason || 'พบรายการซ้ำตามกฎ Receipt No. + Date + Amount'}</span>
-                  </div>
-                </div>
-              ) : null}
-
-              {selectedRequest.ocr_low_confidence_fields?.length ? (
-                <div style={{ color: '#8b5a00', backgroundColor: '#fff4de', border: '1px solid #c98c1c', borderRadius: '12px', padding: '12px 14px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                  <TriangleAlert size={18} style={{ flexShrink: 0, marginTop: '1px' }} />
-                  <div>
-                    <strong style={{ display: 'block', marginBottom: '4px' }}>OCR Low Confidence</strong>
-                    <span>{selectedRequest.ocr_low_confidence_fields.map(formatOcrFieldLabel).join(', ')}</span>
-                  </div>
-                </div>
-              ) : null}
-
-              <div style={{ border: '1px solid #d8cfbf', borderRadius: '16px', backgroundColor: '#fbfaf7', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
-                  <div>
-                    <strong style={{ display: 'block', marginBottom: '4px' }}>Accounting / FlowAccount</strong>
-                    <span style={{ color: '#666', fontSize: '13px' }}>
-                      {flowAccountEnabled ? 'Sandbox/production backend sync status' : 'FlowAccount integration disabled in backend config'}
-                    </span>
-                  </div>
-                  <span style={{ color: accountingReadiness?.ready ? '#13654b' : '#8b5a00', backgroundColor: accountingReadiness?.ready ? '#e6f5ec' : '#fff4de', borderRadius: '999px', padding: '5px 10px', fontSize: '12px', fontWeight: 700 }}>
-                    {accountingReadiness?.ready ? 'READY' : 'NOT READY'}
-                  </span>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', color: '#555', fontSize: '13px' }}>
-                  <div>Expense: {selectedRequest.flowaccount_sync_status || 'NOT_READY'}</div>
-                  <div>Document: {selectedRequest.flowaccount_document_no || selectedRequest.flowaccount_expense_id || '-'}</div>
-                  <div>Attachment: {selectedRequest.flowaccount_attachment_status || 'NOT_READY'}</div>
-                  <div>Supplier Invoice: {selectedRequest.flowaccount_supplier_invoice_status || 'NOT_READY'}</div>
-                  <div>Payment: {selectedRequest.flowaccount_payment_status || 'NOT_READY'}</div>
-                  <div>External ID: {accountingReadiness?.external_document_id || selectedRequest.flowaccount_external_document_id || '-'}</div>
-                </div>
-
-                {accountingReadiness?.missing_fields?.length || accountingReadiness?.errors?.length ? (
-                  <div style={{ color: '#8b5a00', backgroundColor: '#fff8e8', border: '1px solid #f0c36a', borderRadius: '12px', padding: '10px 12px', fontSize: '13px' }}>
-                    {[...(accountingReadiness?.missing_fields || []), ...(accountingReadiness?.errors || [])].join(' | ')}
-                  </div>
-                ) : null}
-
-                {inputVatNotReady ? (
-                  <div style={{ color: '#8b5a00', backgroundColor: '#fff8e8', border: '1px solid #f0c36a', borderRadius: '12px', padding: '10px 12px', fontSize: '13px' }}>
-                    Expense can stay synced. Not ready for Input VAT / Supplier Invoice until vendor tax ID, branch, address, and receipt number are complete.
-                  </div>
-                ) : null}
-
-                {attachmentSandboxNote ? (
-                  <div style={{ color: '#44546a', backgroundColor: '#f4f7fb', border: '1px solid #cbd5e1', borderRadius: '12px', padding: '10px 12px', fontSize: '13px' }}>
-                    Receipt was uploaded to FlowAccount. Sandbox preview or download can still fail inside FlowAccount even when upload succeeded.
-                  </div>
-                ) : null}
-
-                {[selectedRequest.flowaccount_sync_error, selectedRequest.flowaccount_attachment_error, selectedRequest.flowaccount_supplier_invoice_error, selectedRequest.flowaccount_payment_error].filter(Boolean).length ? (
-                  <div style={{ color: '#912018', backgroundColor: '#fde8e8', border: '1px solid #de5b52', borderRadius: '12px', padding: '10px 12px', fontSize: '13px' }}>
-                    {[selectedRequest.flowaccount_sync_error, selectedRequest.flowaccount_attachment_error, selectedRequest.flowaccount_supplier_invoice_error, selectedRequest.flowaccount_payment_error].filter(Boolean).join(' | ')}
-                  </div>
-                ) : null}
-
-                {canMutateApprovals ? (
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={handleSyncFlowAccount}
-                      disabled={!!busyAction || !canSyncFlowAccount}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '9px 12px',
-                        borderRadius: '12px',
-                        border: 'none',
-                        backgroundColor: '#1f6f8b',
-                        color: 'white',
-                        cursor: busyAction || !canSyncFlowAccount ? 'wait' : 'pointer',
-                        opacity: canSyncFlowAccount ? 1 : 0.55,
-                      }}
-                    >
-                      <CircleDollarSign size={15} />
-                      {busyAction === 'sync-flowaccount' ? 'Syncing...' : 'Sync FlowAccount'}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleRetryAttachment}
-                      disabled={!!busyAction || !canRetryAttachment}
-                      style={{
-                        padding: '9px 12px',
-                        borderRadius: '12px',
-                        border: '1px solid #d8cfbf',
-                        backgroundColor: 'white',
-                        cursor: busyAction || !canRetryAttachment ? 'wait' : 'pointer',
-                        opacity: canRetryAttachment ? 1 : 0.55,
-                      }}
-                    >
-                      Retry Attachment
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleRetrySupplierInvoice}
-                      disabled={!!busyAction || !canRetrySupplierInvoice}
-                      style={{
-                        padding: '9px 12px',
-                        borderRadius: '12px',
-                        border: '1px solid #d8cfbf',
-                        backgroundColor: 'white',
-                        cursor: busyAction || !canRetrySupplierInvoice ? 'wait' : 'pointer',
-                        opacity: canRetrySupplierInvoice ? 1 : 0.55,
-                      }}
-                    >
-                      {selectedRequest.flowaccount_supplier_invoice_status === 'FAILED' ? 'Retry Supplier Invoice' : 'Sync Supplier Invoice'}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleLinkFlowAccountDocument}
-                      disabled={!!busyAction || !canLinkFlowAccount}
-                      style={{
-                        padding: '9px 12px',
-                        borderRadius: '12px',
-                        border: '1px solid #d8cfbf',
-                        backgroundColor: 'white',
-                        cursor: busyAction || !canLinkFlowAccount ? 'wait' : 'pointer',
-                        opacity: canLinkFlowAccount ? 1 : 0.55,
-                      }}
-                    >
-                      Link Existing
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-
-              <ApprovalPaymentInstructions
+              <ApprovalRequestHeader
                 request={selectedRequest}
-                editor={editor}
-                onFieldChange={handleEditorChange}
-                canEdit={canEdit}
+                formatEntryType={formatEntryType}
+                alertCount={requestAlerts.length}
               />
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
-                  <div>
-                    <strong style={{ display: 'block', marginBottom: '4px' }}>Receipt Preview</strong>
-                    <span style={{ color: '#666', fontSize: '13px' }}>
-                      {selectedRequest.receipt_file_name || 'ไม่มีชื่อไฟล์แนบ'}
-                    </span>
-                  </div>
-                  {canPreviewReceipt ? (
-                    <a
-                      href={receiptPreview.signed_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        textDecoration: 'none',
-                        color: '#1a1a1a',
-                        backgroundColor: '#f3eadb',
-                        border: '1px solid #d8cfbf',
-                        borderRadius: '12px',
-                        padding: '10px 12px',
-                        fontSize: '13px',
-                        fontWeight: '600',
-                      }}
-                    >
-                      <ExternalLink size={16} />
-                      <span>Open Receipt</span>
-                    </a>
+              <div className="approval-review-layout">
+                <div className="approval-review-main">
+                  <ApprovalAlertStack alerts={requestAlerts} />
+
+                  {shouldShowFlowAccountPanel ? (
+                    <ApprovalFlowAccountChecklist
+                      enabled={flowAccountEnabled}
+                      ready={flowAccountPanelReady}
+                      steps={flowAccountSteps}
+                      messages={flowAccountMessages}
+                      actions={flowAccountActions}
+                      compact={isPaidRequest}
+                      title={flowAccountPanelTitle}
+                      statusLabel={flowAccountPanelStatusLabel}
+                    />
                   ) : null}
-                </div>
-
-                {receiptPreviewLoading ? (
-                  <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
-                    กำลังโหลดลิงก์ไฟล์จาก GCS...
-                  </div>
-                ) : null}
-
-                {receiptPreviewError ? (
-                  <div style={{ color: '#912018', backgroundColor: '#fde8e8', border: '1px solid #de5b52', borderRadius: '12px', padding: '12px 14px' }}>
-                    {receiptPreviewError}
-                  </div>
-                ) : null}
-
-                {!selectedRequest.receipt_storage_key && !receiptPreviewLoading ? (
-                  <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
-                    รายการนี้ยังไม่มีไฟล์ receipt ที่เก็บไว้
-                  </div>
-                ) : null}
-
-                {canPreviewReceipt && isPreviewImage ? (
-                  <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
-                    <img
-                      src={receiptPreview.signed_url}
-                      alt={receiptPreview.file_name || 'Receipt preview'}
-                      style={{
-                        width: '100%',
-                        maxHeight: '360px',
-                        objectFit: 'contain',
-                        borderRadius: '12px',
-                        display: 'block',
-                        backgroundColor: 'white',
-                      }}
-                    />
-                  </div>
-                ) : null}
-
-                {canPreviewReceipt && isPreviewPdf ? (
-                  <div style={{ backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '16px', padding: '12px' }}>
-                    <iframe
-                      src={receiptPreview.signed_url}
-                      title={receiptPreview.file_name || 'Receipt PDF preview'}
-                      style={{
-                        width: '100%',
-                        height: '520px',
-                        border: 'none',
-                        borderRadius: '12px',
-                        backgroundColor: 'white',
-                      }}
-                    />
-                  </div>
-                ) : null}
-
-                {canPreviewReceipt && !isPreviewImage && !isPreviewPdf ? (
-                  <div style={{ color: '#666', backgroundColor: '#faf7f1', border: '1px solid #e7decd', borderRadius: '12px', padding: '14px 16px' }}>
-                    ไฟล์นี้ไม่ใช่รูปภาพ ใช้ปุ่ม Open Receipt เพื่อเปิดไฟล์ต้นฉบับ
-                  </div>
-                ) : null}
-              </div>
 
               {selectedRequest.ocr_raw_json ? (
                 <div
@@ -1239,245 +1338,198 @@ function ApprovalPage() {
                 </div>
               ) : null}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Requester</span>
-                  <input style={inputStyle} value={editor.requester_name} onChange={handleEditorChange('requester_name')} disabled={!canEdit} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Phone</span>
-                  <input style={inputStyle} value={editor.phone} onChange={handleEditorChange('phone')} disabled={!canEdit} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Request Date</span>
-                  <input type="date" style={inputStyle} value={editor.request_date} onChange={handleEditorChange('request_date')} disabled={!canEdit} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Approved Amount</span>
-                  <input type="number" style={inputStyle} value={editor.amount} onChange={handleEditorChange('amount')} disabled />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Receipt No</span>
-                  <input style={inputStyle} value={editor.receipt_no} onChange={handleEditorChange('receipt_no')} disabled={!canEdit && !canEditTaxFilingFields} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Document Date</span>
-                  <input type="date" style={inputStyle} value={editor.document_date} onChange={handleEditorChange('document_date')} disabled={!canEdit} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Work Type</span>
-                  <select style={inputStyle} value={editor.work_type} onChange={handleEditorChange('work_type')} disabled={!canEdit}>
-                    {WORK_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value || 'empty-work'} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Request Type</span>
-                  <select style={inputStyle} value={editor.request_type} onChange={handleEditorChange('request_type')} disabled={!canEdit}>
-                    {REQUEST_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value || 'empty-request'} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor</span>
-                  <input style={inputStyle} value={editor.vendor_name} onChange={handleEditorChange('vendor_name')} disabled={!canEdit} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>VAT Mode</span>
-                  <select style={inputStyle} value={editor.accounting_vat_mode} onChange={handleEditorChange('accounting_vat_mode')} disabled={!canEdit}>
-                    {VAT_MODE_OPTIONS.map((option) => (
-                      <option key={option.value || 'empty-vat'} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor Tax ID</span>
-                  <input style={inputStyle} value={editor.vendor_tax_id} onChange={handleEditorChange('vendor_tax_id')} disabled={!canEdit && !canEditTaxFilingFields} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor Branch</span>
-                  <input style={inputStyle} value={editor.vendor_branch} onChange={handleEditorChange('vendor_branch')} disabled={!canEdit && !canEditTaxFilingFields} placeholder="สำนักงานใหญ่ / 00000" />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', gridColumn: '1 / -1' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Vendor Address</span>
-                  <input style={inputStyle} value={editor.vendor_address} onChange={handleEditorChange('vendor_address')} disabled={!canEdit && !canEditTaxFilingFields} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>WHT Rate (%)</span>
-                  <input type="number" min="0" max="100" step="0.01" style={inputStyle} value={editor.accounting_wht_rate} onChange={handleEditorChange('accounting_wht_rate')} disabled={!canEdit} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Payment Reference</span>
-                  <input style={inputStyle} value={editor.payment_reference} onChange={handleEditorChange('payment_reference')} disabled={!canSaveMetadata} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '600' }}>Payment Date</span>
-                  <input type="date" style={inputStyle} value={editor.payment_date} onChange={handleEditorChange('payment_date')} disabled={!canMutateApprovals} />
-                </label>
-              </div>
+                  <ApprovalFormSection title="Request details" description="Core request metadata used for review and approval.">
+                    <div className="approval-form-grid">
+                      <ApprovalField label="ผู้ขอ" {...approvalFieldRequirements.requesterName}>
+                        <input className="approval-input" value={editor.requester_name} onChange={handleEditorChange('requester_name')} disabled={!canEdit} />
+                      </ApprovalField>
+                      <ApprovalField label="เบอร์โทร">
+                        <input className="approval-input" value={editor.phone} onChange={handleEditorChange('phone')} disabled={!canEdit} />
+                      </ApprovalField>
+                      <ApprovalField label="วันที่ขอ" {...approvalFieldRequirements.requestDate}>
+                        <input className="approval-input" type="date" value={editor.request_date} onChange={handleEditorChange('request_date')} disabled={!canEdit} />
+                      </ApprovalField>
+                      <ApprovalField label="ยอดอนุมัติ" {...approvalFieldRequirements.approvedAmount}>
+                        <input className="approval-input amount" type="number" value={editor.amount} onChange={handleEditorChange('amount')} disabled />
+                      </ApprovalField>
+                      <ApprovalField label="ประเภทงาน">
+                        <select className="approval-input" value={editor.work_type} onChange={handleEditorChange('work_type')} disabled={!canEdit}>
+                          {WORK_TYPE_OPTIONS.map((option) => (
+                            <option key={option.value || 'empty-work'} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </ApprovalField>
+                      <ApprovalField label="ประเภทรายการ" {...approvalFieldRequirements.requestType}>
+                        <select className="approval-input" value={editor.request_type} onChange={handleEditorChange('request_type')} disabled={!canEdit}>
+                          {REQUEST_TYPE_OPTIONS.map((option) => (
+                            <option key={option.value || 'empty-request'} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </ApprovalField>
+                    </div>
+                  </ApprovalFormSection>
 
-              <InputLineItemsEditor
-                value={editor.line_items}
-                onChange={handleEditorLineItemsChange}
-                disabled={!canEdit}
-                entryType={selectedRequest.entry_type}
-                workTypeOptions={WORK_TYPE_OPTIONS.filter((option) => option.value)}
-                requestTypeOptions={REQUEST_TYPE_OPTIONS.filter((option) => option.value)}
-                fallbackWorkType={editor.work_type}
-                fallbackRequestType={editor.request_type}
-                title="Line Items"
-                subtitle="แก้ไขรายการจาก OCR ก่อนบันทึกหรืออนุมัติ"
-              />
+                  <ApprovalFormSection title="Vendor, tax, and payment" description="Fields that affect accounting readiness and payment execution.">
+                    <div className="approval-form-grid">
+                      <ApprovalField label="ผู้ขาย / ร้านค้า" {...approvalFieldRequirements.vendorName}>
+                        <input className="approval-input" value={editor.vendor_name} onChange={handleEditorChange('vendor_name')} disabled={!canEdit} />
+                      </ApprovalField>
+                      <ApprovalField label="เลขที่ใบเสร็จ" {...approvalFieldRequirements.receiptNo}>
+                        <input className="approval-input" value={editor.receipt_no} onChange={handleEditorChange('receipt_no')} disabled={!canEdit && !canEditTaxFilingFields} />
+                      </ApprovalField>
+                      <ApprovalField label="วันที่เอกสาร" {...approvalFieldRequirements.documentDate}>
+                        <input className="approval-input" type="date" value={editor.document_date} onChange={handleEditorChange('document_date')} disabled={!canEdit} />
+                      </ApprovalField>
+                      <ApprovalField label="รูปแบบ VAT" {...approvalFieldRequirements.vatMode}>
+                        <select className="approval-input" value={editor.accounting_vat_mode} onChange={handleEditorChange('accounting_vat_mode')} disabled={!canEdit}>
+                          {VAT_MODE_OPTIONS.map((option) => (
+                            <option key={option.value || 'empty-vat'} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </ApprovalField>
+                      <ApprovalField label="เลขผู้เสียภาษี" {...approvalFieldRequirements.vendorTaxId}>
+                        <input className="approval-input" value={editor.vendor_tax_id} onChange={handleEditorChange('vendor_tax_id')} disabled={!canEdit && !canEditTaxFilingFields} />
+                      </ApprovalField>
+                      <ApprovalField label="สาขาผู้ขาย" {...approvalFieldRequirements.vendorBranch}>
+                        <input className="approval-input" value={editor.vendor_branch} onChange={handleEditorChange('vendor_branch')} disabled={!canEdit && !canEditTaxFilingFields} placeholder="สำนักงานใหญ่ / 00000" />
+                      </ApprovalField>
+                      <ApprovalField label="ที่อยู่ผู้ขาย" wide {...approvalFieldRequirements.vendorAddress}>
+                        <input className="approval-input" value={editor.vendor_address} onChange={handleEditorChange('vendor_address')} disabled={!canEdit && !canEditTaxFilingFields} />
+                      </ApprovalField>
+                      <ApprovalField label="หัก ณ ที่จ่าย (%)" {...approvalFieldRequirements.whtRate}>
+                        <input className="approval-input amount" type="number" min="0" max="100" step="0.01" value={editor.accounting_wht_rate} onChange={handleEditorChange('accounting_wht_rate')} disabled={!canEdit} />
+                      </ApprovalField>
+                      <ApprovalField label="เลขอ้างอิงการจ่าย" {...approvalFieldRequirements.paymentReference}>
+                        <input className="approval-input" value={editor.payment_reference} onChange={handleEditorChange('payment_reference')} disabled={!canSaveMetadata} />
+                      </ApprovalField>
+                      <ApprovalField label="วันที่จ่าย" {...approvalFieldRequirements.paymentDate}>
+                        <input className="approval-input" type="date" value={editor.payment_date} onChange={handleEditorChange('payment_date')} disabled={!canMutateApprovals} />
+                      </ApprovalField>
+                    </div>
+                  </ApprovalFormSection>
 
-              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <span style={{ fontSize: '13px', fontWeight: '600' }}>Submission Note</span>
-                <textarea
-                  rows={4}
-                  style={{ ...inputStyle, resize: 'vertical', minHeight: '92px' }}
-                  value={editor.note}
-                  onChange={handleEditorChange('note')}
-                  disabled={!canEdit}
+                  <ApprovalFormSection title="Line items" description="แก้ไขรายการจาก OCR ก่อนบันทึกหรืออนุมัติ">
+                    <InputLineItemsEditor
+                      value={editor.line_items}
+                      onChange={handleEditorLineItemsChange}
+                      disabled={!canEdit}
+                      entryType={selectedRequest.entry_type}
+                      workTypeOptions={WORK_TYPE_OPTIONS.filter((option) => option.value)}
+                      requestTypeOptions={REQUEST_TYPE_OPTIONS.filter((option) => option.value)}
+                      fallbackWorkType={editor.work_type}
+                      fallbackRequestType={editor.request_type}
+                      title="Line Items"
+                    />
+                  </ApprovalFormSection>
+
+                  <ApprovalFormSection title="Notes">
+                    <div className="approval-form-grid single">
+                      <ApprovalField label="หมายเหตุจากผู้ส่ง" wide>
+                        <textarea
+                          className="approval-input textarea"
+                          rows={4}
+                          value={editor.note}
+                          onChange={handleEditorChange('note')}
+                          disabled={!canEdit}
+                        />
+                      </ApprovalField>
+                      <ApprovalField label="หมายเหตุการตรวจ" wide>
+                        <textarea
+                          className="approval-input textarea compact"
+                          rows={3}
+                          value={editor.review_note}
+                          onChange={handleEditorChange('review_note')}
+                          disabled={!canSaveMetadata}
+                        />
+                      </ApprovalField>
+                    </div>
+                  </ApprovalFormSection>
+
+                  <ApprovalActionBar canMutate={canMutateApprovals} actions={primaryActions} />
+                </div>
+
+                <ApprovalEvidencePanel
+                  request={selectedRequest}
+                  editor={editor}
+                  onFieldChange={handleEditorChange}
+                  canEdit={canEdit}
+                  receiptPreview={receiptPreview}
+                  receiptPreviewLoading={receiptPreviewLoading}
+                  receiptPreviewError={receiptPreviewError}
+                  canPreviewReceipt={canPreviewReceipt}
+                  isPreviewImage={isPreviewImage}
+                  isPreviewPdf={isPreviewPdf}
                 />
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <span style={{ fontSize: '13px', fontWeight: '600' }}>Review Note</span>
-                <textarea
-                  rows={3}
-                  style={{ ...inputStyle, resize: 'vertical', minHeight: '78px' }}
-                  value={editor.review_note}
-                  onChange={handleEditorChange('review_note')}
-                  disabled={!canSaveMetadata}
-                />
-              </label>
-
-              {canMutateApprovals ? (
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '6px' }}>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={!!busyAction || !canSaveChanges}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '10px 16px',
-                    borderRadius: '12px',
-                    border: '1px solid #d8cfbf',
-                    backgroundColor: 'white',
-                    cursor: busyAction || !canSaveChanges ? 'wait' : 'pointer',
-                    opacity: canSaveChanges ? 1 : 0.55,
-                  }}
-                >
-                  <Save size={16} />
-                  {busyAction === 'save' ? 'Saving...' : 'Save Changes'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleApprove}
-                  disabled={!!busyAction || !canApprove}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '10px 16px',
-                    borderRadius: '12px',
-                    border: 'none',
-                    backgroundColor: '#27a57a',
-                    color: 'white',
-                    cursor: busyAction || !canApprove ? 'wait' : 'pointer',
-                    opacity: canApprove ? 1 : 0.55,
-                  }}
-                >
-                  <CheckCheck size={16} />
-                  {busyAction === 'approve' ? 'Approving...' : 'Approve'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={openRejectDialog}
-                  disabled={!!busyAction || !canReject}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '10px 16px',
-                    borderRadius: '12px',
-                    border: 'none',
-                    backgroundColor: '#de5b52',
-                    color: 'white',
-                    cursor: busyAction || !canReject ? 'wait' : 'pointer',
-                    opacity: canReject ? 1 : 0.55,
-                  }}
-                >
-                  <OctagonX size={16} />
-                  {busyAction === 'reject' ? 'Rejecting...' : 'Reject'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleMarkPaid}
-                  disabled={!!busyAction || !canMarkPaid}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '10px 16px',
-                    borderRadius: '12px',
-                    border: 'none',
-                    backgroundColor: '#1f6f8b',
-                    color: 'white',
-                    cursor: busyAction || !canMarkPaid ? 'wait' : 'pointer',
-                    opacity: canMarkPaid ? 1 : 0.55,
-                  }}
-                >
-                  <CircleDollarSign size={16} />
-                  {busyAction === 'mark-paid' ? 'Marking Paid...' : 'Mark Paid'}
-                </button>
-                </div>
-              ) : (
-                <div style={{ marginTop: '6px', padding: '12px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '13px', lineHeight: 1.5 }}>
-                  Read-only admin access. Owner permission is required to edit, approve, reject, or mark requests as paid.
-                </div>
-              )}
-
-              <div style={{ marginTop: '8px', padding: '14px', borderRadius: '16px', backgroundColor: '#f7f4ef' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                  <CircleDollarSign size={18} />
-                  <strong>Financial Snapshot</strong>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', color: '#555' }}>
-                  <div>Requested Amount: {Number(selectedRequest.amount || 0).toLocaleString()} THB</div>
-                  <div>Approved Amount: {Number(selectedRequest.approved_amount ?? selectedRequest.amount ?? 0).toLocaleString()} THB</div>
-                  <div>Vendor: {selectedRequest.vendor_name || '-'}</div>
-                  <div>Bank: {selectedRequest.bank_name || selectedRequest.bank_account?.bank_name || '-'}</div>
-                  <div>Account No: {selectedRequest.account_no || selectedRequest.bank_account?.account_no || '-'}</div>
-                  <div>Account Name: {selectedRequest.account_name || selectedRequest.bank_account?.account_name || '-'}</div>
-                  <div>Receipt No: {selectedRequest.receipt_no || '-'}</div>
-                  <div>Document Date: {selectedRequest.document_date || '-'}</div>
-                  <div>VAT Mode: {selectedRequest.accounting_vat_mode || '-'}</div>
-                  <div>WHT Rate: {selectedRequest.accounting_wht_rate ?? '-'}</div>
-                  <div>Vendor Tax ID: {selectedRequest.vendor_tax_id || '-'}</div>
-                  <div>Vendor Branch: {selectedRequest.vendor_branch || '-'}</div>
-                  <div>Receipt File: {selectedRequest.receipt_file_name || '-'}</div>
-                  <div>Reviewed At: {selectedRequest.reviewed_at || '-'}</div>
-                  <div>Paid At: {selectedRequest.paid_at || '-'}</div>
-                  <div>Payment Ref: {selectedRequest.payment_reference || '-'}</div>
-                </div>
               </div>
             </>
           )}
         </div>
       </div>
+
+      {confirmDialog && selectedRequest ? (
+        <div className="approval-reject-scrim" onMouseDown={closeConfirmDialog}>
+          <section
+            className={`approval-confirm-dialog ${confirmDialog.tone || 'neutral'}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="approval-confirm-title"
+            aria-describedby="approval-confirm-description"
+            onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') closeConfirmDialog();
+            }}
+          >
+            <header className="approval-reject-header">
+              <div>
+                <span className="approval-confirm-kicker">
+                  <ConfirmIcon size={15} />
+                  {confirmDialog.kicker}
+                </span>
+                <h3 id="approval-confirm-title">{confirmDialog.title}</h3>
+                <p id="approval-confirm-description">{confirmDialog.description}</p>
+              </div>
+              <button
+                type="button"
+                className="approval-reject-close"
+                onClick={closeConfirmDialog}
+                disabled={confirmDialogBusy}
+                aria-label="Close confirmation dialog"
+              >
+                <X size={18} />
+              </button>
+            </header>
+
+            <div className="approval-reject-summary approval-confirm-summary">
+              {(confirmDialog.summary || []).map((item) => (
+                <div key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.value || '-'}</strong>
+                </div>
+              ))}
+            </div>
+
+            <footer className="approval-reject-actions">
+              <button
+                type="button"
+                className="approval-reject-secondary"
+                onClick={closeConfirmDialog}
+                disabled={confirmDialogBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={`approval-confirm-primary ${confirmDialog.tone || 'neutral'}`}
+                onClick={handleConfirmDialogAction}
+                disabled={confirmDialogBusy}
+              >
+                <ConfirmIcon size={16} />
+                {confirmDialogBusy ? confirmDialog.busyLabel : confirmDialog.confirmLabel}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
 
       {rejectDialogOpen && selectedRequest ? (
         <div className="approval-reject-scrim" onMouseDown={closeRejectDialog}>

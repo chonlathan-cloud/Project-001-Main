@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, ShieldCheck, Smartphone } from 'lucide-react';
+import { ArrowRight, ShieldCheck, Smartphone, UserPlus } from 'lucide-react';
 
 import {
   clearAuthNotice,
@@ -9,8 +9,9 @@ import {
   resolvePostLoginPath,
   saveAuthSession,
   savePendingLineAuth,
+  syncStoredProfileUser,
 } from './auth';
-import { adminLogin, lineLogin } from './api';
+import { adminLogin, getCurrentProfile, lineLogin } from './api';
 import AuthNotice from './components/AuthNotice';
 import { signInAdminWithGooglePopup } from './firebaseClient';
 import { beginLineLogin, getActiveLineAccessToken } from './liffClient';
@@ -42,6 +43,15 @@ const actionButton = (tone = 'primary') => ({
   gap: '10px',
 });
 
+async function preloadCurrentProfile() {
+  try {
+    const profile = await getCurrentProfile();
+    return profile?.user ? syncStoredProfileUser(profile.user) : null;
+  } catch {
+    return null;
+  }
+}
+
 const LoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -69,8 +79,14 @@ const LoginPage = () => {
     try {
       const googleAuth = await signInAdminWithGooglePopup();
       const response = await adminLogin(googleAuth);
+      if (response?.status === 'REQUIRE_SIGNUP') {
+        savePendingLineAuth(response);
+        navigate('/signup', { replace: true });
+        return;
+      }
       saveAuthSession(response);
-      navigate(resolvePostLoginPath(response.user), { replace: true });
+      const syncedUser = await preloadCurrentProfile();
+      navigate(resolvePostLoginPath(syncedUser || response.user), { replace: true });
     } catch (loginError) {
       setError(loginError.message || 'Failed to sign in with Google.');
     } finally {
@@ -104,12 +120,21 @@ const LoginPage = () => {
 
       saveAuthSession(response);
       clearPendingLineAuth();
-      navigate(resolvePostLoginPath(response.user), { replace: true });
+      const syncedUser = await preloadCurrentProfile();
+      navigate(resolvePostLoginPath(syncedUser || response.user), { replace: true });
     } catch (loginError) {
       setError(loginError.message || 'Failed to sign in with LINE.');
     } finally {
       setLoadingAction('');
     }
+  };
+
+  const handleRegisterNavigation = () => {
+    setError('');
+    setAuthNotice(null);
+    clearAuthNotice();
+    clearPendingLineAuth();
+    navigate('/signup');
   };
 
   return (
@@ -136,7 +161,7 @@ const LoginPage = () => {
           <div style={{ marginBottom: '26px' }}>
             <h1 style={{ fontSize: '32px', marginBottom: '8px', color: 'var(--text-main)' }}>RAYADEE</h1>
             <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-              Subcontractor Portal access with LINE LIFF. Admins can continue with Google sign-in.
+              Approved users can sign in with Google or LINE. New users must register and wait for admin approval.
             </p>
           </div>
 
@@ -164,7 +189,7 @@ const LoginPage = () => {
               disabled={loadingAction !== ''}
             >
               <ShieldCheck size={18} />
-              {loadingAction === 'admin' ? 'Signing in with Google...' : 'Continue as Admin with Google'}
+              {loadingAction === 'admin' ? 'Signing in with Google...' : 'Continue with Google'}
             </button>
 
             <button
@@ -174,31 +199,32 @@ const LoginPage = () => {
               disabled={loadingAction !== ''}
             >
               <Smartphone size={18} />
-              {loadingAction === 'line' ? 'Connecting LINE...' : 'Continue as Subcontractor with LINE'}
+              {loadingAction === 'line' ? 'Connecting LINE...' : 'Continue with LINE'}
             </button>
           </div>
 
           <div style={{ marginTop: '28px', paddingTop: '22px', borderTop: '1px solid var(--border-color)' }}>
             <div style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>
-              Need to complete first-time subcontractor registration?
+              New to the system? Register first so an admin can review your access.
             </div>
             <button
               type="button"
-              onClick={handleLineLogin}
+              onClick={handleRegisterNavigation}
               disabled={loadingAction !== ''}
               style={{
-                background: 'none',
-                border: 'none',
-                padding: 0,
+                background: 'transparent',
+                border: '1px solid var(--border-color)',
+                borderRadius: '8px',
+                padding: '10px 14px',
                 color: 'var(--primary)',
                 fontWeight: '600',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '6px',
+                gap: '8px',
                 cursor: loadingAction ? 'wait' : 'pointer',
               }}
             >
-              Start with LINE <ArrowRight size={16} />
+              <UserPlus size={16} /> Register here <ArrowRight size={16} />
             </button>
           </div>
         </div>

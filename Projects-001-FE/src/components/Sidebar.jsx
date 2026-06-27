@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   BadgeCheck,
@@ -19,9 +19,12 @@ import {
   canAccessOwnerArea,
   clearAuthSession,
   getStoredAuthUser,
+  getStoredSessionToken,
   isAdminPortalUser,
   subscribeToAuthChanges,
+  syncStoredProfileUser,
 } from '../auth';
+import { getCurrentProfile } from '../api';
 import { signOutFirebaseClient } from '../firebaseClient';
 import { logoutLineClient } from '../liffClient';
 
@@ -80,6 +83,7 @@ function SidebarUserAvatar({ user }) {
 const Sidebar = () => {
   const navigate = useNavigate();
   const [authUser, setAuthUser] = useState(() => getStoredAuthUser());
+  const profileSyncKeyRef = useRef('');
   const isAdminUser = isAdminPortalUser(authUser);
 
   useEffect(() => {
@@ -87,6 +91,35 @@ const Sidebar = () => {
       setAuthUser(getStoredAuthUser());
     });
   }, []);
+
+  useEffect(() => {
+    const sessionToken = getStoredSessionToken();
+    const userKey = authUser?.email || authUser?.subcontractor_id || authUser?.id || authUser?.user_id || '';
+    const syncKey = `${sessionToken}:${userKey}`;
+
+    if (!sessionToken || !authUser || profileSyncKeyRef.current === syncKey) return;
+
+    let isActive = true;
+    profileSyncKeyRef.current = syncKey;
+
+    getCurrentProfile()
+      .then((profile) => {
+        if (!isActive || !profile?.user) return;
+        const syncedUser = syncStoredProfileUser(profile.user);
+        if (syncedUser) {
+          setAuthUser(syncedUser);
+        }
+      })
+      .catch(() => {
+        if (isActive && profileSyncKeyRef.current === syncKey) {
+          profileSyncKeyRef.current = '';
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [authUser]);
 
   const navItems = useMemo(() => {
     if (isAdminUser) {

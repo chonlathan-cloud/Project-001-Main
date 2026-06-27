@@ -131,10 +131,18 @@ async def _chart_data(db: AsyncSession, user: AuthenticatedUser) -> list[dict[st
             continue
         key = _month_key(request_date)
         if key not in grouped:
-            grouped[key] = {"name": _month_label(key), "Activity": 0, "Expenses": 0}
+            grouped[key] = {
+                "name": _month_label(key),
+                "Activity": 0,
+                "Income": 0,
+                "Expenses": 0,
+            }
         grouped[key]["Activity"] = float(grouped[key]["Activity"]) + 1
-        if entry_type == "EXPENSE":
-            grouped[key]["Expenses"] = float(grouped[key]["Expenses"]) + _money_value(amount)
+        amount_value = _money_value(amount)
+        if entry_type == "INCOME":
+            grouped[key]["Income"] = float(grouped[key]["Income"]) + amount_value
+        elif entry_type == "EXPENSE":
+            grouped[key]["Expenses"] = float(grouped[key]["Expenses"]) + amount_value
 
     return list(grouped.values())[-6:]
 
@@ -251,6 +259,7 @@ async def _build_admin_profile(db: AsyncSession, user: AuthenticatedUser) -> dic
     )
     contact_name = admin_profile.contact_name if admin_profile else None
     company = admin_profile.company if admin_profile and admin_profile.company else "Manee Son Construction"
+    department = admin_profile.department if admin_profile else None
     timezone = admin_profile.time if admin_profile and admin_profile.time else "Asia/Bangkok"
 
     return {
@@ -262,11 +271,13 @@ async def _build_admin_profile(db: AsyncSession, user: AuthenticatedUser) -> dic
             "phone": admin_profile.phone if admin_profile else None,
             "bank_account": admin_profile.bank_account if admin_profile else {},
             "company": company,
+            "department": department,
             "role": role_label,
             "role_key": role_key,
             "roles": role_values,
             "permissions": role_permissions(role_key, role_values),
             "time": timezone,
+            "timezone": timezone,
             "email": user.email,
             "profile_image_url": profile_image_url,
             "avatar_url": profile_image_url,
@@ -363,7 +374,7 @@ async def update_my_profile(
         display_name = updates.get("display_name") or updates.get("name")
         if display_name is not None:
             admin_updates["display_name"] = display_name
-        for field in ("contact_name", "phone", "bank_account", "company", "time"):
+        for field in ("contact_name", "phone", "bank_account", "company", "department", "time", "timezone"):
             if field in updates:
                 admin_updates[field] = updates[field]
 

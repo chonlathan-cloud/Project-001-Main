@@ -32,6 +32,29 @@ export function updateStoredAuthUser(patch) {
   return nextUser;
 }
 
+export function syncStoredProfileUser(user = {}) {
+  const patch = {};
+  const hasOwn = (key) => Object.prototype.hasOwnProperty.call(user, key);
+  const displayName = user.display_name || user.name || user.contact_name;
+  const role = user.role_key || user.role;
+
+  if (displayName != null) patch.display_name = displayName;
+  if (hasOwn('email')) patch.email = user.email || '';
+  if (role != null) patch.role = role;
+  if (hasOwn('profile_image_url')) patch.profile_image_url = user.profile_image_url || '';
+  if (hasOwn('line_picture_url')) patch.line_picture_url = user.line_picture_url || '';
+  if (hasOwn('avatar_url')) patch.avatar_url = user.avatar_url || '';
+
+  if (Array.isArray(user.roles)) {
+    patch.roles = user.roles;
+  }
+  if (Array.isArray(user.permissions)) {
+    patch.permissions = user.permissions;
+  }
+
+  return Object.keys(patch).length ? updateStoredAuthUser(patch) : getStoredAuthUser();
+}
+
 export function getStoredPendingLineAuth() {
   if (typeof window === 'undefined') return null;
   return parseJson(window.localStorage.getItem(PENDING_LINE_AUTH_KEY), null);
@@ -122,6 +145,9 @@ export function subscribeToAuthChanges(listener) {
 }
 
 export function resolvePostLoginPath(user) {
+  if (isPendingAccessUser(user)) {
+    return '/pending-approval';
+  }
   if (isSubcontractorUser(user)) {
     return '/input';
   }
@@ -141,12 +167,27 @@ const normalizeRoles = (user) => {
   const role = normalizeRole(user);
   return role && !normalized.includes(role) ? [role, ...normalized] : normalized;
 };
+const normalizeExplicitRoles = (user) => (
+  Array.isArray(user?.roles)
+    ? user.roles.map((role) => String(role || '').trim().toLowerCase()).filter(Boolean)
+    : []
+);
 const normalizeAccessLevel = (user) => String(user?.access_level || user?.accessLevel || '').trim().toLowerCase();
 
 export function isOwnerUser(user) {
   const role = normalizeRole(user);
   const roles = normalizeRoles(user);
+  const explicitRoles = normalizeExplicitRoles(user);
   const accessLevel = normalizeAccessLevel(user);
+
+  if (explicitRoles.length > 0) {
+    return (
+      explicitRoles.includes('owner') ||
+      explicitRoles.includes('super_admin') ||
+      accessLevel === 'owner' ||
+      user?.is_owner === true
+    );
+  }
 
   return (
     role === 'owner' ||
@@ -172,10 +213,19 @@ export function isSubcontractorUser(user) {
   return normalizeRoles(user).includes('subcontractor');
 }
 
+export function isPendingAccessUser(user) {
+  return normalizeRoles(user).includes('pending') || normalizeRole(user) === 'pending';
+}
+
 export function canAccessOwnerArea(user) {
   return isOwnerUser(user);
 }
 
 export function canMutateAdminData(user) {
   return isOwnerUser(user);
+}
+
+export function canMutateSubcontractorData(user) {
+  const roles = normalizeRoles(user);
+  return isOwnerUser(user) || roles.includes('admin');
 }

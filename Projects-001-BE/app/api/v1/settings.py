@@ -7,12 +7,15 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps.auth import AuthenticatedUser, require_admin_user, require_owner_user
 from app.core.config import get_settings
 from app.schemas.profile_schema import (
+    AccessRequestItem,
+    ApproveAccessRequestRequest,
     AdminDirectoryItem,
+    RejectAccessRequestRequest,
     SubcontractorProfileItem,
     UpdateAdminRequest,
     UpdateSubcontractorProfileRequest,
@@ -26,19 +29,35 @@ from app.schemas.settings_schema import (
 )
 from app.services.gcs_storage_service import generate_signed_url_for_storage_key
 from app.services.identity_service import (
+    approve_access_request,
     admin_doc_id_for_email,
+    create_subcontractor_profile,
+    get_access_request,
     get_admin,
+    get_subcontractor_by_email,
+    get_subcontractor_by_line_uid,
     list_admins as list_admin_directory_entries,
+    list_access_requests as list_access_request_entries,
     list_subcontractors as list_subcontractor_profiles,
     get_subcontractor,
     get_kyc_storage_key,
+    reject_access_request,
     reset_subcontractor_line_binding,
+    subcontractor_doc_id_for_identity,
     update_admin,
+    update_access_request,
     update_subcontractor_profile,
     upsert_admin,
 )
 
 router = APIRouter(prefix="/settings", tags=["Admin Settings"])
+ADMIN_SUBCONTRACTOR_UPDATE_FIELDS = {
+    "name",
+    "contact_name",
+    "phone",
+    "tax_id",
+    "bank_account",
+}
 
 
 async def _profile_item(profile) -> SubcontractorProfileItem:
@@ -54,7 +73,13 @@ async def _profile_item(profile) -> SubcontractorProfileItem:
 
 
 def _admin_item(entry) -> AdminDirectoryItem:
-    return AdminDirectoryItem(**asdict(entry))
+    payload = asdict(entry)
+    payload["timezone"] = entry.time
+    return AdminDirectoryItem(**payload)
+
+
+def _access_request_item(entry) -> AccessRequestItem:
+    return AccessRequestItem(**asdict(entry))
 
 
 def _is_self_admin_record(user: AuthenticatedUser, admin_id: str) -> bool:
@@ -64,12 +89,46 @@ def _is_self_admin_record(user: AuthenticatedUser, admin_id: str) -> bool:
 def _reject_self_role_or_status_update(user: AuthenticatedUser, admin_id: str, updates: dict) -> None:
     if not _is_self_admin_record(user, admin_id):
         return
-    if "role" not in updates and "is_active" not in updates:
+    if "role" not in updates and "roles" not in updates and "is_active" not in updates:
         return
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="You cannot change your own role or active status.",
     )
+
+
+def _scope_subcontractor_updates(user: AuthenticatedUser, updates: dict) -> dict:
+    if user.has_role("owner"):
+        return updates
+
+    blocked_fields = sorted(set(updates) - ADMIN_SUBCONTRACTOR_UPDATE_FIELDS)
+    if blocked_fields:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Owner access is required to update these subcontractor fields: "
+                f"{', '.join(blocked_fields)}."
+            ),
+        )
+    return updates
+
+
+def _require_owner_for_internal_approval(user: AuthenticatedUser, account_type: str) -> None:
+    if account_type == "admin" and not user.has_role("owner"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Owner access is required to approve admin or staff accounts.",
+        )
+
+
+def _decision_bank_account(request_bank_account, decision_bank_account) -> dict[str, str | None]:
+    bank = decision_bank_account.model_dump() if decision_bank_account is not None else {}
+    fallback = request_bank_account or {}
+    return {
+        "bank_name": bank.get("bank_name") or fallback.get("bank_name"),
+        "account_no": bank.get("account_no") or fallback.get("account_no"),
+        "account_name": bank.get("account_name") or fallback.get("account_name"),
+    }
 
 
 def _integration_item(
@@ -128,11 +187,12 @@ async def get_subcontractor_detail(
 async def update_subcontractor(
     sub_id: str,
     request: UpdateSubcontractorProfileRequest,
-    _user: AuthenticatedUser = Depends(require_owner_user),
+    user: AuthenticatedUser = Depends(require_admin_user),
 ):
+    updates = _scope_subcontractor_updates(user, request.model_dump(exclude_none=True))
     profile = update_subcontractor_profile(
         sub_id,
-        updates=request.model_dump(exclude_none=True),
+        updates=updates,
     )
     return StandardResponse(data=await _profile_item(profile))
 
@@ -197,6 +257,16 @@ async def create_admin(
     entry = upsert_admin(
         email=str(request.email),
         display_name=request.display_name,
+        contact_name=request.contact_name,
+        phone=request.phone,
+        company=request.company,
+        department=request.department,
+        time=request.time or request.timezone,
+        bank_account=(
+            request.bank_account.model_dump()
+            if request.bank_account is not None
+            else None
+        ),
         role=request.role,
         roles=request.roles,
         is_active=request.is_active,
@@ -215,6 +285,137 @@ async def edit_admin(
     _reject_self_role_or_status_update(user, admin_id, updates)
     entry = update_admin(admin_id, updates=updates)
     return StandardResponse(data=_admin_item(entry))
+
+
+@router.get("/access-requests", response_model=StandardResponse[list[AccessRequestItem]])
+async def list_access_requests(
+    status_filter: str = Query(default="pending", alias="status"),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    return StandardResponse(
+        data=[_access_request_item(entry) for entry in list_access_request_entries(status_filter)]
+    )
+
+
+@router.post("/access-requests/{request_id}/approve", response_model=StandardResponse[AccessRequestItem])
+async def approve_pending_access_request(
+    request_id: str,
+    request: ApproveAccessRequestRequest,
+    user: AuthenticatedUser = Depends(require_admin_user),
+):
+    _require_owner_for_internal_approval(user, request.account_type)
+    access_request = get_access_request(request_id)
+    if access_request.status == "rejected":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Rejected access requests cannot be approved. Ask the user to submit a new request.",
+        )
+
+    if request.account_type == "admin":
+        if not access_request.email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin and staff approvals require a Gmail identity.",
+            )
+        roles = request.roles or [request.role]
+        display_name = request.display_name or access_request.display_name or access_request.contact_name
+        entry = upsert_admin(
+            email=access_request.email,
+            display_name=display_name,
+            contact_name=request.contact_name or access_request.contact_name,
+            phone=request.phone or access_request.phone,
+            company=request.company or access_request.company_name,
+            department=request.department,
+            time=request.time or request.timezone,
+            bank_account=_decision_bank_account(access_request.bank_account, request.bank_account),
+            role=request.role,
+            roles=roles,
+            is_active=True,
+            granted_by=user.email or user.subject,
+        )
+        approved = approve_access_request(
+            request_id,
+            account_type="admin",
+            target_admin_id=entry.id,
+            role=entry.role,
+            roles=entry.roles,
+            decided_by=user.email or user.subject,
+        )
+        return StandardResponse(data=_access_request_item(approved))
+
+    existing_profile = None
+    if request.existing_subcontractor_id:
+        existing_profile = get_subcontractor(request.existing_subcontractor_id)
+    elif access_request.email:
+        existing_profile = get_subcontractor_by_email(access_request.email)
+    if existing_profile is None and access_request.line_uid:
+        existing_profile = get_subcontractor_by_line_uid(access_request.line_uid)
+
+    name = (
+        request.display_name
+        or access_request.company_name
+        or access_request.display_name
+        or access_request.contact_name
+        or access_request.email
+        or access_request.line_uid
+        or "Subcontractor"
+    )
+    bank_account = _decision_bank_account(access_request.bank_account, request.bank_account)
+    subcontractor_updates = {
+        "email": access_request.email,
+        "line_uid": access_request.line_uid,
+        "line_picture_url": access_request.picture_url,
+        "name": name,
+        "contact_name": request.contact_name or access_request.contact_name or name,
+        "phone": request.phone or access_request.phone,
+        "tax_id": request.tax_id or access_request.tax_id,
+        "kyc_gcs_path": access_request.kyc_gcs_path,
+        "bank_account": bank_account,
+        "is_active": True,
+    }
+    if existing_profile is not None:
+        profile = update_subcontractor_profile(
+            existing_profile.id,
+            updates={key: value for key, value in subcontractor_updates.items() if value is not None},
+        )
+    else:
+        profile = create_subcontractor_profile(
+            subcontractor_id=subcontractor_doc_id_for_identity(
+                email=access_request.email,
+                line_uid=access_request.line_uid,
+            ),
+            email=access_request.email,
+            line_uid=access_request.line_uid,
+            line_picture_url=access_request.picture_url,
+            name=name,
+            contact_name=request.contact_name or access_request.contact_name,
+            phone=request.phone or access_request.phone,
+            tax_id=request.tax_id or access_request.tax_id,
+            kyc_gcs_path=access_request.kyc_gcs_path,
+            bank_account=bank_account,
+        )
+
+    approved = approve_access_request(
+        request_id,
+        account_type="subcontractor",
+        target_subcontractor_id=profile.id,
+        decided_by=user.email or user.subject,
+    )
+    return StandardResponse(data=_access_request_item(approved))
+
+
+@router.post("/access-requests/{request_id}/reject", response_model=StandardResponse[AccessRequestItem])
+async def reject_pending_access_request(
+    request_id: str,
+    request: RejectAccessRequestRequest,
+    user: AuthenticatedUser = Depends(require_admin_user),
+):
+    rejected = reject_access_request(
+        request_id,
+        reason=request.reason or "Access request rejected by admin.",
+        decided_by=user.email or user.subject,
+    )
+    return StandardResponse(data=_access_request_item(rejected))
 
 
 @router.get("/integrations", response_model=StandardResponse[SettingsIntegrationsResponse])

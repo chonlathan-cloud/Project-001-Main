@@ -94,6 +94,14 @@ def _format_amount(value: Decimal) -> float:
     return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def _format_payment_withheld_percentage(value: Decimal) -> int:
+    percentage = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    whole_percentage = percentage.to_integral_value(rounding=ROUND_HALF_UP)
+    if percentage != whole_percentage:
+        raise FlowAccountError("FlowAccount payment withholding percentage must be a whole number.")
+    return int(whole_percentage)
+
+
 def _format_quantity(value: object) -> float:
     try:
         return float(Decimal(str(value or 1)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
@@ -222,6 +230,7 @@ def flowaccount_readiness(
     supplier_missing: list[str] = []
     supplier_errors: list[str] = []
     payment_missing: list[str] = []
+    payment_errors: list[str] = []
     external_id = _request_external_document_id(input_request, settings)
 
     if not settings.flowaccount_enabled:
@@ -289,6 +298,10 @@ def flowaccount_readiness(
     wht_rate = request_wht_rate(input_request)
     if wht_rate >= 100:
         expense_errors.append("accounting_wht_rate must be less than 100.")
+    try:
+        _format_payment_withheld_percentage(wht_rate)
+    except FlowAccountError as exc:
+        payment_errors.append(str(exc))
     if wht_rate > 0:
         required_wht_fields = {
             "vendor_tax_id": input_request.vendor_tax_id,
@@ -335,11 +348,13 @@ def flowaccount_readiness(
         and input_request.status == "APPROVED"
         and expense_exists
         and not payment_missing
+        and not payment_errors
     )
 
     visible_payment_missing = payment_missing if expense_exists else []
+    visible_payment_errors = payment_errors if expense_exists else []
     readiness_missing = list(dict.fromkeys(expense_missing + supplier_missing + visible_payment_missing))
-    readiness_errors = list(dict.fromkeys(expense_errors + supplier_errors))
+    readiness_errors = list(dict.fromkeys(expense_errors + supplier_errors + visible_payment_errors))
     return FlowAccountReadiness(
         enabled=settings.flowaccount_enabled,
         ready=expense_ready,
@@ -663,12 +678,13 @@ class FlowAccountService:
         if self.settings.flowaccount_default_payment_method != "transfer":
             raise FlowAccountError("Only transfer FlowAccount payment is supported in this phase.")
         amounts = _document_amounts(input_request)
+        withheld_percentage = _format_payment_withheld_percentage(amounts["wht_rate"])
         payload: dict[str, Any] = {
             "paymentStructureType": "PaymentPaidTransfer",
             "paymentMethod": 5,
             "paymentDate": payment_date.isoformat(),
             "collected": _format_amount(amounts["net_amount"]),
-            "withheldPercentage": _format_amount(amounts["wht_rate"]),
+            "withheldPercentage": withheld_percentage,
             "withheldAmount": _format_amount(amounts["wht_amount"]),
             "paymentRemarks": input_request.payment_reference or "",
             "remainingCollectedType": 0,

@@ -8,20 +8,11 @@ const ToolIcon = ({ icon, radius, duration, delay, color }) => {
 
   return (
     <Motion.div
+      className="construction-animation-tool"
       style={{
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
         color: color,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'rgba(255, 255, 255, 0.2)',
-        backdropFilter: 'blur(4px)',
-        padding: '12px',
-        borderRadius: '50%',
         border: `1px solid ${color}44`,
-        boxShadow: `0 4px 15px ${color}22`
+        boxShadow: `0 4px 15px ${color}22`,
       }}
       animate={{
         rotate: 360,
@@ -43,85 +34,62 @@ const ToolIcon = ({ icon, radius, duration, delay, color }) => {
       transition={{
         duration: duration,
         repeat: Infinity,
-        ease: "linear",
-        delay: delay
+        ease: 'linear',
+        delay: delay,
       }}
     >
-      <IconComponent size={28} />
+      <IconComponent size={24} />
     </Motion.div>
   );
 };
 
 const ConstructionAnimation = () => {
   const tools = useMemo(() => [
-    { icon: Hammer, radius: 160, duration: 25, delay: 0, color: '#c9a15c' },
-    { icon: Wrench, radius: 220, duration: 35, delay: 5, color: '#bba684' },
-    { icon: HardHat, radius: 180, duration: 45, delay: 10, color: '#8c6e3d' },
-    { icon: Pickaxe, radius: 240, duration: 55, delay: 15, color: '#c9a15c' },
-    { icon: Ruler, radius: 200, duration: 40, delay: 20, color: '#e6decb' },
-    { icon: Drill, radius: 260, duration: 65, delay: 25, color: '#bba684' },
+    { icon: Hammer, radius: 92, duration: 25, delay: 0, color: '#c9a15c' },
+    { icon: Wrench, radius: 128, duration: 35, delay: 5, color: '#bba684' },
+    { icon: HardHat, radius: 108, duration: 45, delay: 10, color: '#8c6e3d' },
+    { icon: Pickaxe, radius: 145, duration: 55, delay: 15, color: '#c9a15c' },
+    { icon: Ruler, radius: 118, duration: 40, delay: 20, color: '#e6decb' },
+    { icon: Drill, radius: 152, duration: 65, delay: 25, color: '#bba684' },
   ], []);
 
   const particles = useMemo(() => {
-    return [...Array(15)].map((_, i) => ({
-      x: [(i * 50) % 800 - 400, (i * 70 + 100) % 800 - 400],
-      y: [(i * 60) % 800 - 400, (i * 80 + 150) % 800 - 400],
+    return [...Array(12)].map((_, i) => ({
+      x: [(i * 41) % 320 - 160, (i * 57 + 80) % 320 - 160],
+      y: [(i * 49) % 320 - 160, (i * 63 + 120) % 320 - 160],
       duration: 15 + (i % 10),
     }));
   }, []);
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-      
-      {/* Background Glow */}
-      <div style={{
-        position: 'absolute',
-        width: '500px',
-        height: '500px',
-        background: 'radial-gradient(circle, rgba(201, 161, 92, 0.05) 0%, rgba(201, 161, 92, 0) 70%)',
-        borderRadius: '50%',
-        pointerEvents: 'none'
-      }} />
+    <div className="construction-animation" aria-hidden="true">
+      <div className="construction-animation-glow" />
 
-      {/* Orbit Rings (Subtle) */}
-      {[160, 180, 200, 220, 240, 260].map((r, i) => (
-        <div key={i} style={{
-          position: 'absolute',
-          width: `${r * 2}px`,
-          height: `${r * 2}px`,
-          border: '1px dashed rgba(201, 161, 92, 0.1)',
-          borderRadius: '50%',
-          pointerEvents: 'none'
-        }} />
+      {[92, 108, 124, 140, 156].map((r) => (
+        <div
+          key={r}
+          className="construction-animation-ring"
+          style={{ width: `${r * 2}px`, height: `${r * 2}px` }}
+        />
       ))}
 
-      {/* Central Logo */}
       <Motion.div
+        className="construction-animation-logo"
         animate={{
           y: [-10, 10, -10],
-          scale: [1, 1.05, 1]
+          scale: [1, 1.04, 1],
         }}
         transition={{
           duration: 6,
           repeat: Infinity,
-          ease: "easeInOut"
-        }}
-        style={{
-          width: '220px',
-          height: '220px',
-          zIndex: 10,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          filter: 'drop-shadow(0 10px 20px rgba(0,0,0,0.1))'
+          ease: 'easeInOut',
         }}
       >
-        <img src={logoImage} alt="DOUBLEBO" style={{ width: '100%', height: 'auto' }} />
+        <img src={logoImage} alt="RAYADEE" />
       </Motion.div>
 
-      {/* Rotating Tools */}
       {tools.map((tool, index) => (
-        <ToolIcon 
+        <ToolIcon
           key={index}
           icon={tool.icon}
           radius={tool.radius}
@@ -131,32 +99,22 @@ const ConstructionAnimation = () => {
         />
       ))}
 
-      {/* Floating Particles */}
       {particles.map((p, i) => (
         <Motion.div
           key={i}
-          style={{
-            position: 'absolute',
-            width: '4px',
-            height: '4px',
-            backgroundColor: '#c9a15c',
-            borderRadius: '50%',
-            opacity: 0.2
-          }}
+          className="construction-animation-particle"
           animate={{
             x: p.x,
             y: p.y,
-            opacity: [0.1, 0.4, 0.1]
+            opacity: [0.1, 0.4, 0.1],
           }}
           transition={{
             duration: p.duration,
             repeat: Infinity,
-            ease: "easeInOut"
+            ease: 'easeInOut',
           }}
         />
       ))}
-
-      {/* Removed redundant text behind logo */}
     </div>
   );
 };

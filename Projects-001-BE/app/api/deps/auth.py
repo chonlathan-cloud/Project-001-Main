@@ -18,6 +18,7 @@ ADMIN_ROLE = "admin"
 OWNER_ROLE = "owner"
 SUBCONTRACTOR_ROLE = "subcontractor"
 INSPECTOR_ROLE = "inspector"
+PENDING_ROLE = "pending"
 ADMIN_OR_OWNER_ROLES = {ADMIN_ROLE, OWNER_ROLE}
 INSPECTION_STAFF_ROLES = {ADMIN_ROLE, OWNER_ROLE, INSPECTOR_ROLE}
 
@@ -47,6 +48,11 @@ class AuthenticatedUser:
     email: str | None = None
     display_name: str | None = None
     subcontractor_id: str | None = None
+    line_uid: str | None = None
+    auth_provider: str | None = None
+    access_request_id: str | None = None
+    access_status: str | None = None
+    rejection_reason: str | None = None
     is_development_override: bool = False
 
     def has_role(self, role: str) -> bool:
@@ -108,6 +114,10 @@ def role_permissions(role: str, roles: list[str] | tuple[str, ...] | None = None
             "inspection:view_assigned",
             "inspection:submit_evidence",
         ])
+    if PENDING_ROLE in normalized_roles:
+        add([
+            "access_request:view",
+        ])
     return permissions
 
 
@@ -152,7 +162,7 @@ def _admin_access_user(user: AuthenticatedUser) -> AuthenticatedUser:
     )
 
 
-def get_current_user(
+def get_current_user_allow_pending(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> AuthenticatedUser:
     if credentials is None:
@@ -171,7 +181,24 @@ def get_current_user(
         email=str(payload.get("email") or "").strip() or None,
         display_name=str(payload.get("display_name") or "").strip() or None,
         subcontractor_id=str(payload.get("subcontractor_id") or "").strip() or None,
+        line_uid=str(payload.get("line_uid") or "").strip() or None,
+        auth_provider=str(payload.get("auth_provider") or "").strip() or None,
+        access_request_id=str(payload.get("access_request_id") or "").strip() or None,
+        access_status=str(payload.get("access_status") or "").strip() or None,
+        rejection_reason=str(payload.get("rejection_reason") or "").strip() or None,
     )
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> AuthenticatedUser:
+    user = get_current_user_allow_pending(credentials)
+    if user.has_role(PENDING_ROLE):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access approval is pending for this account.",
+        )
+    return user
 
 
 def require_subcontractor_user(

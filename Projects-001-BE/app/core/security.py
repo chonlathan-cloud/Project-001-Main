@@ -42,6 +42,11 @@ def issue_session_token(
     email: str | None = None,
     display_name: str | None = None,
     subcontractor_id: str | None = None,
+    line_uid: str | None = None,
+    auth_provider: str | None = None,
+    access_request_id: str | None = None,
+    access_status: str | None = None,
+    rejection_reason: str | None = None,
 ) -> str:
     settings = get_settings()
     now = datetime.now(UTC)
@@ -54,6 +59,11 @@ def issue_session_token(
         "email": email,
         "display_name": display_name,
         "subcontractor_id": subcontractor_id,
+        "line_uid": line_uid,
+        "auth_provider": auth_provider,
+        "access_request_id": access_request_id,
+        "access_status": access_status,
+        "rejection_reason": rejection_reason,
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
     }

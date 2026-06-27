@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useState } from 'react'
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { BrowserRouter as Router, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Loading from './components/Loading'
@@ -8,9 +8,12 @@ import {
   getStoredSessionToken,
   canAccessOwnerArea,
   isAdminPortalUser,
+  isPendingAccessUser,
   resolvePostLoginPath,
   subscribeToAuthChanges,
+  syncStoredProfileUser,
 } from './auth'
+import { getCurrentProfile } from './api'
 import './index.css'
 
 const DashboardPage = lazy(() => import('./DashboardPage'))
@@ -26,11 +29,13 @@ const SupportPage = lazy(() => import('./SupportPage'))
 const LoginPage = lazy(() => import('./LoginPage'))
 const SignUpPage = lazy(() => import('./SignUpPage'))
 const LineCallbackPage = lazy(() => import('./LineCallbackPage'))
+const PendingApprovalPage = lazy(() => import('./PendingApprovalPage'))
 
-function ProtectedLayout({ adminOnly = false, ownerOnly = false }) {
+function ProtectedLayout({ adminOnly = false, ownerOnly = false, pendingOnly = false, shell = true }) {
   const location = useLocation()
   const [authUser, setAuthUser] = useState(() => getStoredAuthUser())
   const [sessionToken, setSessionToken] = useState(() => getStoredSessionToken())
+  const profileSyncTokenRef = useRef('')
 
   useEffect(() => (
     subscribeToAuthChanges(() => {
@@ -39,8 +44,41 @@ function ProtectedLayout({ adminOnly = false, ownerOnly = false }) {
     })
   ), [])
 
+  useEffect(() => {
+    if (!sessionToken || pendingOnly || profileSyncTokenRef.current === sessionToken) return
+
+    let isActive = true
+    profileSyncTokenRef.current = sessionToken
+
+    getCurrentProfile()
+      .then((profile) => {
+        if (!isActive || !profile?.user) return
+        const syncedUser = syncStoredProfileUser(profile.user)
+        if (syncedUser) {
+          setAuthUser(syncedUser)
+        }
+      })
+      .catch(() => {
+        if (isActive && profileSyncTokenRef.current === sessionToken) {
+          profileSyncTokenRef.current = ''
+        }
+      })
+
+    return () => {
+      isActive = false
+    }
+  }, [pendingOnly, sessionToken])
+
   if (!sessionToken) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  }
+
+  if (pendingOnly && !isPendingAccessUser(authUser)) {
+    return <Navigate to={resolvePostLoginPath(authUser)} replace />
+  }
+
+  if (!pendingOnly && isPendingAccessUser(authUser)) {
+    return <Navigate to="/pending-approval" replace />
   }
 
   if (adminOnly && !isAdminPortalUser(authUser)) {
@@ -49,6 +87,14 @@ function ProtectedLayout({ adminOnly = false, ownerOnly = false }) {
 
   if (ownerOnly && !canAccessOwnerArea(authUser)) {
     return <Navigate to={resolvePostLoginPath(authUser)} replace />
+  }
+
+  if (!shell) {
+    return (
+      <Suspense fallback={<Loading />}>
+        <Outlet />
+      </Suspense>
+    )
   }
 
   return (
@@ -91,6 +137,10 @@ function AppRoutes() {
           </Suspense>
         )}
       />
+
+      <Route element={<ProtectedLayout pendingOnly shell={false} />}>
+        <Route path="/pending-approval" element={<PendingApprovalPage />} />
+      </Route>
 
       <Route element={<ProtectedLayout adminOnly ownerOnly />}>
         <Route path="/" element={<DashboardPage />} />

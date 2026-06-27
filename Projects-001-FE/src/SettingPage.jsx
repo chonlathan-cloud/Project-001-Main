@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Cloud,
+  Copy,
   Database,
   ExternalLink,
   KeyRound,
@@ -12,20 +13,25 @@ import {
   Save,
   ShieldCheck,
   SlidersHorizontal,
+  UserCheck,
   UsersRound,
+  XCircle,
 } from 'lucide-react';
 import {
+  approveSettingAccessRequest,
   createSettingAdmin,
   fetchData,
+  getSettingAccessRequests,
   getInputProjectOptions,
   getSettingAdmins,
   getSettingSubcontractorKycUrl,
   getSettingSubcontractors,
+  rejectSettingAccessRequest,
   resetSettingSubcontractorLine,
   updateSettingAdmin,
   updateSettingSubcontractor,
 } from './api';
-import { canMutateAdminData, getStoredAuthUser } from './auth';
+import { canMutateAdminData, canMutateSubcontractorData, getStoredAuthUser } from './auth';
 import Loading from './components/Loading';
 import {
   SettingsAccordionItem,
@@ -62,8 +68,58 @@ const emptySubForm = {
 const emptyAdminForm = {
   email: '',
   display_name: '',
+  phone: '',
+  company: '',
+  department: '',
+  time: 'Asia/Bangkok',
+  bank_account: { ...emptyBank },
+  role: 'admin',
+  roles: ['admin'],
   is_active: true,
 };
+
+const emptyAccessDecision = {
+  account_type: 'subcontractor',
+  existing_subcontractor_id: '',
+  display_name: '',
+  contact_name: '',
+  phone: '',
+  company: '',
+  department: '',
+  time: 'Asia/Bangkok',
+  tax_id: '',
+  bank_account: { ...emptyBank },
+  role: 'admin',
+  roles: ['admin'],
+  rejection_reason: '',
+};
+
+const ROLE_OPTIONS = [
+  { id: 'owner', label: 'Owner', description: 'Full business control' },
+  { id: 'admin', label: 'Admin', description: 'Admin operations' },
+  { id: 'inspector', label: 'Inspector', description: 'Inspection work' },
+];
+
+const OWNER_SUBCONTRACTOR_FIELDS = [
+  'name',
+  'contact_name',
+  'phone',
+  'tax_id',
+  'assigned_project_ids',
+  'vat_rate',
+  'wht_rate',
+  'retention_rate',
+  'bank_account',
+  'is_active',
+];
+
+const ADMIN_SUBCONTRACTOR_FIELDS = [
+  'name',
+  'contact_name',
+  'phone',
+  'tax_id',
+  'bank_account',
+];
 
 const NAV_ITEMS = [
   { id: 'general', label: 'General', icon: SlidersHorizontal },
@@ -121,8 +177,41 @@ const buildSubForm = (item = {}) => ({
 const buildAdminForm = (item = {}) => ({
   email: item.email || '',
   display_name: item.display_name || '',
+  phone: item.phone || '',
+  company: item.company || '',
+  department: item.department || '',
+  time: item.time || item.timezone || 'Asia/Bangkok',
+  bank_account: {
+    bank_name: item.bank_account?.bank_name || '',
+    account_no: item.bank_account?.account_no || '',
+    account_name: item.bank_account?.account_name || '',
+  },
+  role: item.role || 'admin',
+  roles: Array.isArray(item.roles) && item.roles.length > 0 ? item.roles : [item.role || 'admin'],
   is_active: item.is_active !== false,
 });
+
+const buildAccessDecision = (item = {}) => {
+  const requestedType = normalize(item.requested_account_type);
+  const accountType = requestedType === 'admin' ? 'admin' : 'subcontractor';
+  const displayName = item.company_name || item.display_name || item.email || item.line_uid || '';
+  return {
+    ...emptyAccessDecision,
+    account_type: accountType,
+    display_name: displayName,
+    contact_name: item.contact_name || item.display_name || '',
+    phone: item.phone || '',
+    company: item.company_name || '',
+    tax_id: item.tax_id || '',
+    bank_account: {
+      bank_name: item.bank_account?.bank_name || '',
+      account_no: item.bank_account?.account_no || '',
+      account_name: item.bank_account?.account_name || '',
+    },
+    roles: ['admin'],
+    role: 'admin',
+  };
+};
 
 const formatRate = (value) => `${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}%`;
 
@@ -164,7 +253,35 @@ const resolveRoleLabel = (value) => {
   return role || 'Admin';
 };
 
+const normalizeRoleList = (roles = [], fallback = 'admin') => {
+  const seen = new Set();
+  const normalized = [];
+  roles.forEach((role) => {
+    const cleaned = normalize(role);
+    if (cleaned && ROLE_OPTIONS.some((option) => option.id === cleaned) && !seen.has(cleaned)) {
+      normalized.push(cleaned);
+      seen.add(cleaned);
+    }
+  });
+  if (normalized.length > 0) return normalized;
+  const fallbackRole = normalize(fallback);
+  return ROLE_OPTIONS.some((option) => option.id === fallbackRole) ? [fallbackRole] : ['admin'];
+};
+
+const primaryRoleForRoles = (roles = []) => {
+  if (roles.includes('owner')) return 'owner';
+  if (roles.includes('admin')) return 'admin';
+  if (roles.includes('inspector')) return 'inspector';
+  return 'admin';
+};
+
+const pickFields = (source, fields) => fields.reduce((payload, field) => ({
+  ...payload,
+  [field]: source[field],
+}), {});
+
 function SettingPage() {
+  const [accessRequests, setAccessRequests] = useState([]);
   const [subcontractors, setSubcontractors] = useState([]);
   const [admins, setAdmins] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -174,11 +291,13 @@ function SettingPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('users');
+  const [selectedAccessRequestId, setSelectedAccessRequestId] = useState('');
   const [selectedSubId, setSelectedSubId] = useState('');
   const [selectedAdminId, setSelectedAdminId] = useState('');
   const [subcontractorSearch, setSubcontractorSearch] = useState('');
   const [subForm, setSubForm] = useState(emptySubForm);
   const [adminForm, setAdminForm] = useState(emptyAdminForm);
+  const [accessDecision, setAccessDecision] = useState(emptyAccessDecision);
   const [generalPrefs, setGeneralPrefs] = useState({
     emailNotifications: true,
     darkMode: false,
@@ -187,6 +306,12 @@ function SettingPage() {
   const [kycRules, setKycRules] = useState(KYC_RULES);
   const storedAuthUser = getStoredAuthUser();
   const canMutateSettings = canMutateAdminData(storedAuthUser);
+  const canMutateSubcontractors = canMutateSubcontractorData(storedAuthUser);
+  const settingsAccessLabel = canMutateSettings
+    ? 'Owner access'
+    : canMutateSubcontractors
+      ? 'Subcontractor edit'
+      : 'View only';
 
   const loadPage = async () => {
     setLoading(true);
@@ -198,23 +323,20 @@ function SettingPage() {
         getInputProjectOptions().catch(() => []),
         fetchData('profile').catch(() => null),
       ]);
+      const accessItems = await getSettingAccessRequests('pending').catch(() => []);
 
+      setAccessRequests(accessItems);
       setSubcontractors(subItems);
       setAdmins(adminItems);
       setProjects(projectItems);
       setCurrentProfile(profileResult);
 
-      if (subItems.length > 0) {
-        const selected = subItems[0];
-        setSelectedSubId(selected.id);
-        setSubForm(buildSubForm(selected));
-      }
-
-      if (adminItems.length > 0) {
-        const selectedAdmin = adminItems[0];
-        setSelectedAdminId(selectedAdmin.id);
-        setAdminForm(buildAdminForm(selectedAdmin));
-      }
+      setSelectedSubId('');
+      setSubForm(emptySubForm);
+      setSelectedAdminId('');
+      setAdminForm(emptyAdminForm);
+      setSelectedAccessRequestId('');
+      setAccessDecision(emptyAccessDecision);
     } catch (loadError) {
       setError(loadError.message || 'Failed to load settings.');
     } finally {
@@ -227,19 +349,35 @@ function SettingPage() {
   }, []);
 
   useEffect(() => {
+    const selected = accessRequests.find((item) => item.id === selectedAccessRequestId);
+    if (!selected) {
+      setAccessDecision(emptyAccessDecision);
+      return;
+    }
+    setAccessDecision(buildAccessDecision(selected));
+  }, [selectedAccessRequestId, accessRequests]);
+
+  useEffect(() => {
     const selected = subcontractors.find((item) => item.id === selectedSubId);
-    if (!selected) return;
+    if (!selected) {
+      setSubForm(emptySubForm);
+      return;
+    }
     setSubForm(buildSubForm(selected));
   }, [selectedSubId, subcontractors]);
 
   useEffect(() => {
     const selected = admins.find((item) => item.id === selectedAdminId);
-    if (!selected) return;
+    if (!selected) {
+      setAdminForm(emptyAdminForm);
+      return;
+    }
     setAdminForm(buildAdminForm(selected));
   }, [selectedAdminId, admins]);
 
   const selectedSubcontractor = subcontractors.find((item) => item.id === selectedSubId);
   const selectedAdmin = admins.find((item) => item.id === selectedAdminId);
+  const selectedAccessRequest = accessRequests.find((item) => item.id === selectedAccessRequestId);
   const currentProfileUser = currentProfile?.user || {};
   const currentProfileEmail = normalize(currentProfileUser.email || storedAuthUser?.email);
 
@@ -273,13 +411,74 @@ function SettingPage() {
   );
 
   const updateSubField = (field, value) => {
-    if (!canMutateSettings) return;
+    if (!canMutateSubcontractors) return;
     setSubForm((current) => ({ ...current, [field]: value }));
   };
 
   const updateAdminField = (field, value) => {
     if (!canMutateSettings) return;
     setAdminForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const updateAdminBankField = (field, value) => {
+    if (!canMutateSettings) return;
+    setAdminForm((current) => ({
+      ...current,
+      bank_account: {
+        ...current.bank_account,
+        [field]: value,
+      },
+    }));
+  };
+
+  const toggleAdminRole = (roleId) => {
+    if (!canMutateSettings) return;
+    setAdminForm((current) => {
+      const roles = normalizeRoleList(current.roles, current.role);
+      const hasRole = roles.includes(roleId);
+      const nextRoles = hasRole
+        ? roles.filter((role) => role !== roleId)
+        : [...roles, roleId];
+      const normalizedRoles = nextRoles.length > 0 ? normalizeRoleList(nextRoles, roleId) : roles;
+      return {
+        ...current,
+        roles: normalizedRoles,
+        role: primaryRoleForRoles(normalizedRoles),
+      };
+    });
+  };
+
+  const updateAccessDecisionField = (field, value) => {
+    if (!canMutateSubcontractors) return;
+    setAccessDecision((current) => ({ ...current, [field]: value }));
+  };
+
+  const updateAccessDecisionBankField = (field, value) => {
+    if (!canMutateSubcontractors) return;
+    setAccessDecision((current) => ({
+      ...current,
+      bank_account: {
+        ...current.bank_account,
+        [field]: value,
+      },
+    }));
+  };
+
+  const toggleAccessDecisionRole = (roleId) => {
+    if (!canMutateSettings) return;
+    setAccessDecision((current) => {
+      const roles = normalizeRoleList(current.roles, current.role);
+      const hasRole = roles.includes(roleId);
+      const nextRoles = hasRole
+        ? roles.filter((role) => role !== roleId)
+        : [...roles, roleId];
+      const normalizedRoles = nextRoles.length > 0 ? normalizeRoleList(nextRoles, roleId) : roles;
+      return {
+        ...current,
+        roles: normalizedRoles,
+        role: primaryRoleForRoles(normalizedRoles),
+      };
+    });
   };
 
   const toggleAssignedProject = (projectId) => {
@@ -296,7 +495,7 @@ function SettingPage() {
   };
 
   const updateBankField = (field, value) => {
-    if (!canMutateSettings) return;
+    if (!canMutateSubcontractors) return;
     setSubForm((current) => ({
       ...current,
       bank_account: {
@@ -307,12 +506,15 @@ function SettingPage() {
   };
 
   const handleSaveSubcontractor = async () => {
-    if (!selectedSubId || !canMutateSettings) return;
+    if (!selectedSubId || !canMutateSubcontractors) return;
     setSaving(true);
     setMessage('');
     setError('');
     try {
-      const updated = await updateSettingSubcontractor(selectedSubId, subForm);
+      const payload = canMutateSettings
+        ? pickFields(subForm, OWNER_SUBCONTRACTOR_FIELDS)
+        : pickFields(subForm, ADMIN_SUBCONTRACTOR_FIELDS);
+      const updated = await updateSettingSubcontractor(selectedSubId, payload);
       setSubcontractors((current) =>
         current.map((item) => (item.id === selectedSubId ? updated : item))
       );
@@ -361,15 +563,35 @@ function SettingPage() {
     setMessage('');
     setError('');
     try {
+      const roles = normalizeRoleList(adminForm.roles, adminForm.role);
+      const isSelfAdmin = selectedAdmin && currentProfileEmail && normalize(selectedAdmin.email) === currentProfileEmail;
+      const staffPayload = {
+        display_name: adminForm.display_name,
+        phone: adminForm.phone,
+        company: adminForm.company,
+        department: adminForm.department,
+        time: adminForm.time,
+        bank_account: adminForm.bank_account,
+      };
       if (selectedAdmin) {
-        const updated = await updateSettingAdmin(selectedAdmin.id, {
-          display_name: adminForm.display_name,
-          is_active: adminForm.is_active,
-        });
+        const updated = await updateSettingAdmin(selectedAdmin.id, isSelfAdmin
+          ? staffPayload
+          : {
+              ...staffPayload,
+              role: primaryRoleForRoles(roles),
+              roles,
+              is_active: adminForm.is_active,
+            });
         setAdmins((current) => current.map((item) => (item.id === selectedAdmin.id ? updated : item)));
         setMessage('Admin updated.');
       } else {
-        const created = await createSettingAdmin(adminForm);
+        const created = await createSettingAdmin({
+          ...staffPayload,
+          email: adminForm.email,
+          role: primaryRoleForRoles(roles),
+          roles,
+          is_active: adminForm.is_active,
+        });
         setAdmins((current) => [...current, created].sort((left, right) => left.email.localeCompare(right.email)));
         setSelectedAdminId(created.id);
         setMessage('Admin added.');
@@ -384,7 +606,102 @@ function SettingPage() {
   const handleNewAdmin = () => {
     if (!canMutateSettings) return;
     setSelectedAdminId('');
-    setAdminForm(emptyAdminForm);
+    setAdminForm({ ...emptyAdminForm, bank_account: { ...emptyBank }, roles: ['admin'] });
+  };
+
+  const handleApproveAccessRequest = async () => {
+    if (!selectedAccessRequest || !canMutateSubcontractors) return;
+    if (accessDecision.account_type === 'admin' && !canMutateSettings) {
+      setError('Owner access is required to approve admin or staff accounts.');
+      return;
+    }
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      const roles = normalizeRoleList(accessDecision.roles, accessDecision.role);
+      await approveSettingAccessRequest(selectedAccessRequest.id, {
+        account_type: accessDecision.account_type,
+        existing_subcontractor_id: accessDecision.existing_subcontractor_id || null,
+        display_name: accessDecision.display_name,
+        contact_name: accessDecision.contact_name,
+        phone: accessDecision.phone,
+        company: accessDecision.company,
+        department: accessDecision.department,
+        time: accessDecision.time,
+        tax_id: accessDecision.tax_id,
+        bank_account: accessDecision.bank_account,
+        role: primaryRoleForRoles(roles),
+        roles,
+      });
+      setMessage('Access request approved.');
+      await loadPage();
+    } catch (approveError) {
+      setError(approveError.message || 'Failed to approve access request.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRejectAccessRequest = async () => {
+    if (!selectedAccessRequest || !canMutateSubcontractors) return;
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      await rejectSettingAccessRequest(selectedAccessRequest.id, {
+        reason: accessDecision.rejection_reason || 'Access request rejected by admin.',
+      });
+      setMessage('Access request rejected.');
+      await loadPage();
+    } catch (rejectError) {
+      setError(rejectError.message || 'Failed to reject access request.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCopyText = async (label, text) => {
+    setMessage('');
+    setError('');
+    try {
+      if (!navigator?.clipboard?.writeText) {
+        throw new Error('Clipboard is not available in this browser.');
+      }
+      await navigator.clipboard.writeText(text);
+      setMessage(`${label} copied.`);
+    } catch (copyError) {
+      setError(copyError.message || `Failed to copy ${label.toLowerCase()}.`);
+    }
+  };
+
+  const handleCopySubcontractorProfile = (item) => {
+    if (!item) return;
+    const assignedProjectLabels = Array.isArray(item.assigned_project_ids)
+      ? item.assigned_project_ids
+          .map((projectId) => projectNameById.get(String(projectId)) || projectId)
+          .filter(Boolean)
+          .join(', ')
+      : '';
+    handleCopyText('Subcontractor profile', [
+      `Name: ${item.name || '-'}`,
+      `Contact: ${item.contact_name || '-'}`,
+      `Phone: ${item.phone || '-'}`,
+      `Tax ID: ${item.tax_id || '-'}`,
+      `Bank: ${item.bank_account?.bank_name || '-'}`,
+      `Account No.: ${item.bank_account?.account_no || '-'}`,
+      `Account Name: ${item.bank_account?.account_name || '-'}`,
+      `Assigned Projects: ${assignedProjectLabels || '-'}`,
+    ].join('\n'));
+  };
+
+  const handleCopySubcontractorBank = (item) => {
+    if (!item) return;
+    handleCopyText('Bank details', [
+      `Bank: ${item.bank_account?.bank_name || '-'}`,
+      `Account No.: ${item.bank_account?.account_no || '-'}`,
+      `Account Name: ${item.bank_account?.account_name || '-'}`,
+    ].join('\n'));
   };
 
   const handlePreferenceSave = () => {
@@ -459,6 +776,252 @@ function SettingPage() {
     </SettingsPanel>
   );
 
+  const renderAccessRequestsSection = () => (
+    <div className="settings-accordion-section">
+      <div className="settings-accordion-section-head">
+        <div>
+          <span className="settings-kicker">Access Review</span>
+          <h3>{accessRequests.length.toLocaleString('en-US')} pending requests</h3>
+        </div>
+      </div>
+
+      <div className="settings-accordion-list">
+        {accessRequests.length > 0 ? (
+          accessRequests.map((item) => {
+            const isOpen = item.id === selectedAccessRequestId;
+            const requestedType = item.requested_account_type || 'Admin decides';
+            const identity = item.email || item.line_uid || item.id;
+
+            return (
+              <SettingsAccordionItem
+                key={item.id}
+                id={`access-request-${item.id}`}
+                isOpen={isOpen}
+                onToggle={() => {
+                  if (isOpen) {
+                    setSelectedAccessRequestId('');
+                    setAccessDecision(emptyAccessDecision);
+                    return;
+                  }
+                  setSelectedAccessRequestId(item.id);
+                  setAccessDecision(buildAccessDecision(item));
+                }}
+                avatar={(
+                  <SettingsAvatar
+                    name={item.display_name || item.company_name || identity}
+                    imageUrl={item.picture_url}
+                  />
+                )}
+                title={item.company_name || item.display_name || identity}
+                subtitle={`${item.provider || 'provider'} • ${identity}`}
+                meta={(
+                  <>
+                    <SettingsBadge tone="warning">Pending</SettingsBadge>
+                    <SettingsBadge tone="neutral">{requestedType}</SettingsBadge>
+                  </>
+                )}
+              >
+                <div className="settings-accordion-detail">
+                  <SettingsDetailGrid
+                    items={[
+                      { label: 'Request ID', value: item.id, wide: true },
+                      { label: 'Provider', value: item.provider },
+                      { label: 'Identity', value: identity, wide: true },
+                      { label: 'Requested Type', value: requestedType },
+                      { label: 'Contact', value: displayValue(item.contact_name) },
+                      { label: 'Phone', value: displayValue(item.phone) },
+                      { label: 'Tax ID', value: maskIdentifier(item.tax_id) },
+                      { label: 'Bank Name', value: displayValue(item.bank_account?.bank_name) },
+                      { label: 'Account No.', value: maskIdentifier(item.bank_account?.account_no) },
+                      { label: 'Account Name', value: displayValue(item.bank_account?.account_name) },
+                    ]}
+                  />
+
+                  <div className="settings-inline-editor">
+                    <div>
+                      <span className="settings-kicker">Approval Decision</span>
+                      <h4>Classify and approve access</h4>
+                    </div>
+
+                    <div className="settings-form-grid three">
+                      <label className="settings-field">
+                        <span>Account Type</span>
+                        <select
+                          className="settings-input"
+                          value={accessDecision.account_type}
+                          onChange={(event) => updateAccessDecisionField('account_type', event.target.value)}
+                          disabled={!canMutateSubcontractors}
+                        >
+                          <option value="subcontractor">Subcontractor</option>
+                          <option value="admin">Admin / Staff</option>
+                        </select>
+                      </label>
+                      <label className="settings-field">
+                        <span>{accessDecision.account_type === 'admin' ? 'Display Name' : 'Company / Name'}</span>
+                        <input
+                          className="settings-input"
+                          value={accessDecision.display_name}
+                          onChange={(event) => updateAccessDecisionField('display_name', event.target.value)}
+                          disabled={!canMutateSubcontractors}
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Contact Name</span>
+                        <input
+                          className="settings-input"
+                          value={accessDecision.contact_name}
+                          onChange={(event) => updateAccessDecisionField('contact_name', event.target.value)}
+                          disabled={!canMutateSubcontractors}
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Phone</span>
+                        <input
+                          className="settings-input"
+                          value={accessDecision.phone}
+                          onChange={(event) => updateAccessDecisionField('phone', event.target.value)}
+                          disabled={!canMutateSubcontractors}
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Company</span>
+                        <input
+                          className="settings-input"
+                          value={accessDecision.company}
+                          onChange={(event) => updateAccessDecisionField('company', event.target.value)}
+                          disabled={!canMutateSubcontractors}
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Tax ID</span>
+                        <input
+                          className="settings-input"
+                          value={accessDecision.tax_id}
+                          onChange={(event) => updateAccessDecisionField('tax_id', event.target.value)}
+                          disabled={!canMutateSubcontractors || accessDecision.account_type === 'admin'}
+                        />
+                      </label>
+                    </div>
+
+                    {accessDecision.account_type === 'subcontractor' ? (
+                      <label className="settings-field">
+                        <span>Link Existing Subcontractor</span>
+                        <select
+                          className="settings-input"
+                          value={accessDecision.existing_subcontractor_id}
+                          onChange={(event) => updateAccessDecisionField('existing_subcontractor_id', event.target.value)}
+                          disabled={!canMutateSubcontractors}
+                        >
+                          <option value="">Create new subcontractor profile</option>
+                          {subcontractors.map((subcontractor) => (
+                            <option key={subcontractor.id} value={subcontractor.id}>
+                              {subcontractor.name || subcontractor.contact_name || subcontractor.id}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <div className="settings-project-assignment">
+                        <div>
+                          <span className="settings-kicker">Internal Roles</span>
+                          <strong>{normalizeRoleList(accessDecision.roles, accessDecision.role).map(resolveRoleLabel).join(', ')}</strong>
+                        </div>
+                        <div className="settings-project-grid">
+                          {ROLE_OPTIONS.map((roleOption) => {
+                            const roles = normalizeRoleList(accessDecision.roles, accessDecision.role);
+                            const checked = roles.includes(roleOption.id);
+                            return (
+                              <label key={roleOption.id} className={checked ? 'selected' : ''}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleAccessDecisionRole(roleOption.id)}
+                                  disabled={!canMutateSettings || (checked && roles.length === 1)}
+                                />
+                                <span>{roleOption.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {accessDecision.account_type === 'subcontractor' ? (
+                      <div className="settings-form-grid three">
+                        <label className="settings-field">
+                          <span>Bank Name</span>
+                          <input
+                            className="settings-input"
+                            value={accessDecision.bank_account.bank_name}
+                            onChange={(event) => updateAccessDecisionBankField('bank_name', event.target.value)}
+                            disabled={!canMutateSubcontractors}
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Account No.</span>
+                          <input
+                            className="settings-input"
+                            value={accessDecision.bank_account.account_no}
+                            onChange={(event) => updateAccessDecisionBankField('account_no', event.target.value)}
+                            disabled={!canMutateSubcontractors}
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Account Name</span>
+                          <input
+                            className="settings-input"
+                            value={accessDecision.bank_account.account_name}
+                            onChange={(event) => updateAccessDecisionBankField('account_name', event.target.value)}
+                            disabled={!canMutateSubcontractors}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+
+                    <label className="settings-field">
+                      <span>Rejection Reason</span>
+                      <input
+                        className="settings-input"
+                        value={accessDecision.rejection_reason}
+                        onChange={(event) => updateAccessDecisionField('rejection_reason', event.target.value)}
+                        disabled={!canMutateSubcontractors}
+                      />
+                    </label>
+
+                    <div className="settings-editor-actions">
+                      <span>
+                        {accessDecision.account_type === 'admin' && !canMutateSettings
+                          ? 'Owner access is required to approve admin or staff accounts.'
+                          : 'Approval creates or links the account immediately.'}
+                      </span>
+                      <div>
+                        <button type="button" className="settings-button danger" onClick={handleRejectAccessRequest} disabled={saving || !canMutateSubcontractors}>
+                          <XCircle size={16} />
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          className="settings-button primary"
+                          onClick={handleApproveAccessRequest}
+                          disabled={saving || !canMutateSubcontractors || (accessDecision.account_type === 'admin' && !canMutateSettings)}
+                        >
+                          {saving ? <LoaderCircle size={16} className="spin" /> : <UserCheck size={16} />}
+                          Approve Access
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </SettingsAccordionItem>
+            );
+          })
+        ) : (
+          <div className="settings-empty-state">No pending access requests.</div>
+        )}
+      </div>
+    </div>
+  );
+
   const renderUsersPanel = () => (
     <SettingsPanel>
       <SettingsPanelHeader
@@ -472,6 +1035,10 @@ function SettingPage() {
           </button>
         )}
       />
+
+      {renderAccessRequestsSection()}
+
+      <div className="settings-section-divider" />
 
       <div className="settings-accordion-section">
         <div className="settings-accordion-section-head">
@@ -488,10 +1055,14 @@ function SettingPage() {
               const profileUser = isCurrentProfile ? currentProfileUser : {};
               const profileName = profileUser.display_name || profileUser.name || item.display_name || item.email;
               const profilePhone = profileUser.phone || item.phone;
-              const profileCompany = profileUser.company || profileUser.department || item.department;
-              const profileTime = profileUser.time || profileUser.timezone;
+              const profileCompany = profileUser.company || item.company;
+              const profileDepartment = profileUser.department || item.department;
+              const profileTime = profileUser.time || profileUser.timezone || item.time || item.timezone;
               const profileRole = profileUser.role_key || profileUser.role || item.role || 'admin';
-              const bankAccount = profileUser.bank_account || {};
+              const bankAccount = profileUser.bank_account || item.bank_account || {};
+              const roleSummary = Array.isArray(item.roles) && item.roles.length > 0
+                ? item.roles.map(resolveRoleLabel).join(', ')
+                : resolveRoleLabel(profileRole);
 
               return (
                 <SettingsAccordionItem
@@ -499,6 +1070,11 @@ function SettingPage() {
                   id={`admin-${item.id}`}
                   isOpen={item.id === selectedAdminId}
                   onToggle={() => {
+                    if (item.id === selectedAdminId) {
+                      setSelectedAdminId('');
+                      setAdminForm(emptyAdminForm);
+                      return;
+                    }
                     setSelectedAdminId(item.id);
                     setAdminForm(buildAdminForm(item));
                   }}
@@ -525,9 +1101,10 @@ function SettingPage() {
                         { label: 'Admin ID', value: item.id, wide: true },
                         { label: 'Display Name', value: displayValue(profileName) },
                         { label: 'Email', value: displayValue(item.email || profileUser.email) },
-                        { label: 'Role', value: resolveRoleLabel(profileRole) },
+                        { label: 'Role', value: roleSummary },
                         { label: 'Phone', value: displayValue(profilePhone) },
-                        { label: 'Company / Department', value: displayValue(profileCompany) },
+                        { label: 'Company', value: displayValue(profileCompany) },
+                        { label: 'Department', value: displayValue(profileDepartment) },
                         { label: 'Timezone', value: displayValue(profileTime) },
                         { label: 'Bank Name', value: displayValue(bankAccount.bank_name) },
                         { label: 'Account No.', value: maskIdentifier(bankAccount.account_no) },
@@ -566,7 +1143,7 @@ function SettingPage() {
                             className="settings-input"
                             value={adminForm.is_active ? 'active' : 'inactive'}
                             onChange={(event) => updateAdminField('is_active', event.target.value === 'active')}
-                            disabled={!canMutateSettings}
+                            disabled={!canMutateSettings || isCurrentProfile}
                           >
                             <option value="active">Active</option>
                             <option value="inactive">Inactive</option>
@@ -574,8 +1151,101 @@ function SettingPage() {
                         </label>
                       </div>
 
+                      <div className="settings-project-assignment">
+                        <div>
+                          <span className="settings-kicker">Roles</span>
+                          <strong>{normalizeRoleList(adminForm.roles, adminForm.role).map(resolveRoleLabel).join(', ')}</strong>
+                        </div>
+                        <div className="settings-project-grid">
+                          {ROLE_OPTIONS.map((roleOption) => {
+                            const roles = normalizeRoleList(adminForm.roles, adminForm.role);
+                            const checked = roles.includes(roleOption.id);
+                            return (
+                              <label key={roleOption.id} className={checked ? 'selected' : ''}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleAdminRole(roleOption.id)}
+                                  disabled={!canMutateSettings || isCurrentProfile || (checked && roles.length === 1)}
+                                />
+                                <span>{roleOption.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="settings-form-grid three">
+                        <label className="settings-field">
+                          <span>Phone</span>
+                          <input
+                            className="settings-input"
+                            value={adminForm.phone}
+                            onChange={(event) => updateAdminField('phone', event.target.value)}
+                            disabled={!canMutateSettings}
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Company</span>
+                          <input
+                            className="settings-input"
+                            value={adminForm.company}
+                            onChange={(event) => updateAdminField('company', event.target.value)}
+                            disabled={!canMutateSettings}
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Department</span>
+                          <input
+                            className="settings-input"
+                            value={adminForm.department}
+                            onChange={(event) => updateAdminField('department', event.target.value)}
+                            disabled={!canMutateSettings}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="settings-form-grid three">
+                        <label className="settings-field">
+                          <span>Timezone</span>
+                          <input
+                            className="settings-input"
+                            value={adminForm.time}
+                            onChange={(event) => updateAdminField('time', event.target.value)}
+                            disabled={!canMutateSettings}
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Bank Name</span>
+                          <input
+                            className="settings-input"
+                            value={adminForm.bank_account.bank_name}
+                            onChange={(event) => updateAdminBankField('bank_name', event.target.value)}
+                            disabled={!canMutateSettings}
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Account No.</span>
+                          <input
+                            className="settings-input"
+                            value={adminForm.bank_account.account_no}
+                            onChange={(event) => updateAdminBankField('account_no', event.target.value)}
+                            disabled={!canMutateSettings}
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Account Name</span>
+                          <input
+                            className="settings-input"
+                            value={adminForm.bank_account.account_name}
+                            onChange={(event) => updateAdminBankField('account_name', event.target.value)}
+                            disabled={!canMutateSettings}
+                          />
+                        </label>
+                      </div>
+
                       <div className="settings-editor-actions">
-                        <span>{isCurrentProfile ? 'Expanded profile detail includes the current logged-in account record.' : 'Managed admin record.'}</span>
+                        <span>{isCurrentProfile ? 'You can edit profile fields for yourself, but role and status changes are blocked.' : 'Managed admin record.'}</span>
                         <button type="button" className="settings-button primary" onClick={handleSaveAdmin} disabled={saving || !canMutateSettings}>
                           {saving ? <LoaderCircle size={16} className="spin" /> : <Save size={16} />}
                           Save Admin
@@ -629,6 +1299,99 @@ function SettingPage() {
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
               </select>
+            </label>
+          </div>
+
+          <div className="settings-project-assignment">
+            <div>
+              <span className="settings-kicker">Roles</span>
+              <strong>{normalizeRoleList(adminForm.roles, adminForm.role).map(resolveRoleLabel).join(', ')}</strong>
+            </div>
+            <div className="settings-project-grid">
+              {ROLE_OPTIONS.map((roleOption) => {
+                const roles = normalizeRoleList(adminForm.roles, adminForm.role);
+                const checked = roles.includes(roleOption.id);
+                return (
+                  <label key={roleOption.id} className={checked ? 'selected' : ''}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleAdminRole(roleOption.id)}
+                      disabled={!canMutateSettings || (checked && roles.length === 1)}
+                    />
+                    <span>{roleOption.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="settings-form-grid three">
+            <label className="settings-field">
+              <span>Phone</span>
+              <input
+                className="settings-input"
+                value={adminForm.phone}
+                onChange={(event) => updateAdminField('phone', event.target.value)}
+                disabled={!canMutateSettings}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Company</span>
+              <input
+                className="settings-input"
+                value={adminForm.company}
+                onChange={(event) => updateAdminField('company', event.target.value)}
+                disabled={!canMutateSettings}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Department</span>
+              <input
+                className="settings-input"
+                value={adminForm.department}
+                onChange={(event) => updateAdminField('department', event.target.value)}
+                disabled={!canMutateSettings}
+              />
+            </label>
+          </div>
+
+          <div className="settings-form-grid three">
+            <label className="settings-field">
+              <span>Timezone</span>
+              <input
+                className="settings-input"
+                value={adminForm.time}
+                onChange={(event) => updateAdminField('time', event.target.value)}
+                disabled={!canMutateSettings}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Bank Name</span>
+              <input
+                className="settings-input"
+                value={adminForm.bank_account.bank_name}
+                onChange={(event) => updateAdminBankField('bank_name', event.target.value)}
+                disabled={!canMutateSettings}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Account No.</span>
+              <input
+                className="settings-input"
+                value={adminForm.bank_account.account_no}
+                onChange={(event) => updateAdminBankField('account_no', event.target.value)}
+                disabled={!canMutateSettings}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Account Name</span>
+              <input
+                className="settings-input"
+                value={adminForm.bank_account.account_name}
+                onChange={(event) => updateAdminBankField('account_name', event.target.value)}
+                disabled={!canMutateSettings}
+              />
             </label>
           </div>
 
@@ -691,6 +1454,11 @@ function SettingPage() {
                 id={`subcontractor-${item.id}`}
                 isOpen={isOpen}
                 onToggle={() => {
+                  if (isOpen) {
+                    setSelectedSubId('');
+                    setSubForm(emptySubForm);
+                    return;
+                  }
                   setSelectedSubId(item.id);
                   setSubForm(buildSubForm(item));
                 }}
@@ -746,7 +1514,7 @@ function SettingPage() {
                           className="settings-input"
                           value={subForm.name}
                           onChange={(event) => updateSubField('name', event.target.value)}
-                          disabled={!canMutateSettings}
+                          disabled={!canMutateSubcontractors}
                         />
                       </label>
                       <label className="settings-field">
@@ -755,7 +1523,7 @@ function SettingPage() {
                           className="settings-input"
                           value={subForm.contact_name}
                           onChange={(event) => updateSubField('contact_name', event.target.value)}
-                          disabled={!canMutateSettings}
+                          disabled={!canMutateSubcontractors}
                         />
                       </label>
                       <label className="settings-field">
@@ -764,7 +1532,7 @@ function SettingPage() {
                           className="settings-input"
                           value={subForm.phone}
                           onChange={(event) => updateSubField('phone', event.target.value)}
-                          disabled={!canMutateSettings}
+                          disabled={!canMutateSubcontractors}
                         />
                       </label>
                       <label className="settings-field">
@@ -773,7 +1541,7 @@ function SettingPage() {
                           className="settings-input"
                           value={subForm.tax_id}
                           onChange={(event) => updateSubField('tax_id', event.target.value)}
-                          disabled={!canMutateSettings}
+                          disabled={!canMutateSubcontractors}
                         />
                       </label>
                       <label className="settings-field">
@@ -833,7 +1601,7 @@ function SettingPage() {
                           className="settings-input"
                           value={subForm.bank_account.bank_name}
                           onChange={(event) => updateBankField('bank_name', event.target.value)}
-                          disabled={!canMutateSettings}
+                          disabled={!canMutateSubcontractors}
                         />
                       </label>
                       <label className="settings-field">
@@ -842,7 +1610,7 @@ function SettingPage() {
                           className="settings-input"
                           value={subForm.bank_account.account_no}
                           onChange={(event) => updateBankField('account_no', event.target.value)}
-                          disabled={!canMutateSettings}
+                          disabled={!canMutateSubcontractors}
                         />
                       </label>
                       <label className="settings-field">
@@ -851,7 +1619,7 @@ function SettingPage() {
                           className="settings-input"
                           value={subForm.bank_account.account_name}
                           onChange={(event) => updateBankField('account_name', event.target.value)}
-                          disabled={!canMutateSettings}
+                          disabled={!canMutateSubcontractors}
                         />
                       </label>
                     </div>
@@ -889,6 +1657,14 @@ function SettingPage() {
                         Rates: VAT {formatRate(subForm.vat_rate)} / WHT {formatRate(subForm.wht_rate)} / Retention {formatRate(subForm.retention_rate)}
                       </span>
                       <div>
+                        <button type="button" className="settings-button secondary" onClick={() => handleCopySubcontractorProfile(item)} disabled={saving}>
+                          <Copy size={16} />
+                          Copy Info
+                        </button>
+                        <button type="button" className="settings-button secondary" onClick={() => handleCopySubcontractorBank(item)} disabled={saving}>
+                          <Copy size={16} />
+                          Copy Bank
+                        </button>
                         <button type="button" className="settings-button secondary" onClick={handleViewKyc} disabled={saving}>
                           <ExternalLink size={16} />
                           View KYC
@@ -897,7 +1673,7 @@ function SettingPage() {
                           <Link2Off size={16} />
                           Reset LINE
                         </button>
-                        <button type="button" className="settings-button primary" onClick={handleSaveSubcontractor} disabled={saving || !canMutateSettings}>
+                        <button type="button" className="settings-button primary" onClick={handleSaveSubcontractor} disabled={saving || !canMutateSubcontractors}>
                           {saving ? <LoaderCircle size={16} className="spin" /> : <Save size={16} />}
                           Save Subcontractor
                         </button>
@@ -1067,7 +1843,7 @@ function SettingPage() {
           <p>Manage your organization preferences, user access, and system configurations.</p>
         </div>
         <div className="settings-page-status">
-          <span>{canMutateSettings ? 'Owner access' : 'View only'}</span>
+          <span>{settingsAccessLabel}</span>
           <strong>{admins.length.toLocaleString('en-US')} admins</strong>
         </div>
       </header>

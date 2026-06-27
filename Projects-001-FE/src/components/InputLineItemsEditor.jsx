@@ -23,6 +23,9 @@ function InputLineItemsEditor({
   fallbackRequestType = '',
   title = 'รายการค่าใช้จ่าย',
   subtitle = '',
+  required = false,
+  hint = '',
+  error = '',
 }) {
   const isIncome = entryType === 'INCOME';
   const lineItems = value.length ? value : [];
@@ -68,11 +71,15 @@ function InputLineItemsEditor({
   };
 
   return (
-    <section className="input-line-items-editor">
+    <section className={`input-line-items-editor${error ? ' has-error' : ''}`}>
       <div className="input-line-items-header">
         <div>
-          <h3>{title}</h3>
+          <h3>
+            {title}
+            {required ? <span className="input-required-star" aria-label="จำเป็นต้องกรอก">*</span> : null}
+          </h3>
           {subtitle ? <p>{subtitle}</p> : null}
+          {hint ? <p className="input-line-items-hint">{hint}</p> : null}
         </div>
         <div className="input-line-items-total" aria-label="ยอดรวมรายการ">
           <span>รวม</span>
@@ -185,6 +192,7 @@ function InputLineItemsEditor({
         <Plus size={16} />
         <span>เพิ่มรายการ</span>
       </button>
+      {error ? <small className="input-field-error">{error}</small> : null}
     </section>
   );
 }

@@ -28,7 +28,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { fetchData, resetProfileAvatar, updateCurrentProfile, uploadProfileAvatar } from './api';
-import { updateStoredAuthUser } from './auth';
+import { syncStoredProfileUser } from './auth';
 import Loading from './components/Loading';
 
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
@@ -196,6 +196,7 @@ const buildProfileForm = (user = {}) => ({
   contactName: user.contact_name || user.name || user.display_name || '',
   phone: user.phone || '',
   company: user.company || '',
+  department: user.department || '',
   time: user.time || 'Asia/Bangkok',
   bankName: user.bank_account?.bank_name || '',
   accountNo: user.bank_account?.account_no || '',
@@ -217,6 +218,7 @@ const resolveUpdatedUser = (currentUser, response, form) => {
     contact_name: responseUser.contact_name ?? form.contactName,
     phone: responseUser.phone ?? form.phone,
     company: responseUser.company ?? form.company,
+    department: responseUser.department ?? form.department,
     time: responseUser.time ?? form.time,
     bank_account: responseUser.bank_account ?? {
       ...(currentUser.bank_account || {}),
@@ -225,17 +227,6 @@ const resolveUpdatedUser = (currentUser, response, form) => {
       account_name: form.accountName,
     },
   };
-};
-
-const syncStoredProfileUser = (user = {}) => {
-  updateStoredAuthUser({
-    display_name: user.display_name || user.name || user.contact_name || '',
-    email: user.email || '',
-    role: user.role_key || user.role || '',
-    profile_image_url: user.profile_image_url || '',
-    line_picture_url: user.line_picture_url || '',
-    avatar_url: user.avatar_url || '',
-  });
 };
 
 const StatCard = ({ value, label, subtext, icon }) => {
@@ -518,6 +509,7 @@ const ProfilePage = () => {
       contact_name: profileForm.contactName.trim(),
       phone: profileForm.phone.trim(),
       company: profileForm.company.trim(),
+      department: profileForm.department.trim(),
       time: profileForm.time.trim(),
       bank_account: {
         bank_name: profileForm.bankName.trim(),
@@ -537,6 +529,7 @@ const ProfilePage = () => {
         contactName: payload.contact_name,
         phone: payload.phone,
         company: payload.company,
+        department: payload.department,
         time: payload.time,
       });
 
@@ -889,6 +882,9 @@ const ProfilePage = () => {
                   value={profileForm.company}
                   onChange={updateProfileField('company')}
                 />
+                {!isSubcontractor ? (
+                  <EditableField label="Department" value={profileForm.department} onChange={updateProfileField('department')} />
+                ) : null}
                 <EditableField label={isSubcontractor ? 'เขตเวลา' : 'Timezone'} value={profileForm.time} onChange={updateProfileField('time')} />
                 <EditableField label="Email" value={user.email || ''} onChange={() => {}} readOnly />
               </>
@@ -897,6 +893,8 @@ const ProfilePage = () => {
                 <DetailRow label={isSubcontractor ? 'ชื่อที่แสดง' : 'Display Name'} value={user.display_name || user.name} />
                 <DetailRow label={isSubcontractor ? 'ชื่อผู้ติดต่อ' : 'Contact Name'} value={user.contact_name || user.name} />
                 <DetailRow label={isSubcontractor ? 'เบอร์ติดต่อ' : 'Phone'} value={user.phone} />
+                {!isSubcontractor ? <DetailRow label="Company" value={user.company} /> : null}
+                {!isSubcontractor ? <DetailRow label="Department" value={user.department} /> : null}
                 <DetailRow label="Email" value={user.email} />
                 {user.line_uid ? <DetailRow label="LINE UID" value={user.line_uid} /> : null}
                 <DetailRow

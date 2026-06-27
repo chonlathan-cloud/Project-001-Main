@@ -16,7 +16,7 @@ const formatAmount = (value) =>
     maximumFractionDigits: 2,
   })} THB`;
 
-const buildCopyText = ({ bankName, accountNo, accountName, amount, requesterName, vendorName }) =>
+const buildCopyText = ({ bankName, accountNo, accountName, amount, requesterName, vendorName, phone }) =>
   [
     'Payment Instructions',
     `Bank: ${bankName || '-'}`,
@@ -25,6 +25,7 @@ const buildCopyText = ({ bankName, accountNo, accountName, amount, requesterName
     `Amount: ${formatAmount(amount)}`,
     `Requester: ${requesterName || '-'}`,
     `Vendor: ${vendorName || '-'}`,
+    `Phone: ${phone || '-'}`,
   ].join('\n');
 
 function DetailLine({ icon, label, value, copyValue, onCopy, copied }) {
@@ -78,8 +79,9 @@ export default function ApprovalPaymentInstructions({
         amount: approvedAmount,
         requesterName,
         vendorName,
+        phone,
       }),
-    [accountName, accountNo, approvedAmount, bankName, requesterName, vendorName]
+    [accountName, accountNo, approvedAmount, bankName, phone, requesterName, vendorName]
   );
 
   const copyToClipboard = async (value) => {
@@ -105,7 +107,6 @@ export default function ApprovalPaymentInstructions({
             Payment Instructions
           </div>
           <h3>Bank transfer details</h3>
-          <p>Use this information before entering the payment reference and marking the request as paid.</p>
         </div>
 
         <button
@@ -159,8 +160,8 @@ export default function ApprovalPaymentInstructions({
           icon={WalletCards}
           label="Transfer Amount"
           value={formatAmount(approvedAmount)}
-          copyValue={String(Number(approvedAmount || 0))}
-          copied={copiedValue === String(Number(approvedAmount || 0))}
+          copyValue={formatAmount(approvedAmount)}
+          copied={copiedValue === formatAmount(approvedAmount)}
           onCopy={copyToClipboard}
         />
         <DetailLine

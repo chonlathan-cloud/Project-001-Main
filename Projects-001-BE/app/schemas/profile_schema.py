@@ -29,10 +29,11 @@ def _normalize_admin_roles(value: list[str] | None, *, fallback: str = "admin") 
             normalized.append(cleaned)
             seen.add(cleaned)
 
+    if normalized:
+        return normalized
+
     fallback_role = _normalize_admin_role(fallback)
-    if fallback_role not in seen:
-        normalized.insert(0, fallback_role)
-    return normalized
+    return [fallback_role]
 
 
 class BankAccountInfo(BaseModel):
@@ -43,6 +44,7 @@ class BankAccountInfo(BaseModel):
 
 class SubcontractorProfileItem(BaseModel):
     id: str
+    email: str | None = None
     line_uid: str | None = None
     line_picture_url: str | None = None
     profile_image_url: str | None = None
@@ -80,7 +82,9 @@ class UpdateMyProfileRequest(BaseModel):
     contact_name: str | None = None
     phone: str | None = None
     company: str | None = None
+    department: str | None = None
     time: str | None = None
+    timezone: str | None = None
     bank_account: BankAccountInfo | None = None
 
 
@@ -88,6 +92,13 @@ class AdminDirectoryItem(BaseModel):
     id: str
     email: str
     display_name: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    company: str | None = None
+    department: str | None = None
+    time: str | None = None
+    timezone: str | None = None
+    bank_account: BankAccountInfo = Field(default_factory=BankAccountInfo)
     role: str = "admin"
     roles: list[str] = Field(default_factory=list)
     is_active: bool = True
@@ -109,6 +120,13 @@ class AdminDirectoryItem(BaseModel):
 class UpsertAdminRequest(BaseModel):
     email: str
     display_name: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    company: str | None = None
+    department: str | None = None
+    time: str | None = None
+    timezone: str | None = None
+    bank_account: BankAccountInfo | None = None
     role: str = "admin"
     roles: list[str] | None = None
     is_active: bool = True
@@ -118,9 +136,23 @@ class UpsertAdminRequest(BaseModel):
     def validate_role(cls, value: str | None) -> str:
         return _normalize_admin_role(value)
 
+    @field_validator("roles", mode="before")
+    @classmethod
+    def validate_roles(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_admin_roles(value)
+
 
 class UpdateAdminRequest(BaseModel):
     display_name: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    company: str | None = None
+    department: str | None = None
+    time: str | None = None
+    timezone: str | None = None
+    bank_account: BankAccountInfo | None = None
     role: str | None = None
     roles: list[str] | None = None
     is_active: bool | None = None
@@ -147,6 +179,10 @@ class SessionUserPayload(BaseModel):
     display_name: str | None = None
     subcontractor_id: str | None = None
     line_uid: str | None = None
+    auth_provider: str | None = None
+    access_request_id: str | None = None
+    access_status: str | None = None
+    rejection_reason: str | None = None
     permissions: list[str] = Field(default_factory=list)
 
 
@@ -161,3 +197,70 @@ class AdminLoginRequest(BaseModel):
     email: str | None = None
     display_name: str | None = None
     firebase_id_token: str | None = None
+
+
+class AccessRequestItem(BaseModel):
+    id: str
+    provider: str
+    email: str | None = None
+    line_uid: str | None = None
+    display_name: str | None = None
+    picture_url: str | None = None
+    status: str = "pending"
+    requested_account_type: str | None = None
+    company_name: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    tax_id: str | None = None
+    bank_account: BankAccountInfo = Field(default_factory=BankAccountInfo)
+    kyc_gcs_path: str | None = None
+    decided_account_type: str | None = None
+    decided_role: str | None = None
+    decided_roles: list[str] = Field(default_factory=list)
+    target_admin_id: str | None = None
+    target_subcontractor_id: str | None = None
+    rejection_reason: str | None = None
+    decided_by: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    decided_at: datetime | None = None
+
+
+class ApproveAccessRequestRequest(BaseModel):
+    account_type: str = Field(default="subcontractor")
+    existing_subcontractor_id: str | None = None
+    display_name: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    company: str | None = None
+    department: str | None = None
+    time: str | None = None
+    timezone: str | None = None
+    tax_id: str | None = None
+    bank_account: BankAccountInfo | None = None
+    role: str = "admin"
+    roles: list[str] | None = None
+
+    @field_validator("account_type", mode="before")
+    @classmethod
+    def validate_account_type(cls, value: str | None) -> str:
+        cleaned = str(value or "subcontractor").strip().lower()
+        if cleaned not in {"admin", "subcontractor"}:
+            raise ValueError("account_type must be either 'admin' or 'subcontractor'.")
+        return cleaned
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def validate_decision_role(cls, value: str | None) -> str:
+        return _normalize_admin_role(value)
+
+    @field_validator("roles", mode="before")
+    @classmethod
+    def validate_decision_roles(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_admin_roles(value)
+
+
+class RejectAccessRequestRequest(BaseModel):
+    reason: str | None = None

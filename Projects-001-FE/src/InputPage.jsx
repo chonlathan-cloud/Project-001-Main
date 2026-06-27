@@ -373,6 +373,20 @@ const fieldBaseStyle = {
   transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
 };
 
+const FieldLabel = ({ label, required = false, hint = '' }) => (
+  <label className="input-field-label">
+    <span>
+      {label}
+      {required ? <span className="input-required-star" aria-label="จำเป็นต้องกรอก">*</span> : null}
+    </span>
+    {hint ? <small>{hint}</small> : null}
+  </label>
+);
+
+const FieldError = ({ text = '' }) => (
+  text ? <small className="input-field-error">{text}</small> : null
+);
+
 const InputField = ({
   label,
   placeholder,
@@ -382,9 +396,12 @@ const InputField = ({
   value,
   onChange,
   disabled = false,
+  required = false,
+  hint = '',
+  error = '',
 }) => (
   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', ...style }}>
-    {label && <label style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>{label}</label>}
+    {label ? <FieldLabel label={label} required={required} hint={hint} /> : null}
     <input
       type={type}
       inputMode={inputMode}
@@ -394,10 +411,13 @@ const InputField = ({
       disabled={disabled}
       style={{
         ...fieldBaseStyle,
+        borderColor: error ? '#de5b52' : fieldBaseStyle.border.replace('1px solid ', ''),
+        backgroundColor: error ? '#fffafa' : fieldBaseStyle.backgroundColor,
         textAlign: type === 'number' ? 'right' : 'left',
         opacity: disabled ? 0.65 : 1,
       }}
     />
+    <FieldError text={error} />
   </div>
 );
 
@@ -409,9 +429,12 @@ const SelectField = ({
   value,
   onChange,
   disabled = false,
+  required = false,
+  hint = '',
+  error = '',
 }) => (
   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', ...style }}>
-    {label && <label style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>{label}</label>}
+    {label ? <FieldLabel label={label} required={required} hint={hint} /> : null}
     <div style={{ position: 'relative' }}>
       <select
         value={value}
@@ -419,6 +442,8 @@ const SelectField = ({
         disabled={disabled}
         style={{
           ...fieldBaseStyle,
+          borderColor: error ? '#de5b52' : fieldBaseStyle.border.replace('1px solid ', ''),
+          backgroundColor: error ? '#fffafa' : fieldBaseStyle.backgroundColor,
           textAlign: 'left',
           appearance: 'none',
           color: value ? 'var(--text-main)' : 'var(--text-muted)',
@@ -434,6 +459,7 @@ const SelectField = ({
         ))}
       </select>
     </div>
+    <FieldError text={error} />
   </div>
 );
 
@@ -477,9 +503,9 @@ const EntryTypeSegment = ({ value, onChange }) => (
   </div>
 );
 
-const TextAreaField = ({ label, placeholder, style = {}, value, onChange }) => (
+const TextAreaField = ({ label, placeholder, style = {}, value, onChange, required = false, hint = '', error = '' }) => (
   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', ...style }}>
-    {label && <label style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>{label}</label>}
+    {label ? <FieldLabel label={label} required={required} hint={hint} /> : null}
     <textarea
       value={value}
       onChange={onChange}
@@ -487,11 +513,14 @@ const TextAreaField = ({ label, placeholder, style = {}, value, onChange }) => (
       rows={4}
       style={{
         ...fieldBaseStyle,
+        borderColor: error ? '#de5b52' : fieldBaseStyle.border.replace('1px solid ', ''),
+        backgroundColor: error ? '#fffafa' : fieldBaseStyle.backgroundColor,
         resize: 'vertical',
         textAlign: 'left',
         minHeight: '104px',
       }}
     />
+    <FieldError text={error} />
   </div>
 );
 
@@ -504,6 +533,8 @@ const TagInput = ({
   onDraftChange,
   onAddTag,
   onRemoveTag,
+  hint = '',
+  error = '',
 }) => {
   const selectedKeys = new Set(selectedTags.map((tag) => tag.toLocaleLowerCase()));
   const availableSuggestions = suggestions.filter(
@@ -518,9 +549,7 @@ const TagInput = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      <label style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>
-        {label}{required ? ' *' : ''}
-      </label>
+      <FieldLabel label={label} required={required} hint={hint} />
       <div
         style={{
           display: 'flex',
@@ -529,8 +558,8 @@ const TagInput = ({
           gap: '8px',
           padding: '8px',
           borderRadius: '8px',
-          border: '1px solid #e2e8f0',
-          backgroundColor: '#fff',
+          border: `1px solid ${error ? '#de5b52' : '#e2e8f0'}`,
+          backgroundColor: error ? '#fffafa' : '#fff',
         }}
       >
         {selectedTags.map((tag) => (
@@ -616,6 +645,7 @@ const TagInput = ({
           ))}
         </div>
       ) : null}
+      <FieldError text={error} />
     </div>
   );
 };
@@ -699,6 +729,43 @@ const buildOcrWarningText = (data = {}) => {
   return parts.length ? `${parts.join(' ')} กรุณาตรวจและแก้ไขก่อนส่ง` : '';
 };
 
+const createEmptySubmitReview = () => ({
+  open: false,
+  warnings: [],
+  summary: null,
+});
+
+const buildSubmitReviewWarnings = ({
+  ocrWarningText = '',
+  hasOcrData = false,
+  receiptFileName = '',
+  enteredAmount = 0,
+  lineItemTotal = 0,
+}) => {
+  const warnings = [];
+
+  if (ocrWarningText) {
+    warnings.push({
+      title: 'OCR ต้องตรวจอีกครั้ง',
+      detail: ocrWarningText,
+    });
+  } else if (receiptFileName && !hasOcrData) {
+    warnings.push({
+      title: 'ยังไม่มีผลอ่าน OCR',
+      detail: 'ระบบยังไม่มีข้อมูล OCR สำหรับเทียบกับฟอร์ม กรุณาตรวจเลขที่เอกสาร ผู้ขาย วันที่ และยอดเงินก่อนส่ง',
+    });
+  }
+
+  if (enteredAmount > 0 && lineItemTotal > 0 && Math.abs(enteredAmount - lineItemTotal) > 0.01) {
+    warnings.push({
+      title: 'ยอดชำระจริงไม่ตรงกับยอดรวมรายการ',
+      detail: `ยอดชำระจริง ${formatMoneyValue(enteredAmount)} บาท แต่ยอดรวมรายการ ${formatMoneyValue(lineItemTotal)} บาท`,
+    });
+  }
+
+  return warnings;
+};
+
 const InputPage = () => {
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
@@ -718,6 +785,9 @@ const InputPage = () => {
   const [pageError, setPageError] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [flashMessage, setFlashMessage] = useState('');
+  const [submitReview, setSubmitReview] = useState(createEmptySubmitReview);
+  const [touchedFields, setTouchedFields] = useState({});
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [entryTypeTouched, setEntryTypeTouched] = useState(false);
@@ -816,14 +886,20 @@ const InputPage = () => {
     };
   }, [selectedFile]);
 
+  const markFieldTouched = (field) => {
+    setTouchedFields((current) => ({ ...current, [field]: true }));
+  };
+
   const handleFieldChange = (field) => (event) => {
     const nextValue = event.target.value;
+    markFieldTouched(field);
     setForm((current) => ({ ...current, [field]: nextValue }));
   };
 
   const handleLineItemsChange = (nextLineItems) => {
     const normalizedLineItems = normalizeFormLineItems(nextLineItems);
     const totalAmount = sumLineItems(normalizedLineItems);
+    markFieldTouched('lineItems');
     setForm((current) => ({
       ...current,
       lineItems: normalizedLineItems,
@@ -838,6 +914,7 @@ const InputPage = () => {
   const handleAddTag = (rawValue) => {
     const [cleaned] = mergeTextValues([rawValue]);
     if (!cleaned) return;
+    markFieldTouched('tags');
     setForm((current) => ({
       ...current,
       tags: mergeTextValues(current.tags, [cleaned]),
@@ -847,6 +924,7 @@ const InputPage = () => {
 
   const handleRemoveTag = (tagToRemove) => {
     const removeKey = cleanText(tagToRemove).toLocaleLowerCase();
+    markFieldTouched('tags');
     setForm((current) => ({
       ...current,
       tags: normalizeTags(current.tags).filter(
@@ -857,6 +935,7 @@ const InputPage = () => {
 
   const handleEntryTypeChange = (nextType) => {
     setEntryTypeTouched(true);
+    markFieldTouched('entryType');
     setForm((current) => ({
       ...current,
       entryType: nextType,
@@ -890,6 +969,8 @@ const InputPage = () => {
     setSubmitError('');
     setFlashMessage('');
     setTagDraft('');
+    setTouchedFields({});
+    setHasAttemptedSubmit(false);
     setEntryTypeTouched(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -913,6 +994,8 @@ const InputPage = () => {
     setSubmitResult(null);
     setSubmitError('');
     setFlashMessage('');
+    setTouchedFields({});
+    setHasAttemptedSubmit(false);
 
     try {
       setIsExtracting(true);
@@ -977,8 +1060,7 @@ const InputPage = () => {
     }
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
+  const submitForm = async ({ skipReview = false } = {}) => {
     setSubmitError('');
     setSubmitResult(null);
     setSubmitReceiptPreview(null);
@@ -1024,14 +1106,52 @@ const InputPage = () => {
         ? normalizeWorkType(form.customWorkType)
         : normalizeWorkType(form.workType);
     const normalizedRequestType = isIncomeRequest ? '' : normalizeRequestType(form.requestType);
+    if (!isIncomeRequest && !normalizedWorkType) {
+      setSubmitError(form.workType === OTHER_WORK_TYPE_VALUE ? 'กรุณาระบุประเภทงาน' : 'กรุณาเลือกประเภทงาน');
+      return;
+    }
+    if (!isIncomeRequest && !normalizedRequestType) {
+      setSubmitError('กรุณาเลือกประเภทการเบิก');
+      return;
+    }
+    if (!isIncomeRequest && !form.vendorName.trim()) {
+      setSubmitError('กรุณากรอกผู้ขาย / ร้านค้า');
+      return;
+    }
+    if (!isIncomeRequest && !form.documentDate) {
+      setSubmitError('กรุณาระบุวันที่เอกสาร');
+      return;
+    }
+    const normalizedVatMode = normalizeAccountingVatMode(form.accountingVatMode);
+    if (!isIncomeRequest && !normalizedVatMode) {
+      setSubmitError('กรุณาเลือกรูปแบบ VAT');
+      return;
+    }
+    const submitNeedsVatFields = !isIncomeRequest && ['vat_inclusive', 'vat_exclusive'].includes(normalizedVatMode);
+    const submitNeedsTaxFields = submitNeedsVatFields || normalizedRequestType === 'ค่าแรง';
+    if (submitNeedsVatFields && !form.receiptNo.trim()) {
+      setSubmitError('กรุณากรอกเลขที่ใบเสร็จสำหรับรายการที่มี VAT');
+      return;
+    }
+    if (submitNeedsTaxFields) {
+      if (!form.vendorTaxId.trim() || !form.vendorBranch.trim() || !form.vendorAddress.trim()) {
+        setSubmitError('กรุณากรอกเลขผู้เสียภาษี สาขา และที่อยู่ผู้ขายให้ครบ');
+        return;
+      }
+    }
+    if (form.vendorTaxId.trim() && form.vendorTaxId.trim().length !== 13) {
+      setSubmitError('เลขผู้เสียภาษีผู้ขายต้องมี 13 หลัก');
+      return;
+    }
     const normalizedDocumentDate = form.documentDate || form.requestDate;
     const normalizedLineItems = normalizeLineItemsForSubmit(form.lineItems, {
       isIncomeRequest,
       workType: normalizedWorkType,
       requestType: normalizedRequestType,
     });
+    const normalizedLineItemTotal = sumLineItems(normalizedLineItems);
     const enteredAmount = toFiniteNumber(form.amount);
-    const numericAmount = Number((enteredAmount > 0 ? enteredAmount : sumLineItems(normalizedLineItems)).toFixed(2));
+    const numericAmount = Number((enteredAmount > 0 ? enteredAmount : normalizedLineItemTotal).toFixed(2));
 
     if (isIncomeRequest && normalizedTags.length === 0) {
       setSubmitError('รายการรายรับต้องมีแท็กอย่างน้อย 1 รายการ');
@@ -1057,6 +1177,37 @@ const InputPage = () => {
       setSubmitError('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ');
       return;
     }
+
+    const receiptFileName =
+      uploadedReceipt?.file_name || selectedFile?.name || extractData?.file_name || 'ไฟล์ใบเสร็จ';
+    const reviewWarnings = buildSubmitReviewWarnings({
+      ocrWarningText: buildOcrWarningText(extractData),
+      hasOcrData: Boolean(extractData),
+      receiptFileName,
+      enteredAmount,
+      lineItemTotal: normalizedLineItemTotal,
+    });
+
+    if (!skipReview && reviewWarnings.length) {
+      const selectedProject = projects.find((project) => String(project.project_id) === String(form.projectId));
+      setSubmitReview({
+        open: true,
+        warnings: reviewWarnings,
+        summary: {
+          projectName: selectedProject?.name || '-',
+          entryTypeLabel: formatEntryTypeLabel(form.entryType),
+          requesterName: form.requesterName.trim() || '-',
+          vendorName: isIncomeRequest ? '-' : form.vendorName.trim() || '-',
+          amount: numericAmount,
+          lineItemTotal: normalizedLineItemTotal,
+          itemCount: normalizedLineItems.length,
+          receiptFileName,
+        },
+      });
+      return;
+    }
+
+    setSubmitReview(createEmptySubmitReview());
 
     try {
       setIsSubmitting(true);
@@ -1121,6 +1272,8 @@ const InputPage = () => {
       setExtractData(null);
       setUploadedReceipt(null);
       setTagDraft('');
+      setTouchedFields({});
+      setHasAttemptedSubmit(false);
       setEntryTypeTouched(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -1130,6 +1283,22 @@ const InputPage = () => {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setHasAttemptedSubmit(true);
+    await submitForm();
+  };
+
+  const closeSubmitReviewDialog = () => {
+    if (isSubmitting) return;
+    setSubmitReview(createEmptySubmitReview());
+  };
+
+  const confirmSubmitReview = async () => {
+    setSubmitReview(createEmptySubmitReview());
+    await submitForm({ skipReview: true });
   };
 
   if (loading) return <Loading />;
@@ -1155,20 +1324,86 @@ const InputPage = () => {
   const numericPayableAmount = toFiniteNumber(form.amount);
   const hasValidLineItems = formLineItems.some((item) => cleanText(item.description)) && numericFormAmount > 0;
   const hasValidPayableAmount = numericPayableAmount > 0 || numericFormAmount > 0;
+  const hasReceiptFile = Boolean(selectedFile || uploadedReceipt);
+  const normalizedFormWorkType = form.workType === OTHER_WORK_TYPE_VALUE
+    ? normalizeWorkType(form.customWorkType)
+    : normalizeWorkType(form.workType);
+  const normalizedFormRequestType = isIncome ? '' : normalizeRequestType(form.requestType);
+  const needsVatFields = !isIncome && ['vat_inclusive', 'vat_exclusive'].includes(form.accountingVatMode);
+  const needsWhtFields = !isIncome && form.requestType === 'ค่าแรง';
+  const needsTaxFields = needsVatFields || needsWhtFields;
+  const taxFieldHint = needsVatFields && needsWhtFields
+    ? 'จำเป็นสำหรับ VAT และหัก ณ ที่จ่าย'
+    : needsVatFields
+      ? 'จำเป็นสำหรับ Supplier Invoice'
+      : needsWhtFields
+        ? 'จำเป็นสำหรับหัก ณ ที่จ่าย'
+        : '';
+  const isMissing = (value) => !cleanText(value);
+  const shouldShowValidationForField = (field) =>
+    hasAttemptedSubmit || Boolean(extractData) || Boolean(touchedFields[field]);
+  const requiredField = (required, value, hint, field, message = 'กรุณากรอกข้อมูลนี้') => ({
+    required: Boolean(required),
+    hint: required ? hint : '',
+    error: shouldShowValidationForField(field) && required && isMissing(value) ? message : '',
+  });
+  const vendorTaxIdText = cleanText(form.vendorTaxId);
+  const shouldShowReceiptFileError = hasAttemptedSubmit || Boolean(touchedFields.receiptFile);
+  const shouldShowLineItemsError = shouldShowValidationForField('lineItems');
+  const shouldShowVendorTaxIdError = shouldShowValidationForField('vendorTaxId');
+  const shouldShowAmountError = shouldShowValidationForField('amount') || Boolean(touchedFields.lineItems);
+  const inputFieldRequirements = {
+    receiptFile: {
+      required: true,
+      hint: 'จำเป็นก่อนส่งตรวจ',
+      error: shouldShowReceiptFileError && !hasReceiptFile ? 'กรุณาอัปโหลดรูปหรือ PDF ของบิล/ใบเสร็จ' : '',
+    },
+    project: requiredField(true, form.projectId, 'จำเป็นก่อนส่งตรวจ', 'project'),
+    requesterName: requiredField(true, form.requesterName, 'จำเป็นสำหรับคำขอ', 'requesterName'),
+    requestDate: requiredField(true, form.requestDate, 'วันที่ส่งคำขอ', 'requestDate'),
+    receiptNo: requiredField(needsVatFields, form.receiptNo, 'จำเป็นเมื่อมี VAT', 'receiptNo'),
+    documentDate: requiredField(!isIncome, form.documentDate, 'วันที่บนเอกสาร', 'documentDate'),
+    workType: requiredField(!isIncome, normalizedFormWorkType, 'จำเป็นสำหรับจัดหมวดงาน', 'workType'),
+    customWorkType: requiredField(
+      !isIncome && form.workType === OTHER_WORK_TYPE_VALUE,
+      form.customWorkType,
+      'ระบุประเภทงาน',
+      'customWorkType'
+    ),
+    requestType: requiredField(!isIncome, normalizedFormRequestType, 'จำเป็นสำหรับ FlowAccount', 'requestType'),
+    lineItems: {
+      required: true,
+      hint: 'ต้องมีอย่างน้อย 1 รายการ',
+      error: shouldShowLineItemsError && !hasValidLineItems ? 'กรุณาเพิ่มรายการและยอดรวมมากกว่า 0' : '',
+    },
+    tags: requiredField(isIncome, selectedTags.length ? selectedTags.join(', ') : '', 'จำเป็นสำหรับรายรับ', 'tags'),
+    vendorName: requiredField(!isIncome, form.vendorName, 'จำเป็นสำหรับ FlowAccount', 'vendorName'),
+    vendorTaxId: {
+      required: needsTaxFields,
+      hint: needsTaxFields ? taxFieldHint : '',
+      error: shouldShowVendorTaxIdError && needsTaxFields && isMissing(form.vendorTaxId)
+        ? 'กรุณากรอกเลขผู้เสียภาษี 13 หลัก'
+        : shouldShowVendorTaxIdError && vendorTaxIdText && vendorTaxIdText.length !== 13
+          ? 'เลขผู้เสียภาษีต้องมี 13 หลัก'
+          : '',
+    },
+    vendorBranch: requiredField(needsTaxFields, form.vendorBranch, taxFieldHint, 'vendorBranch'),
+    vendorAddress: requiredField(needsTaxFields, form.vendorAddress, taxFieldHint, 'vendorAddress'),
+    vatMode: requiredField(!isIncome, form.accountingVatMode, 'เลือกก่อนส่งตรวจ', 'accountingVatMode'),
+    amount: {
+      required: true,
+      hint: 'ยอดรวมต้องมากกว่า 0',
+      error: shouldShowAmountError && !hasValidPayableAmount ? 'ยอดชำระจริงต้องมากกว่า 0' : '',
+    },
+  };
+  const hasBlockingInputRequirements = Object.values(inputFieldRequirements).some((field) => field.error);
   const extractWarningText = buildOcrWarningText(extractData);
   const submitOcrWarningText = buildOcrWarningText(submitResult);
   const isSubmitDisabled =
     isSubmitting ||
     isExtracting ||
     !hasAssignedProjects ||
-    !form.projectId ||
-    !form.requesterName.trim() ||
-    !form.requestDate ||
-    !hasValidLineItems ||
-    !hasValidPayableAmount ||
-    (isIncome && selectedTags.length === 0) ||
-    (!isIncome && form.workType === OTHER_WORK_TYPE_VALUE && !form.customWorkType.trim()) ||
-    (!selectedFile && !uploadedReceipt);
+    hasBlockingInputRequirements;
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '20px' }}>
@@ -1266,10 +1501,14 @@ const InputPage = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
                     1. อัปโหลดไฟล์ใบเสร็จ
+                    <span className="input-required-star" aria-label="จำเป็นต้องกรอก">*</span>
                   </div>
                   <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                     อัปโหลดรูปหรือ PDF ของบิล/ใบเสร็จก่อน เพื่อให้ระบบอ่านข้อมูลและช่วยกรอกฟอร์มให้
                   </div>
+                  {inputFieldRequirements.receiptFile.error ? (
+                    <small className="input-field-error">{inputFieldRequirements.receiptFile.error}</small>
+                  ) : null}
                 </div>
 
                 <input
@@ -1327,6 +1566,7 @@ const InputPage = () => {
                 value={form.projectId}
                 onChange={handleFieldChange('projectId')}
                 disabled={!hasAssignedProjects}
+                {...inputFieldRequirements.project}
               />
 
               {!hasAssignedProjects ? (
@@ -1341,6 +1581,7 @@ const InputPage = () => {
                 placeholder="กรุณากรอกชื่อ-นามสกุล"
                 value={form.requesterName}
                 onChange={handleFieldChange('requesterName')}
+                {...inputFieldRequirements.requesterName}
               />
 
               <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
@@ -1356,6 +1597,7 @@ const InputPage = () => {
                   type="date"
                   value={form.requestDate}
                   onChange={handleFieldChange('requestDate')}
+                  {...inputFieldRequirements.requestDate}
                 />
               </div>
 
@@ -1365,12 +1607,14 @@ const InputPage = () => {
                   placeholder="กรุณากรอกเลขที่ใบเสร็จ"
                   value={form.receiptNo}
                   onChange={handleFieldChange('receiptNo')}
+                  {...inputFieldRequirements.receiptNo}
                 />
                 <InputField
                   label="วันที่เอกสาร"
                   type="date"
                   value={form.documentDate}
                   onChange={handleFieldChange('documentDate')}
+                  {...inputFieldRequirements.documentDate}
                 />
               </div>
 
@@ -1383,6 +1627,7 @@ const InputPage = () => {
                       options={workTypeSelectOptions}
                       value={form.workType}
                       onChange={handleFieldChange('workType')}
+                      {...inputFieldRequirements.workType}
                     />
                     <SelectField
                       label="ประเภทการเบิก"
@@ -1390,6 +1635,7 @@ const InputPage = () => {
                       options={REQUEST_TYPE_OPTIONS}
                       value={form.requestType}
                       onChange={handleFieldChange('requestType')}
+                      {...inputFieldRequirements.requestType}
                     />
                   </div>
 
@@ -1399,6 +1645,7 @@ const InputPage = () => {
                       placeholder="กรุณาระบุประเภทงาน"
                       value={form.customWorkType}
                       onChange={handleFieldChange('customWorkType')}
+                      {...inputFieldRequirements.customWorkType}
                     />
                   ) : null}
                 </>
@@ -1415,6 +1662,7 @@ const InputPage = () => {
                 fallbackRequestType={form.requestType}
                 title="รายการจากใบเสร็จ"
                 subtitle="ตรวจ แก้ไข เพิ่ม หรือลบรายการก่อนส่งให้ผู้ดูแลตรวจสอบ"
+                {...inputFieldRequirements.lineItems}
               />
 
               <TagInput
@@ -1426,6 +1674,7 @@ const InputPage = () => {
                 onDraftChange={setTagDraft}
                 onAddTag={handleAddTag}
                 onRemoveTag={handleRemoveTag}
+                {...inputFieldRequirements.tags}
               />
 
               <TextAreaField
@@ -1441,6 +1690,7 @@ const InputPage = () => {
                 placeholder="กรุณากรอกชื่อร้านหรือผู้ขาย"
                 value={form.vendorName}
                 onChange={handleFieldChange('vendorName')}
+                {...inputFieldRequirements.vendorName}
               />
 
               <div className="subcon-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
@@ -1450,12 +1700,14 @@ const InputPage = () => {
                   inputMode="numeric"
                   value={form.vendorTaxId}
                   onChange={handleFieldChange('vendorTaxId')}
+                  {...inputFieldRequirements.vendorTaxId}
                 />
                 <InputField
                   label="สาขาผู้ขาย"
                   placeholder="สำนักงานใหญ่ / เลขสาขา"
                   value={form.vendorBranch}
                   onChange={handleFieldChange('vendorBranch')}
+                  {...inputFieldRequirements.vendorBranch}
                 />
               </div>
 
@@ -1465,6 +1717,7 @@ const InputPage = () => {
                 value={form.vendorAddress}
                 onChange={handleFieldChange('vendorAddress')}
                 style={{ width: '100%' }}
+                {...inputFieldRequirements.vendorAddress}
               />
 
               <SelectField
@@ -1473,6 +1726,7 @@ const InputPage = () => {
                 options={ACCOUNTING_VAT_MODE_OPTIONS}
                 value={form.accountingVatMode}
                 onChange={handleFieldChange('accountingVatMode')}
+                {...inputFieldRequirements.vatMode}
               />
 
               <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
@@ -1495,6 +1749,7 @@ const InputPage = () => {
                     value={form.amount}
                     onChange={handleFieldChange('amount')}
                     disabled={isExtracting || isSubmitting}
+                    {...inputFieldRequirements.amount}
                   />
                   <div style={{ color: 'var(--text-muted)', fontSize: '12px', lineHeight: 1.4 }}>
                     รวม line items: {formatMoneyValue(numericFormAmount)} บาท
@@ -1574,9 +1829,8 @@ const InputPage = () => {
             justifyContent: 'stretch',
             position: 'sticky',
             top: '20px',
-            maxHeight: 'calc(100vh - 40px)',
-            overflowY: 'auto',
-            overflowX: 'hidden',
+            maxHeight: 'none',
+            overflow: 'visible',
             border: '1px solid var(--border-color)',
           }}
         >
@@ -1634,23 +1888,126 @@ const InputPage = () => {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}
+                  className="input-empty-preview"
                 >
-                  <div>
-                    <h2 style={{ fontSize: '24px', marginBottom: '10px', color: 'var(--text-main)' }}>
-                      ตัวอย่างใบเสร็จ
-                    </h2>
-                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  <div className="input-empty-preview-copy">
+                    <h2>ตัวอย่างใบเสร็จ</h2>
+                    <p>
                       เลือกโครงการและอัปโหลดใบเสร็จหรือ PDF เพื่อให้ระบบช่วยอ่านข้อมูล แล้วส่งคำขอให้ผู้ดูแลตรวจสอบ
                     </p>
                   </div>
-                  <ConstructionAnimation />
+                  <div className="input-empty-preview-visual">
+                    <ConstructionAnimation />
+                  </div>
                 </MotionDiv>
               )}
             </AnimatePresence>
           </div>
         </MotionDiv>
       </MotionDiv>
+      {submitReview.open ? (
+        <div className="input-submit-scrim" onMouseDown={closeSubmitReviewDialog}>
+          <section
+            className="input-submit-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="input-submit-review-title"
+            aria-describedby="input-submit-review-description"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="input-submit-dialog-header">
+              <div>
+                <span className="input-submit-kicker">
+                  <TriangleAlert size={15} />
+                  ตรวจสอบก่อนส่ง
+                </span>
+                <h3 id="input-submit-review-title">พบข้อมูลที่ควรตรวจอีกครั้ง</h3>
+                <p id="input-submit-review-description">
+                  คำขอนี้ยังส่งให้ผู้ดูแลตรวจสอบได้ แต่ควรยืนยันว่าข้อมูลด้านล่างถูกต้องก่อนส่ง
+                </p>
+              </div>
+              <button
+                type="button"
+                className="input-submit-close"
+                onClick={closeSubmitReviewDialog}
+                disabled={isSubmitting}
+                aria-label="ปิดหน้าต่างตรวจสอบก่อนส่ง"
+              >
+                <X size={18} />
+              </button>
+            </header>
+
+            {submitReview.summary ? (
+              <div className="input-submit-summary">
+                <div>
+                  <span>โครงการ</span>
+                  <strong>{submitReview.summary.projectName}</strong>
+                </div>
+                <div>
+                  <span>ประเภทรายการ</span>
+                  <strong>{submitReview.summary.entryTypeLabel}</strong>
+                </div>
+                <div>
+                  <span>ผู้ขอ</span>
+                  <strong>{submitReview.summary.requesterName}</strong>
+                </div>
+                <div>
+                  <span>ผู้ขาย / ร้านค้า</span>
+                  <strong>{submitReview.summary.vendorName}</strong>
+                </div>
+                <div>
+                  <span>ยอดชำระจริง</span>
+                  <strong>{formatMoneyValue(submitReview.summary.amount)} THB</strong>
+                </div>
+                <div>
+                  <span>ยอดรวมรายการ</span>
+                  <strong>{formatMoneyValue(submitReview.summary.lineItemTotal)} THB</strong>
+                </div>
+                <div>
+                  <span>จำนวนรายการ</span>
+                  <strong>{submitReview.summary.itemCount}</strong>
+                </div>
+                <div>
+                  <span>เอกสาร</span>
+                  <strong>{submitReview.summary.receiptFileName}</strong>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="input-submit-warning-list">
+              {submitReview.warnings.map((warning) => (
+                <div className="input-submit-warning" key={`${warning.title}-${warning.detail}`}>
+                  <TriangleAlert size={18} />
+                  <div>
+                    <strong>{warning.title}</strong>
+                    <p>{warning.detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <footer className="input-submit-actions">
+              <button
+                type="button"
+                className="input-submit-secondary"
+                onClick={closeSubmitReviewDialog}
+                disabled={isSubmitting}
+              >
+                กลับไปแก้ไข
+              </button>
+              <button
+                type="button"
+                className="input-submit-primary"
+                onClick={confirmSubmitReview}
+                disabled={isSubmitting}
+              >
+                <CheckCircle2 size={17} />
+                {isSubmitting ? 'กำลังส่ง...' : 'ยืนยันส่งตรวจสอบ'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 };
