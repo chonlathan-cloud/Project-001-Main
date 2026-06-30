@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   Bot,
   Briefcase,
+  ClipboardCheck,
   ClipboardList,
   HelpCircle,
   LayoutDashboard,
@@ -145,6 +146,7 @@ const Sidebar = () => {
 
     return [
       { name: 'ส่งคำขอ', icon: ClipboardList, path: '/input' },
+      { name: 'งานตรวจแก้', icon: ClipboardCheck, path: '/inspection/tasks' },
       { name: 'โปรไฟล์', icon: UserRound, path: '/profile/me' },
     ];
   }, [authUser, isAdminUser]);

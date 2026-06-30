@@ -26,6 +26,7 @@ const ChatAIPage = lazy(() => import('./ChatAIPage'))
 const SettingPage = lazy(() => import('./SettingPage'))
 const ProfilePage = lazy(() => import('./ProfilePage'))
 const SupportPage = lazy(() => import('./SupportPage'))
+const InspectionTasksPage = lazy(() => import('./InspectionTasksPage'))
 const LoginPage = lazy(() => import('./LoginPage'))
 const SignUpPage = lazy(() => import('./SignUpPage'))
 const LineCallbackPage = lazy(() => import('./LineCallbackPage'))
@@ -160,6 +161,7 @@ function AppRoutes() {
 
       <Route element={<ProtectedLayout />}>
         <Route path="/input" element={<InputPage />} />
+        <Route path="/inspection/tasks" element={<InspectionTasksPage />} />
         <Route path="/profile/me" element={<ProfilePage />} />
       </Route>
 

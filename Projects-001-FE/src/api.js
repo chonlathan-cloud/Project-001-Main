@@ -393,6 +393,20 @@ async function getProfileData() {
       user: liveProfile.user,
       stats: Array.isArray(liveProfile.stats) ? liveProfile.stats : [],
       chartData: Array.isArray(liveProfile.chartData) ? liveProfile.chartData : [],
+      meta: liveProfile.meta || {},
+      scope: liveProfile.scope || liveProfile.profile_scope || liveProfile.metrics_scope || '',
+      profileScope: liveProfile.profileScope || liveProfile.profile_scope || '',
+      metricsScope: liveProfile.metricsScope || liveProfile.metrics_scope || '',
+      statsScope: liveProfile.statsScope || liveProfile.stats_scope || '',
+      activityScope: liveProfile.activityScope || liveProfile.activity_scope || '',
+      isPersonalScope: Boolean(
+        liveProfile.isPersonalScope ||
+        liveProfile.is_personal_scope ||
+        liveProfile.userScoped ||
+        liveProfile.user_scoped ||
+        liveProfile.personalScope ||
+        liveProfile.personal_scope
+      ),
     };
   }
 

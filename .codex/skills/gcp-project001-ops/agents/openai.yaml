@@ -1,0 +1,4 @@
+interface:
+  display_name: "GCP Project001 Ops"
+  short_description: "Read-only GCP diagnostics for project001"
+  default_prompt: "Use $gcp-project001-ops to inspect project001-489710 GCP architecture safely."

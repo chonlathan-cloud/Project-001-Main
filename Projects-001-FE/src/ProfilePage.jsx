@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  AlertCircle,
   Briefcase,
   Camera,
   CheckCircle,
@@ -27,9 +28,10 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { fetchData, resetProfileAvatar, updateCurrentProfile, uploadProfileAvatar } from './api';
+import { fetchData, getInputProjectOptions, resetProfileAvatar, updateCurrentProfile, uploadProfileAvatar } from './api';
 import { syncStoredProfileUser } from './auth';
 import Loading from './components/Loading';
+import AssignedProjectsSummary from './components/profile/AssignedProjectsSummary';
 
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
@@ -182,6 +184,65 @@ const formatWholeNumber = (value) =>
 
 const isSubcontractorUser = (user = {}) =>
   String(user?.role_key || user?.role || '').trim().toLowerCase() === 'subcontractor';
+
+const PERSONAL_SCOPE_VALUES = new Set([
+  'current_user',
+  'current-user',
+  'individual',
+  'me',
+  'my',
+  'personal',
+  'self',
+  'user',
+]);
+
+const pickProfileScopeValues = (profile = {}) => {
+  const meta = profile.meta || {};
+  return [
+    profile.scope,
+    profile.profileScope,
+    profile.profile_scope,
+    profile.metricsScope,
+    profile.metrics_scope,
+    profile.statsScope,
+    profile.stats_scope,
+    profile.activityScope,
+    profile.activity_scope,
+    profile.dataScope,
+    profile.data_scope,
+    meta.scope,
+    meta.profileScope,
+    meta.profile_scope,
+    meta.metricsScope,
+    meta.metrics_scope,
+    meta.statsScope,
+    meta.stats_scope,
+    meta.activityScope,
+    meta.activity_scope,
+  ];
+};
+
+const hasPersonalMetricScope = (profile = {}) => {
+  const meta = profile.meta || {};
+  const explicitFlags = [
+    profile.isPersonalScope,
+    profile.is_personal_scope,
+    profile.userScoped,
+    profile.user_scoped,
+    profile.personalScope,
+    profile.personal_scope,
+    meta.isPersonalScope,
+    meta.is_personal_scope,
+    meta.userScoped,
+    meta.user_scoped,
+  ];
+
+  if (explicitFlags.some((value) => value === true)) return true;
+
+  return pickProfileScopeValues(profile).some((value) => (
+    PERSONAL_SCOPE_VALUES.has(String(value || '').trim().toLowerCase())
+  ));
+};
 
 const buildInitials = (value) => {
   const words = String(value || '').trim().split(/\s+/).filter(Boolean);
@@ -370,6 +431,71 @@ const StatusMessage = ({ tone = 'neutral', children }) => {
   );
 };
 
+const ProfileActivityUnavailable = () => (
+  <div style={{
+    minHeight: '264px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: '1px dashed #d8cfc4',
+    borderRadius: '12px',
+    backgroundColor: '#fbf8f2',
+    padding: '24px',
+    textAlign: 'center',
+  }}>
+    <div style={{ maxWidth: '480px', display: 'grid', justifyItems: 'center', gap: '10px' }}>
+      <div style={{
+        width: '44px',
+        height: '44px',
+        borderRadius: '12px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--primary)',
+        backgroundColor: 'rgba(79, 111, 100, 0.1)',
+      }}>
+        <AlertCircle size={22} />
+      </div>
+      <strong style={{ color: 'var(--text-main)', fontSize: '16px' }}>Personal activity data is not available</strong>
+      <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '13px', lineHeight: 1.55 }}>
+        Admin-wide income, expense, and request totals are hidden on this profile until the API returns metrics scoped to this user.
+      </p>
+    </div>
+  </div>
+);
+
+const ProfileScopeNoticeCard = () => (
+  <div style={{
+    ...cardStyle,
+    gridColumn: '1 / -1',
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '14px',
+    minHeight: 'auto',
+    backgroundColor: '#fbf8f2',
+  }}>
+    <div style={{
+      width: '42px',
+      height: '42px',
+      borderRadius: '12px',
+      backgroundColor: 'rgba(79, 111, 100, 0.1)',
+      color: 'var(--primary)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flex: '0 0 auto',
+    }}>
+      <AlertCircle size={20} />
+    </div>
+    <div style={{ display: 'grid', gap: '6px' }}>
+      <strong style={{ color: 'var(--text-main)', fontSize: '15px' }}>Personal profile metrics are hidden</strong>
+      <span style={{ color: 'var(--text-muted)', fontSize: '13px', lineHeight: 1.55 }}>
+        The profile page only shows individual data. The current response does not identify which income or expense records belong to this admin user.
+      </span>
+    </div>
+  </div>
+);
+
 const ProfilePage = () => {
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -380,7 +506,11 @@ const ProfilePage = () => {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
   const [profileError, setProfileError] = useState('');
+  const [assignedProjectOptions, setAssignedProjectOptions] = useState([]);
+  const [assignedProjectsLoading, setAssignedProjectsLoading] = useState(false);
+  const [assignedProjectsError, setAssignedProjectsError] = useState('');
   const fileInputRef = useRef(null);
+  const profileUser = profileData?.user;
 
   useEffect(() => {
     const loadData = async () => {
@@ -399,9 +529,41 @@ const ProfilePage = () => {
   }, []);
 
   useEffect(() => {
-    if (!profileData?.user || isEditing) return;
-    setProfileForm(buildProfileForm(profileData.user));
-  }, [isEditing, profileData?.user]);
+    if (!profileUser || isEditing) return;
+    setProfileForm(buildProfileForm(profileUser));
+  }, [isEditing, profileUser]);
+
+  useEffect(() => {
+    if (!profileUser || !isSubcontractorUser(profileUser)) {
+      setAssignedProjectOptions([]);
+      setAssignedProjectsLoading(false);
+      setAssignedProjectsError('');
+      return undefined;
+    }
+
+    let isActive = true;
+    setAssignedProjectsLoading(true);
+    setAssignedProjectsError('');
+
+    getInputProjectOptions()
+      .then((items) => {
+        if (!isActive) return;
+        setAssignedProjectOptions(Array.isArray(items) ? items : []);
+      })
+      .catch((error) => {
+        if (!isActive) return;
+        setAssignedProjectOptions([]);
+        setAssignedProjectsError(error?.message || 'Failed to load assigned project names.');
+      })
+      .finally(() => {
+        if (!isActive) return;
+        setAssignedProjectsLoading(false);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [profileUser]);
 
   const useThaiProfileCopy = isSubcontractorUser(profileData?.user);
 
@@ -568,12 +730,19 @@ const ProfilePage = () => {
   const bankAccount = user.bank_account || {};
   const roleLabel = user.role || 'User';
   const isSubcontractor = isSubcontractorUser(user);
-  const stats = isSubcontractor ? localizeSubcontractorStats(baseStats) : baseStats;
+  const hasScopedActivityMetrics = isSubcontractor || hasPersonalMetricScope(profileData);
+  const stats = hasScopedActivityMetrics
+    ? (isSubcontractor ? localizeSubcontractorStats(baseStats) : baseStats)
+    : [];
   const approvedStat = findStat(stats, 'budget_managed');
   const pendingStat = findStat(stats, 'pending_approvals');
   const assignedProjectIds = Array.isArray(user.assigned_project_ids)
     ? user.assigned_project_ids.filter(Boolean)
     : [];
+  const assignedProjectOptionIds = assignedProjectOptions
+    .map((project) => project.project_id || project.id)
+    .filter(Boolean);
+  const displayAssignedProjectIds = assignedProjectIds.length ? assignedProjectIds : assignedProjectOptionIds;
   const profileName = user.display_name || user.contact_name || user.name;
   const avatarUrl = user.profile_image_url || user.line_picture_url || user.avatar_url;
   const hasProfileBankDetails = hasBankDetails(user);
@@ -595,7 +764,12 @@ const ProfilePage = () => {
   const bankingStatusText = hasProfileBankDetails
     ? isSubcontractor ? 'พร้อมใช้สำหรับข้อมูลการโอนเงิน' : 'Available for transfer records'
     : isSubcontractor ? 'ยังไม่ได้กรอกข้อมูล' : 'Not provided';
-  const profileChartData = normalizeProfileChartData(profileData.chartData || []);
+  const profileChartData = hasScopedActivityMetrics ? normalizeProfileChartData(profileData.chartData || []) : [];
+  const approvedAmountLabel = isSubcontractor ? 'ยอดอนุมัติทั้งหมด' : 'My Approved Amount';
+  const approvedAmountSubtext = hasScopedActivityMetrics
+    ? approvedStat?.subtext || (isSubcontractor ? 'คำขอที่อนุมัติหรือจ่ายเงินแล้ว' : 'Approved or paid requests for this user')
+    : 'Admin-wide totals are hidden until personal metrics are available.';
+  const pendingAmountValue = hasScopedActivityMetrics ? pendingStat?.value || '0' : '-';
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
@@ -692,16 +866,16 @@ const ProfilePage = () => {
         }}>
           <div>
             <div style={{ fontSize: '13px', fontWeight: '700', opacity: 0.75, marginBottom: '8px' }}>
-              {isSubcontractor ? 'ยอดอนุมัติทั้งหมด' : 'Total Approved Amount'}
+              {approvedAmountLabel}
             </div>
             <div style={{ fontSize: '42px', fontWeight: '800', lineHeight: 1 }}>
               {approvedStat?.value || '-'}
             </div>
           </div>
           <div style={{ display: 'grid', gap: '8px', fontSize: '14px', lineHeight: 1.5 }}>
-            <div>{approvedStat?.subtext || (isSubcontractor ? 'คำขอที่อนุมัติหรือจ่ายเงินแล้ว' : 'Approved or paid requests for this subcontractor')}</div>
+            <div>{approvedAmountSubtext}</div>
             <div style={{ opacity: 0.82 }}>
-              {isSubcontractor ? 'รอตรวจสอบ' : 'Pending approval'}: <strong>{pendingStat?.value || '0'}</strong>
+              {isSubcontractor ? 'รอตรวจสอบ' : 'Pending approval'}: <strong>{pendingAmountValue}</strong>
             </div>
           </div>
         </div>
@@ -713,18 +887,22 @@ const ProfilePage = () => {
       </div>
 
       <div className="profile-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginTop: '24px' }}>
-        {stats.map((stat) => {
-          const Icon = iconMap[stat.id] || User;
-          return (
-            <StatCard
-              key={stat.id}
-              value={stat.value}
-              label={stat.label}
-              subtext={stat.subtext}
-              icon={Icon}
-            />
-          );
-        })}
+        {hasScopedActivityMetrics ? (
+          stats.map((stat) => {
+            const Icon = iconMap[stat.id] || User;
+            return (
+              <StatCard
+                key={stat.id}
+                value={stat.value}
+                label={stat.label}
+                subtext={stat.subtext}
+                icon={Icon}
+              />
+            );
+          })
+        ) : (
+          <ProfileScopeNoticeCard />
+        )}
       </div>
 
       <div className="profile-bottom-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, 0.65fr)', gap: '24px', marginTop: '24px' }}>
@@ -751,84 +929,90 @@ const ProfilePage = () => {
             </div>
           </div>
 
-          <div style={{ height: '340px', width: '100%' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={profileChartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }} dy={10} />
-                <YAxis
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }}
-                  tickFormatter={formatCompactNumber}
-                  tickMargin={12}
-                  width={72}
-                />
-                <Tooltip
-                  cursor={{ fill: '#f8fafc', opacity: 0.8 }}
-                  contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: 'none' }}
-                  formatter={(value, name) => [formatWholeNumber(value), name]}
-                />
-                <Bar dataKey="Income" name={isSubcontractor ? 'รายรับ' : 'Income'} fill="#4f6f64" radius={[4, 4, 0, 0]} barSize={12} />
-                <Bar dataKey="Expenses" name={isSubcontractor ? 'รายจ่าย' : 'Expenses'} fill="#c2a878" radius={[4, 4, 0, 0]} barSize={12} />
-                <Line
-                  type="monotone"
-                  dataKey="NetCashFlow"
-                  name={isSubcontractor ? 'สุทธิ' : 'Net'}
-                  stroke="#2f2e2c"
-                  strokeWidth={2.25}
-                  dot={{ r: 3, fill: '#2f2e2c', strokeWidth: 0 }}
-                  activeDot={{ r: 5 }}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
+          {hasScopedActivityMetrics ? (
+            <>
+              <div style={{ height: '340px', width: '100%' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={profileChartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }} dy={10} />
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }}
+                      tickFormatter={formatCompactNumber}
+                      tickMargin={12}
+                      width={72}
+                    />
+                    <Tooltip
+                      cursor={{ fill: '#f8fafc', opacity: 0.8 }}
+                      contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: 'none' }}
+                      formatter={(value, name) => [formatWholeNumber(value), name]}
+                    />
+                    <Bar dataKey="Income" name={isSubcontractor ? 'รายรับ' : 'Income'} fill="#4f6f64" radius={[4, 4, 0, 0]} barSize={12} />
+                    <Bar dataKey="Expenses" name={isSubcontractor ? 'รายจ่าย' : 'Expenses'} fill="#c2a878" radius={[4, 4, 0, 0]} barSize={12} />
+                    <Line
+                      type="monotone"
+                      dataKey="NetCashFlow"
+                      name={isSubcontractor ? 'สุทธิ' : 'Net'}
+                      stroke="#2f2e2c"
+                      strokeWidth={2.25}
+                      dot={{ r: 3, fill: '#2f2e2c', strokeWidth: 0 }}
+                      activeDot={{ r: 5 }}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
 
-          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '18px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '12px' }}>
-              <div>
-                <h3 style={{ fontSize: '14px', fontWeight: '750', margin: 0, color: 'var(--text-main)' }}>
-                  {isSubcontractor ? 'จำนวนคำขอ' : 'Request Activity'}
-                </h3>
-                <div style={{ color: 'var(--text-muted)', marginTop: '4px', fontSize: '12px' }}>
-                  {isSubcontractor ? 'ปริมาณรายการที่ส่งในแต่ละเดือน' : 'Monthly submitted request volume'}
+              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '12px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '14px', fontWeight: '750', margin: 0, color: 'var(--text-main)' }}>
+                      {isSubcontractor ? 'จำนวนคำขอ' : 'Request Activity'}
+                    </h3>
+                    <div style={{ color: 'var(--text-muted)', marginTop: '4px', fontSize: '12px' }}>
+                      {isSubcontractor ? 'ปริมาณรายการที่ส่งในแต่ละเดือน' : 'Monthly submitted request volume'}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#27a57a' }}></span> {isSubcontractor ? 'กิจกรรม' : 'Activity'}
+                  </div>
+                </div>
+                <div style={{ height: '150px', width: '100%' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={profileChartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }} dy={10} />
+                      <YAxis
+                        allowDecimals={false}
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }}
+                        tickMargin={10}
+                        width={44}
+                      />
+                      <Tooltip
+                        cursor={{ stroke: '#d8e2dc', strokeDasharray: '3 3' }}
+                        contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: 'none' }}
+                        formatter={(value, name) => [formatWholeNumber(value), name]}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="Activity"
+                        name={isSubcontractor ? 'กิจกรรม' : 'Activity'}
+                        stroke="#27a57a"
+                        strokeWidth={2.25}
+                        dot={{ r: 3, fill: '#27a57a', strokeWidth: 0 }}
+                        activeDot={{ r: 5 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#27a57a' }}></span> {isSubcontractor ? 'กิจกรรม' : 'Activity'}
-              </div>
-            </div>
-            <div style={{ height: '150px', width: '100%' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={profileChartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }} dy={10} />
-                  <YAxis
-                    allowDecimals={false}
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 12, fill: 'rgba(47,46,44,0.6)' }}
-                    tickMargin={10}
-                    width={44}
-                  />
-                  <Tooltip
-                    cursor={{ stroke: '#d8e2dc', strokeDasharray: '3 3' }}
-                    contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: 'none' }}
-                    formatter={(value, name) => [formatWholeNumber(value), name]}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="Activity"
-                    name={isSubcontractor ? 'กิจกรรม' : 'Activity'}
-                    stroke="#27a57a"
-                    strokeWidth={2.25}
-                    dot={{ r: 3, fill: '#27a57a', strokeWidth: 0 }}
-                    activeDot={{ r: 5 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+            </>
+          ) : (
+            <ProfileActivityUnavailable />
+          )}
         </div>
 
         <div style={{ display: 'grid', gap: '24px' }}>
@@ -896,11 +1080,21 @@ const ProfilePage = () => {
                 {!isSubcontractor ? <DetailRow label="Company" value={user.company} /> : null}
                 {!isSubcontractor ? <DetailRow label="Department" value={user.department} /> : null}
                 <DetailRow label="Email" value={user.email} />
-                {user.line_uid ? <DetailRow label="LINE UID" value={user.line_uid} /> : null}
-                <DetailRow
-                  label={isSubcontractor ? 'โครงการที่ได้รับมอบหมาย' : 'Assigned Projects'}
-                  value={assignedProjectIds.length ? assignedProjectIds.join(', ') : '-'}
-                />
+                {!isSubcontractor && user.line_uid ? <DetailRow label="LINE UID" value={user.line_uid} /> : null}
+                {isSubcontractor ? (
+                  <AssignedProjectsSummary
+                    label="โครงการที่ได้รับมอบหมาย"
+                    projectIds={displayAssignedProjectIds}
+                    projects={assignedProjectOptions}
+                    loading={assignedProjectsLoading}
+                    error={assignedProjectsError}
+                  />
+                ) : (
+                  <DetailRow
+                    label="Assigned Projects"
+                    value={assignedProjectIds.length ? assignedProjectIds.join(', ') : '-'}
+                  />
+                )}
               </>
             )}
           </DetailPanel>

@@ -4731,6 +4731,243 @@ body {
   font-size: 12px;
 }
 
+.inspection-task-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.inspection-task-summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 104px;
+  padding: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--text-main);
+}
+
+.inspection-task-summary-card span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.inspection-task-summary-card strong {
+  display: block;
+  color: inherit;
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspection-task-summary-card svg {
+  color: rgba(79, 111, 100, 0.72);
+}
+
+.inspection-task-summary-card.tone-positive {
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.inspection-task-summary-card.tone-danger {
+  background: #fff5f4;
+  color: #b42318;
+}
+
+.inspection-task-summary-card.tone-warning {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.inspection-task-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inspection-task-toolbar .inspection-local-tabs {
+  flex: 1 1 auto;
+}
+
+.inspection-task-toolbar .inspection-local-tabs button span {
+  min-width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #eee8df;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspection-task-search {
+  flex: 0 1 280px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #e7decd;
+  border-radius: 8px;
+  background: #ffffff;
+  color: rgba(47, 46, 44, 0.58);
+}
+
+.inspection-task-search:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79, 111, 100, 0.14);
+}
+
+.inspection-task-search input {
+  width: 100%;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+}
+
+.inspection-task-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  gap: 14px;
+}
+
+.inspection-task-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--text-main);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.inspection-task-card:hover {
+  border-color: rgba(79, 111, 100, 0.36);
+  box-shadow: 0 4px 12px rgba(47, 46, 44, 0.05);
+  transform: translateY(-1px);
+}
+
+.inspection-task-card:focus-visible {
+  outline: 3px solid rgba(79, 111, 100, 0.22);
+  outline-offset: 2px;
+}
+
+.inspection-task-card.is-active {
+  border-color: var(--primary);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.inspection-task-card.is-overdue {
+  background: #fffaf3;
+}
+
+.inspection-task-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inspection-task-card-head > strong {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.inspection-task-title {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.inspection-task-title strong {
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 15px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspection-task-title span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.inspection-task-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.inspection-task-meta div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.inspection-task-meta div.danger {
+  color: #b45309;
+}
+
+.inspection-task-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspection-task-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.inspection-task-card-foot span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #f1ede8;
+  color: #75624a;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .inspection-workflow-panel {
   display: flex;
   flex-direction: column;
@@ -8962,7 +9199,8 @@ h3 {
   }
 
   .inspection-overview-grid,
-  .inspection-overview-panels {
+  .inspection-overview-panels,
+  .inspection-task-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -9002,6 +9240,16 @@ h3 {
 
   .inspection-filter-search {
     grid-column: span 2;
+  }
+
+  .inspection-task-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inspection-task-search {
+    flex: 1 1 auto;
+    width: 100%;
   }
 
   .boq-workbench-tabs,
@@ -9088,6 +9336,8 @@ h3 {
   .project-detail-node-grid,
   .inspection-overview-grid,
   .inspection-overview-panels,
+  .inspection-task-summary-grid,
+  .inspection-task-list,
   .profile-hero-grid,
   .profile-main-grid,
   .profile-stats-grid,
@@ -9205,6 +9455,7 @@ h3 {
   .inspection-map-side,
   .inspection-photo-grid,
   .inspection-register-filters,
+  .inspection-task-meta,
   .inspection-report-filter-grid,
   .inspection-report-panel-grid,
   .inspection-report-metrics,
