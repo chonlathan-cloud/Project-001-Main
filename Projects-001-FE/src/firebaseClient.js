@@ -19,6 +19,14 @@ const firebaseConfig = {
 
 const firebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const firebaseAuth = getAuth(firebaseApp);
+const identityPlatformTenantId = String(
+  import.meta.env.VITE_IDENTITY_PLATFORM_TENANT_ID || ''
+).trim();
+
+if (identityPlatformTenantId) {
+  firebaseAuth.tenantId = identityPlatformTenantId;
+}
+
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 

@@ -53,6 +53,8 @@ class AuthenticatedUser:
     access_request_id: str | None = None
     access_status: str | None = None
     rejection_reason: str | None = None
+    tenant_id: str | None = None
+    app_env: str | None = None
     is_development_override: bool = False
 
     def has_role(self, role: str) -> bool:
@@ -158,6 +160,13 @@ def _admin_access_user(user: AuthenticatedUser) -> AuthenticatedUser:
         email=user.email,
         display_name=user.display_name,
         subcontractor_id=user.subcontractor_id,
+        line_uid=user.line_uid,
+        auth_provider=user.auth_provider,
+        access_request_id=user.access_request_id,
+        access_status=user.access_status,
+        rejection_reason=user.rejection_reason,
+        tenant_id=user.tenant_id,
+        app_env=user.app_env,
         is_development_override=user.is_development_override,
     )
 
@@ -186,6 +195,8 @@ def get_current_user_allow_pending(
         access_request_id=str(payload.get("access_request_id") or "").strip() or None,
         access_status=str(payload.get("access_status") or "").strip() or None,
         rejection_reason=str(payload.get("rejection_reason") or "").strip() or None,
+        tenant_id=str(payload.get("tenant_id") or "").strip() or None,
+        app_env=str(payload.get("app_env") or "").strip() or None,
     )
 
 
@@ -228,6 +239,8 @@ def require_admin_user(
             roles=(role,),
             email=email,
             display_name="Development Owner" if role == OWNER_ROLE else "Development Admin",
+            tenant_id=settings.identity_platform_tenant_id,
+            app_env=settings.app_env,
             is_development_override=True,
         )
 

@@ -47,11 +47,15 @@ def issue_session_token(
     access_request_id: str | None = None,
     access_status: str | None = None,
     rejection_reason: str | None = None,
+    tenant_id: str | None = None,
+    app_env: str | None = None,
 ) -> str:
     settings = get_settings()
     now = datetime.now(UTC)
     expires_at = now + timedelta(minutes=settings.jwt_expire_minutes)
     header = {"alg": settings.jwt_algorithm, "typ": "JWT"}
+    token_tenant_id = tenant_id if tenant_id is not None else settings.identity_platform_tenant_id
+    token_app_env = app_env if app_env is not None else settings.app_env
     payload = {
         "sub": subject,
         "role": role,
@@ -64,6 +68,8 @@ def issue_session_token(
         "access_request_id": access_request_id,
         "access_status": access_status,
         "rejection_reason": rejection_reason,
+        "tenant_id": token_tenant_id,
+        "app_env": token_app_env,
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
     }
@@ -108,5 +114,21 @@ def verify_session_token(token: str) -> dict[str, Any]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session token has expired.",
         )
+
+    expected_tenant_id = settings.identity_platform_tenant_id
+    if expected_tenant_id:
+        actual_tenant_id = str(payload.get("tenant_id") or "").strip()
+        if actual_tenant_id != expected_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session token was issued for a different tenant.",
+            )
+
+        actual_app_env = str(payload.get("app_env") or "").strip()
+        if actual_app_env != settings.app_env:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session token was issued for a different environment.",
+            )
 
     return payload

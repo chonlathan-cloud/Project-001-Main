@@ -13,10 +13,12 @@ try:
     import firebase_admin
     from firebase_admin import auth as firebase_auth
     from firebase_admin import credentials
+    from firebase_admin import tenant_mgt
 except ImportError as exc:  # pragma: no cover - runtime dependency guard
     firebase_admin = None  # type: ignore[assignment]
     firebase_auth = None  # type: ignore[assignment]
     credentials = None  # type: ignore[assignment]
+    tenant_mgt = None  # type: ignore[assignment]
     _FIREBASE_IMPORT_ERROR = exc
 else:
     _FIREBASE_IMPORT_ERROR = None
@@ -65,6 +67,11 @@ def get_firebase_auth():
     _ = get_firebase_app()
     if firebase_auth is None:
         raise RuntimeError("firebase-admin auth is unavailable.") from _FIREBASE_IMPORT_ERROR
+    settings = get_settings()
+    if settings.identity_platform_tenant_id:
+        if tenant_mgt is None:
+            raise RuntimeError("firebase-admin tenant management is unavailable.") from _FIREBASE_IMPORT_ERROR
+        return tenant_mgt.auth_for_tenant(settings.identity_platform_tenant_id)
     return firebase_auth
 
 
@@ -79,4 +86,6 @@ def get_firestore_client():
     client_kwargs = {}
     if settings.firebase_project_id:
         client_kwargs["project"] = settings.firebase_project_id
+    if settings.firestore_database_id:
+        client_kwargs["database"] = settings.firestore_database_id
     return firestore.Client(**client_kwargs)

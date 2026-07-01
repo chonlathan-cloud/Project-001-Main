@@ -17,6 +17,9 @@ dist-ssr
 cloudrun.env
 cloudrun-backend.env.yaml
 cloudrun-frontend.build.env
+cloudrun-beta.env
+cloudrun-backend-beta.env.yaml
+cloudrun-frontend-beta.build.env
 
 # Editor directories and files
 .vscode/*

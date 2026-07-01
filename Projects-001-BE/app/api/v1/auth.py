@@ -87,9 +87,36 @@ def _access_request_item(request) -> AccessRequestItem:
     return AccessRequestItem(**asdict(request))
 
 
+def _session_context() -> dict[str, str | None]:
+    settings = get_settings()
+    return {
+        "tenant_id": settings.identity_platform_tenant_id,
+        "app_env": settings.app_env,
+    }
+
+
+def _validate_firebase_tenant(decoded_token: dict) -> None:
+    expected_tenant_id = get_settings().identity_platform_tenant_id
+    if not expected_tenant_id:
+        return
+
+    firebase_claims = decoded_token.get("firebase")
+    if not isinstance(firebase_claims, dict):
+        firebase_claims = {}
+    actual_tenant_id = str(
+        firebase_claims.get("tenant") or decoded_token.get("tenant_id") or ""
+    ).strip()
+    if actual_tenant_id != expected_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google sign-in token was issued for a different tenant.",
+        )
+
+
 def _pending_session_response(request) -> AuthSessionResponse:
     roles = ["pending"]
     subject = request.email or request.line_uid or request.id
+    session_context = _session_context()
     session_token = issue_session_token(
         subject=subject,
         role="pending",
@@ -116,6 +143,7 @@ def _pending_session_response(request) -> AuthSessionResponse:
             access_request_id=request.id,
             access_status=request.status,
             rejection_reason=request.rejection_reason,
+            **session_context,
             permissions=role_permissions("pending", roles),
         ),
     )
@@ -130,6 +158,7 @@ def _subcontractor_session_response(
 ) -> AuthSessionResponse:
     roles = ["subcontractor"]
     subject = email or line_uid or subcontractor_id
+    session_context = _session_context()
     session_token = issue_session_token(
         subject=subject,
         role="subcontractor",
@@ -154,6 +183,7 @@ def _subcontractor_session_response(
             display_name=name,
             subcontractor_id=subcontractor_id,
             line_uid=line_uid,
+            **session_context,
             permissions=role_permissions("subcontractor", roles),
         ),
     )
@@ -371,6 +401,7 @@ async def admin_login(request: AdminLoginRequest):
         if request.firebase_id_token:
             firebase_auth = get_firebase_auth()
             decoded = firebase_auth.verify_id_token(request.firebase_id_token)
+            _validate_firebase_tenant(decoded)
             email = str(decoded.get("email") or email).strip().lower()
             display_name = str(decoded.get("name") or display_name or "").strip() or None
             picture_url = str(decoded.get("picture") or "").strip() or None
@@ -449,6 +480,7 @@ async def admin_login(request: AdminLoginRequest):
             else authorized_roles[0]
         )
 
+        session_context = _session_context()
         session_token = issue_session_token(
             subject=email,
             role=authorized_role,
@@ -470,6 +502,7 @@ async def admin_login(request: AdminLoginRequest):
                     roles=authorized_roles,
                     email=email,
                     display_name=display_name,
+                    **session_context,
                     permissions=role_permissions(authorized_role, authorized_roles),
                 ),
             )
@@ -498,6 +531,8 @@ async def get_current_session_user(user: AuthenticatedUser = Depends(get_current
             access_request_id=user.access_request_id,
             access_status=user.access_status,
             rejection_reason=user.rejection_reason,
+            tenant_id=user.tenant_id,
+            app_env=user.app_env,
             permissions=role_permissions(user.role, user.roles),
         )
     )

@@ -183,6 +183,8 @@ class SessionUserPayload(BaseModel):
     access_request_id: str | None = None
     access_status: str | None = None
     rejection_reason: str | None = None
+    tenant_id: str | None = None
+    app_env: str | None = None
     permissions: list[str] = Field(default_factory=list)
 
 

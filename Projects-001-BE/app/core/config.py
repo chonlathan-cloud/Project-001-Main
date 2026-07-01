@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     gcp_project_id: str | None = Field(default=None, alias="GCP_PROJECT_ID")
     gcp_location: str = Field(default="asia-southeast1", alias="GCP_LOCATION")
     firebase_project_id: str | None = Field(default=None, alias="FIREBASE_PROJECT_ID")
+    firestore_database_id: str = Field(default="(default)", alias="FIRESTORE_DATABASE_ID")
+    identity_platform_tenant_id: str | None = Field(
+        default=None,
+        alias="IDENTITY_PLATFORM_TENANT_ID",
+    )
     google_application_credentials: str | None = Field(
         default=None,
         alias="GOOGLE_APPLICATION_CREDENTIALS",
@@ -124,6 +129,18 @@ class Settings(BaseSettings):
         if "@" in cleaned:
             return cleaned.split("@", 1)[1]
         return cleaned
+
+    @field_validator("firestore_database_id", mode="before")
+    @classmethod
+    def _normalize_firestore_database_id(cls, value: object) -> str:
+        cleaned = str(value or "").strip()
+        return cleaned or "(default)"
+
+    @field_validator("identity_platform_tenant_id", mode="before")
+    @classmethod
+    def _normalize_identity_platform_tenant_id(cls, value: object) -> str | None:
+        cleaned = str(value or "").strip()
+        return cleaned or None
 
     @field_validator("flowaccount_base_url", mode="before")
     @classmethod

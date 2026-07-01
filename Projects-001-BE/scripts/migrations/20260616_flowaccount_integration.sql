@@ -5,7 +5,7 @@ ALTER TABLE IF EXISTS input_requests
     ADD COLUMN IF NOT EXISTS accounting_vat_mode VARCHAR,
     ADD COLUMN IF NOT EXISTS accounting_wht_rate NUMERIC(5, 2),
     ADD COLUMN IF NOT EXISTS accounting_ready BOOLEAN DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS accounting_readiness_errors JSONB DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS accounting_readiness_errors JSON DEFAULT '[]'::json,
     ADD COLUMN IF NOT EXISTS flowaccount_sync_status VARCHAR DEFAULT 'NOT_READY',
     ADD COLUMN IF NOT EXISTS flowaccount_expense_id VARCHAR,
     ADD COLUMN IF NOT EXISTS flowaccount_document_no VARCHAR,
@@ -28,7 +28,7 @@ ALTER TABLE IF EXISTS input_requests
 UPDATE input_requests
 SET
     accounting_ready = COALESCE(accounting_ready, FALSE),
-    accounting_readiness_errors = COALESCE(accounting_readiness_errors, '[]'::jsonb),
+    accounting_readiness_errors = COALESCE(accounting_readiness_errors, '[]'::json),
     flowaccount_sync_status = COALESCE(flowaccount_sync_status, 'NOT_READY'),
     flowaccount_attachment_status = COALESCE(flowaccount_attachment_status, 'NOT_READY'),
     flowaccount_supplier_invoice_status = COALESCE(flowaccount_supplier_invoice_status, 'NOT_READY'),
