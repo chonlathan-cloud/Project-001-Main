@@ -13,21 +13,121 @@ import {
   Settings,
   TrendingUp,
   UserRound,
-  Wrench,
 } from 'lucide-react';
 
 import {
+  canMutateAdminData,
   canAccessOwnerArea,
   clearAuthSession,
   getStoredAuthUser,
   getStoredSessionToken,
   isAdminPortalUser,
+  isSubcontractorUser,
   subscribeToAuthChanges,
   syncStoredProfileUser,
 } from '../auth';
-import { getCurrentProfile } from '../api';
+import {
+  getAdminInputRequests,
+  getCurrentProfile,
+  getInputProjectOptions,
+  getInspectionDefects,
+  getInspectionRounds,
+  getSettingAccessRequests,
+} from '../api';
 import { signOutFirebaseClient } from '../firebaseClient';
 import { logoutLineClient } from '../liffClient';
+import logoImage from '../assets/Logo.png';
+import { isInspectionDefectOverdue } from './inspection/inspectionUtils';
+
+const MAX_BADGE_COUNT = 99;
+const INSPECTION_ACTIVE_STATUSES = new Set(['OPEN', 'IN_PROGRESS']);
+const FLOW_ERROR_KEYS = [
+  'flowaccount_sync_error',
+  'flowaccount_attachment_error',
+  'flowaccount_supplier_invoice_error',
+  'flowaccount_payment_error',
+];
+const FLOW_STATUS_KEYS = [
+  'flowaccount_sync_status',
+  'flowaccount_attachment_status',
+  'flowaccount_supplier_invoice_status',
+  'flowaccount_payment_status',
+];
+
+function formatBadgeCount(value) {
+  const count = Number(value || 0);
+  if (!Number.isFinite(count) || count <= 0) return '';
+  return count > MAX_BADGE_COUNT ? `${MAX_BADGE_COUNT}+` : count.toLocaleString('en-US');
+}
+
+function buildBadge(count, tone = 'warning') {
+  const label = formatBadgeCount(count);
+  return label ? { count, label, tone } : null;
+}
+
+function requestHasCriticalAlert(request) {
+  return (
+    Boolean(request?.is_duplicate_flag) ||
+    Boolean(request?.ocr_low_confidence_fields?.length) ||
+    FLOW_ERROR_KEYS.some((key) => Boolean(request?.[key])) ||
+    FLOW_STATUS_KEYS.some((key) => String(request?.[key] || '').toUpperCase().includes('FAILED'))
+  );
+}
+
+function normalizeInspectionStatus(status) {
+  return String(status || 'OPEN').trim().toUpperCase();
+}
+
+async function loadInspectionTaskBadge() {
+  const projectOptions = await getInputProjectOptions();
+  const projects = (Array.isArray(projectOptions) ? projectOptions : [])
+    .map((project) => ({
+      ...project,
+      project_id: project.project_id || project.id || '',
+    }))
+    .filter((project) => project.project_id);
+
+  let activeCount = 0;
+  let overdueCount = 0;
+
+  await Promise.all(projects.map(async (project) => {
+    const rounds = await getInspectionRounds(project.project_id).catch(() => []);
+    const roundList = Array.isArray(rounds) ? rounds : [];
+
+    await Promise.all(roundList.map(async (round) => {
+      const roundId = round.id || round.round_id || '';
+      if (!roundId) return;
+
+      const defects = await getInspectionDefects(project.project_id, roundId).catch(() => []);
+      const defectList = Array.isArray(defects) ? defects : [];
+
+      defectList.forEach((defect) => {
+        const status = normalizeInspectionStatus(defect.status);
+        if (!INSPECTION_ACTIVE_STATUSES.has(status)) return;
+        activeCount += 1;
+        if (isInspectionDefectOverdue(defect)) {
+          overdueCount += 1;
+        }
+      });
+    }));
+  }));
+
+  return buildBadge(activeCount, overdueCount > 0 ? 'danger' : 'warning');
+}
+
+function SidebarNavBadge({ badge, label }) {
+  if (!badge?.label) return null;
+
+  return (
+    <span
+      className={`sidebar-nav-count-badge tone-${badge.tone || 'warning'}`}
+      aria-label={`${badge.label} ${label} items`}
+      title={`${badge.count.toLocaleString('en-US')} ${label} items`}
+    >
+      {badge.label}
+    </span>
+  );
+}
 
 function getInitials(user) {
   const source =
@@ -84,6 +184,7 @@ function SidebarUserAvatar({ user }) {
 const Sidebar = () => {
   const navigate = useNavigate();
   const [authUser, setAuthUser] = useState(() => getStoredAuthUser());
+  const [navBadges, setNavBadges] = useState({});
   const profileSyncKeyRef = useRef('');
   const isAdminUser = isAdminPortalUser(authUser);
 
@@ -122,12 +223,55 @@ const Sidebar = () => {
     };
   }, [authUser]);
 
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadNavBadges() {
+      if (!authUser) {
+        if (isActive) setNavBadges({});
+        return;
+      }
+
+      if (isAdminUser) {
+        const [approvalRequests, accessRequests] = await Promise.all([
+          getAdminInputRequests({ status: 'PENDING_ADMIN' }).catch(() => []),
+          canMutateAdminData(authUser) ? getSettingAccessRequests('pending').catch(() => []) : Promise.resolve([]),
+        ]);
+        if (!isActive) return;
+
+        setNavBadges({
+          approvals: buildBadge(
+            approvalRequests.length,
+            approvalRequests.some(requestHasCriticalAlert) ? 'danger' : 'warning',
+          ),
+          settings: buildBadge(accessRequests.length, 'warning'),
+        });
+        return;
+      }
+
+      if (isSubcontractorUser(authUser)) {
+        const inspectionTasks = await loadInspectionTaskBadge().catch(() => null);
+        if (!isActive) return;
+        setNavBadges({ inspectionTasks });
+        return;
+      }
+
+      if (isActive) setNavBadges({});
+    }
+
+    loadNavBadges();
+
+    return () => {
+      isActive = false;
+    };
+  }, [authUser, isAdminUser]);
+
   const navItems = useMemo(() => {
     if (isAdminUser) {
       const sharedAdminItems = [
         { name: 'Projects', icon: Briefcase, path: '/project' },
         { name: 'Input', icon: ClipboardList, path: '/input' },
-        { name: 'Approvals', icon: BadgeCheck, path: '/approval' },
+        { name: 'Approvals', icon: BadgeCheck, path: '/approval', badge: navBadges.approvals },
         { name: 'Insights', icon: TrendingUp, path: '/insights' },
         { name: 'Profile', icon: UserRound, path: '/profile' },
       ];
@@ -146,20 +290,20 @@ const Sidebar = () => {
 
     return [
       { name: 'ส่งคำขอ', icon: ClipboardList, path: '/input' },
-      { name: 'งานตรวจแก้', icon: ClipboardCheck, path: '/inspection/tasks' },
+      { name: 'งานตรวจแก้', icon: ClipboardCheck, path: '/inspection/tasks', badge: navBadges.inspectionTasks },
       { name: 'โปรไฟล์', icon: UserRound, path: '/profile/me' },
     ];
-  }, [authUser, isAdminUser]);
+  }, [authUser, isAdminUser, navBadges]);
 
   const systemItems = useMemo(() => {
     if (isAdminUser) {
       return [
-        { name: 'Settings', icon: Settings, path: '/setting' },
+        { name: 'Settings', icon: Settings, path: '/setting', badge: navBadges.settings },
         { name: 'Support', icon: HelpCircle, path: '/support' },
       ];
     }
     return [];
-  }, [isAdminUser]);
+  }, [isAdminUser, navBadges]);
 
   const handleLogout = async () => {
     clearAuthSession();
@@ -170,14 +314,9 @@ const Sidebar = () => {
   return (
     <aside className="app-sidebar">
       <div className="sidebar-brand">
-        <div className="sidebar-brand-mark">
-          <Wrench size={18} strokeWidth={2.25} />
-        </div>
-        <div>
-          <div className="sidebar-brand-title">RAYADEE</div>
-          <div className="sidebar-brand-subtitle">
-            {isAdminUser ? 'Admin Portal' : 'พื้นที่ผู้รับเหมา'}
-          </div>
+        <img className="sidebar-brand-logo" src={logoImage} alt="DOUBLEBO" />
+        <div className="sidebar-brand-subtitle">
+          {isAdminUser ? 'Admin Portal' : 'พื้นที่ผู้รับเหมา'}
         </div>
       </div>
 
@@ -202,7 +341,8 @@ const Sidebar = () => {
               className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
             >
               <item.icon size={18} strokeWidth={2} />
-              <span>{item.name}</span>
+              <span className="sidebar-nav-label">{item.name}</span>
+              <SidebarNavBadge badge={item.badge} label={item.name} />
             </NavLink>
           ))}
         </nav>
@@ -216,7 +356,8 @@ const Sidebar = () => {
                 className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
               >
                 <item.icon size={18} strokeWidth={2} />
-                <span>{item.name}</span>
+                <span className="sidebar-nav-label">{item.name}</span>
+                <SidebarNavBadge badge={item.badge} label={item.name} />
               </NavLink>
             ))}
           </div>

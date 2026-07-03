@@ -20,6 +20,7 @@ import { canMutateAdminData, getStoredAuthUser } from './auth';
 import {
   ApprovalActionBar,
   ApprovalAlertStack,
+  ApprovalDecisionBanner,
   ApprovalEvidencePanel,
   ApprovalField,
   ApprovalFlowAccountChecklist,
@@ -197,6 +198,7 @@ function ApprovalPage() {
     entryType: '',
     projectId: deepLinkProjectId,
   });
+  const [attentionFilter, setAttentionFilter] = useState('all');
   const [pageError, setPageError] = useState('');
   const [actionError, setActionError] = useState('');
   const [flashMessage, setFlashMessage] = useState('');
@@ -916,6 +918,7 @@ function ApprovalPage() {
   const isPreviewPdf = (receiptPreview?.content_type || '') === 'application/pdf';
   const isDeepLinkedRequest = Boolean(deepLinkRequestId) && selectedRequest?.request_id === deepLinkRequestId;
   const isPaidRequest = selectedRequest?.status === 'PAID';
+  const isFlowAccountStage = ['APPROVED', 'PAID'].includes(selectedRequest?.status);
   const flowAccountErrors = [
     selectedRequest?.flowaccount_sync_error,
     selectedRequest?.flowaccount_attachment_error,
@@ -939,65 +942,180 @@ function ApprovalPage() {
   );
   const shouldShowFlowAccountPanel = Boolean(
     selectedRequest?.entry_type === 'EXPENSE' &&
-    (['APPROVED', 'PAID'].includes(selectedRequest?.status) || hasFlowAccountHistory)
+    isFlowAccountStage &&
+    (isFlowAccountStage || hasFlowAccountHistory)
   );
   const requestAlerts = selectedRequest ? [
     flashMessage ? {
       tone: 'success',
+      level: 'Done',
       title: 'Action completed',
       message: flashMessage,
+      nextAction: 'ตรวจสถานะล่าสุดของรายการก่อนดำเนินงานต่อ',
     } : null,
     actionError ? {
       tone: 'critical',
+      level: 'Blocked',
       title: 'Action failed',
       message: actionError,
+      nextAction: 'อ่าน error แล้วแก้ข้อมูลหรือ retry action อีกครั้ง',
     } : null,
     selectedRequest.is_duplicate_flag ? {
       tone: 'warning',
-      title: 'Duplicate red flag',
-      message: selectedRequest.duplicate_reason || 'พบรายการซ้ำตามกฎ Receipt No. + Date + Amount',
+      level: 'Check',
+      title: 'อาจเป็นรายการซ้ำ',
+      message: selectedRequest.duplicate_reason || 'พบเลขใบเสร็จ วันที่ หรือยอดเงินใกล้เคียงกับรายการเดิม',
+      nextAction: 'ตรวจ receipt และรายการเดิมก่อนกด Approve',
     } : null,
     selectedRequest.ocr_low_confidence_fields?.length ? {
       tone: 'warning',
-      title: 'OCR low confidence',
-      message: selectedRequest.ocr_low_confidence_fields.map(formatOcrFieldLabel).join(', '),
+      level: 'Check',
+      title: 'ข้อมูลจาก OCR ต้องตรวจทาน',
+      message: `ระบบไม่มั่นใจในฟิลด์: ${selectedRequest.ocr_low_confidence_fields.map(formatOcrFieldLabel).join(', ')}`,
+      nextAction: 'เทียบกับไฟล์ receipt แล้วแก้ field ในฟอร์มก่อน Save/Approve',
     } : null,
     shouldShowFlowAccountPanel && readinessIssues.length ? {
       tone: accountingReadiness?.errors?.length ? 'critical' : 'warning',
-      title: 'Accounting readiness',
+      level: accountingReadiness?.errors?.length ? 'Blocked' : 'Check',
+      title: accountingReadiness?.errors?.length ? 'ข้อมูลบัญชียังติดปัญหา' : 'ข้อมูลบัญชียังไม่ครบ',
       message: readinessIssues.join(' | '),
+      nextAction: 'เติมข้อมูลที่ขาดในฟอร์ม แล้วกด Save Changes ก่อน sync',
     } : null,
     shouldShowFlowAccountPanel && inputVatNotReady ? {
       tone: 'warning',
-      title: 'Input VAT not ready',
-      message: 'Expense can stay synced. Supplier Invoice needs vendor tax ID, branch, address, and receipt number.',
+      level: 'Check',
+      title: 'Input VAT ยังไม่พร้อม',
+      message: 'Supplier Invoice ต้องมีเลขผู้เสียภาษี สาขา ที่อยู่ และเลขใบเสร็จ',
+      nextAction: 'กรอกข้อมูลภาษีให้ครบก่อน Sync Supplier Invoice',
     } : null,
     shouldShowFlowAccountPanel && attachmentSandboxNote ? {
       tone: 'info',
+      level: 'Info',
       title: 'Attachment synced',
-      message: 'Receipt was uploaded to FlowAccount. Sandbox preview can still fail even when upload succeeded.',
+      message: 'ไฟล์ receipt ถูกส่งไป FlowAccount แล้ว แต่ sandbox preview อาจยังเปิดไม่สำเร็จ',
+      nextAction: 'ถ้า status เป็น synced แล้ว ให้ตรวจขั้นตอนบัญชีถัดไป',
     } : null,
     shouldShowFlowAccountPanel && flowAccountErrors.length ? {
       tone: 'critical',
-      title: 'FlowAccount error',
+      level: 'Blocked',
+      title: 'ส่งข้อมูลไป FlowAccount ไม่สำเร็จ',
       message: flowAccountErrors.join(' | '),
+      nextAction: 'ใช้ปุ่ม Retry/Sync ใน Accounting panel หรือแจ้ง Owner ตรวจ config',
     } : null,
     receiptPreviewError ? {
       tone: 'warning',
-      title: 'Receipt preview issue',
+      level: 'Check',
+      title: 'เปิดดู receipt ไม่สำเร็จ',
       message: receiptPreviewError,
+      nextAction: 'ลอง reload preview หรือเปิดไฟล์จากหลักฐานด้านขวา',
+      action: selectedRequest.receipt_storage_key ? {
+        label: receiptPreviewLoading ? 'Loading...' : 'Reload receipt',
+        onClick: () => refreshReceiptPreview(),
+        disabled: receiptPreviewLoading,
+      } : null,
     } : null,
     !selectedRequest.receipt_storage_key ? {
       tone: 'info',
-      title: 'No receipt file',
+      level: 'Info',
+      title: 'ไม่มีไฟล์ใบเสร็จแนบมา',
       message: 'รายการนี้ยังไม่มีไฟล์ receipt ที่เก็บไว้',
+      nextAction: 'ถ้าเอกสารจำเป็น ให้ reject พร้อมเหตุผลเพื่อให้ผู้ส่งแนบไฟล์ใหม่',
     } : null,
     !canMutateApprovals ? {
       tone: 'info',
-      title: 'Read-only access',
-      message: 'Owner permission is required to edit, approve, reject, or mark requests as paid.',
+      level: 'View only',
+      title: 'ดูข้อมูลได้เท่านั้น',
+      message: 'ต้องใช้สิทธิ์ Owner เพื่อแก้ไข อนุมัติ ปฏิเสธ หรือ mark paid',
+      nextAction: 'ตรวจข้อมูลแล้วส่งต่อ Owner เมื่อพร้อมตัดสินใจ',
     } : null,
   ].filter(Boolean) : [];
+  const actionableAlertCount = requestAlerts.filter((alert) => alert.tone !== 'success').length;
+  const approvalDecision = selectedRequest ? (() => {
+    if (actionError) {
+      return {
+        tone: 'danger',
+        label: 'Decision status',
+        title: 'ติดปัญหาจาก action ล่าสุด',
+        description: 'ระบบยังดำเนิน action ล่าสุดไม่สำเร็จ ต้องแก้ error ก่อนทำขั้นตอนถัดไป',
+        nextAction: 'อ่าน alert ด้านล่างแล้ว retry หรือแก้ข้อมูล',
+      };
+    }
+    if (!canMutateApprovals) {
+      return {
+        tone: 'info',
+        label: 'Permission',
+        title: 'คุณตรวจสอบได้ แต่ตัดสินใจแทน Owner ไม่ได้',
+        description: 'หน้านี้เปิดให้ admin review ข้อมูลและหลักฐานได้ ส่วนการ save, approve, reject และ mark paid เป็นสิทธิ์ Owner',
+        nextAction: 'แจ้ง Owner เมื่อข้อมูลพร้อม',
+      };
+    }
+    if (isFlowAccountStage && (flowAccountErrors.length || accountingReadiness?.errors?.length)) {
+      return {
+        tone: 'danger',
+        label: 'Blocked',
+        title: 'ยังไม่ควรเดินรายการต่อ',
+        description: 'มีปัญหาด้าน FlowAccount หรือข้อมูลบัญชีที่อาจทำให้ sync/payment ไม่สำเร็จ',
+        nextAction: 'แก้ error หรือใช้ปุ่ม retry ใน Accounting panel',
+      };
+    }
+    if (isPaidRequest) {
+      return {
+        tone: 'success',
+        label: 'Completed',
+        title: 'รายการนี้จ่ายเงินแล้ว',
+        description: 'ตรวจข้อมูลย้อนหลังได้ แต่ workflow หลักของรายการนี้เสร็จแล้ว',
+        nextAction: 'ใช้เป็นหลักฐานหรือ reference เท่านั้น',
+      };
+    }
+    if (selectedRequest.status === 'APPROVED') {
+      return canMarkPaid
+        ? {
+            tone: 'success',
+            label: 'Ready',
+            title: 'พร้อมบันทึกการจ่ายเงิน',
+            description: 'รายการนี้อนุมัติแล้ว และข้อมูลพร้อมสำหรับขั้นตอน payment',
+            nextAction: 'ตรวจ payment reference แล้วกด Mark Paid',
+          }
+        : {
+            tone: 'warning',
+            label: 'Check',
+            title: 'อนุมัติแล้ว แต่ยังไม่พร้อม mark paid',
+            description: 'อาจต้อง sync FlowAccount หรือเติมข้อมูล payment/accounting ก่อน',
+            nextAction: 'ดู Accounting panel และ field ที่ขึ้น required',
+          };
+    }
+    if (
+      selectedRequest.is_duplicate_flag ||
+      selectedRequest.ocr_low_confidence_fields?.length ||
+      receiptPreviewError ||
+      !selectedRequest.receipt_storage_key ||
+      (isFlowAccountStage && inputVatNotReady)
+    ) {
+      return {
+        tone: 'warning',
+        label: 'Check before approving',
+        title: 'ต้องตรวจเพิ่มก่อนตัดสินใจ',
+        description: 'รายการนี้มีสัญญาณที่ควรตรวจ เช่น duplicate, OCR, receipt หรือข้อมูลภาษี',
+        nextAction: 'ไล่ alert ด้านล่าง แล้วค่อย Save/Approve/Reject',
+      };
+    }
+    if (canApprove) {
+      return {
+        tone: 'success',
+        label: 'Ready',
+        title: 'พร้อมสำหรับการ review',
+        description: 'ยังไม่พบ alert ที่ block รายการนี้ ตรวจ receipt และข้อมูลหลักอีกครั้งก่อนตัดสินใจ',
+        nextAction: 'กด Approve หรือ Reject ตามผลตรวจ',
+      };
+    }
+    return {
+      tone: 'info',
+      label: 'Status',
+      title: 'ตรวจสอบสถานะรายการ',
+      description: 'รายการนี้ไม่ได้อยู่ในสถานะที่ review ได้โดยตรง',
+      nextAction: 'ดู status และ action ที่เปิดใช้งานด้านล่าง',
+    };
+  })() : null;
   const flowAccountSteps = selectedRequest ? [
     {
       label: 'Expense document',
@@ -1235,6 +1353,8 @@ function ApprovalPage() {
         <ApprovalQueuePanel
           filters={filters}
           onFilterChange={setFilters}
+          attentionFilter={attentionFilter}
+          onAttentionFilterChange={setAttentionFilter}
           statusOptions={STATUS_OPTIONS}
           entryTypeOptions={ENTRY_TYPE_OPTIONS}
           projectOptions={projectOptions}
@@ -1252,8 +1372,9 @@ function ApprovalPage() {
               <ApprovalRequestHeader
                 request={selectedRequest}
                 formatEntryType={formatEntryType}
-                alertCount={requestAlerts.length}
+                alertCount={actionableAlertCount}
               />
+              <ApprovalDecisionBanner decision={approvalDecision} />
 
               <div className="approval-review-layout">
                 <div className="approval-review-main">

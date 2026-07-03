@@ -37,7 +37,43 @@ const hasFlowAccountIssue = (item) =>
     item?.flowaccount_attachment_status,
     item?.flowaccount_supplier_invoice_status,
     item?.flowaccount_payment_status,
-  ].some((status) => String(status || '').includes('FAILED'));
+  ].some((status) => String(status || '').toUpperCase().includes('FAILED'));
+
+const isFlowAccountStageStatus = (status) => ['APPROVED', 'PAID'].includes(String(status || '').toUpperCase());
+
+const hasReviewWarning = (item) =>
+  Boolean(item?.is_duplicate_flag) ||
+  Boolean(item?.ocr_low_confidence_fields?.length) ||
+  Boolean(!item?.receipt_storage_key);
+
+const getQueueAttention = (item) => {
+  if (isFlowAccountStageStatus(item?.status) && hasFlowAccountIssue(item)) {
+    return { value: 'blocked', label: 'Blocked', tone: 'danger' };
+  }
+  if (hasReviewWarning(item)) {
+    return { value: 'check', label: 'Check', tone: 'warning' };
+  }
+  return { value: 'ready', label: 'Ready', tone: 'success' };
+};
+
+const ATTENTION_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'ready', label: 'Ready' },
+  { value: 'check', label: 'Check' },
+  { value: 'blocked', label: 'Blocked' },
+];
+
+const getAttentionCounts = (requests = []) => requests.reduce(
+  (counts, item) => {
+    const attention = getQueueAttention(item);
+    return {
+      ...counts,
+      all: counts.all + 1,
+      [attention.value]: counts[attention.value] + 1,
+    };
+  },
+  { all: 0, ready: 0, check: 0, blocked: 0 }
+);
 
 const getStatusTone = (status) => {
   if (status === 'PAID') return 'success';
@@ -90,10 +126,7 @@ function ActionButton({ action, compact = false }) {
 
 export function ApprovalSummaryStrip({ requests = [], refreshing = false, isDeepLinkedRequest = false, deepLinkRequestId = '' }) {
   const pendingCount = requests.filter((item) => item.status === 'PENDING_ADMIN').length;
-  const approvedCount = requests.filter((item) => item.status === 'APPROVED').length;
-  const alertCount = requests.filter((item) =>
-    item.is_duplicate_flag || item.ocr_low_confidence_fields?.length || hasFlowAccountIssue(item)
-  ).length;
+  const attentionCounts = getAttentionCounts(requests);
   const totalAmount = requests.reduce(
     (sum, item) => sum + Number(item.approved_amount ?? item.amount ?? 0),
     0
@@ -101,9 +134,10 @@ export function ApprovalSummaryStrip({ requests = [], refreshing = false, isDeep
 
   const metrics = [
     { label: 'Current view', value: requests.length, detail: `${formatAmount(totalAmount)} THB`, tone: 'neutral' },
-    { label: 'Pending admin', value: pendingCount, detail: 'Needs review', tone: pendingCount ? 'warning' : 'success' },
-    { label: 'Approved', value: approvedCount, detail: 'Ready for payment/sync', tone: 'ready' },
-    { label: 'Alerts', value: alertCount, detail: 'Duplicate, OCR, or sync', tone: alertCount ? 'danger' : 'success' },
+    { label: 'รอตรวจสอบ', value: pendingCount, detail: 'Pending admin queue', tone: pendingCount ? 'warning' : 'success' },
+    { label: 'พร้อมดำเนินการ', value: attentionCounts.ready, detail: 'No visible alerts', tone: 'success' },
+    { label: 'ต้องตรวจเพิ่ม', value: attentionCounts.check, detail: 'Duplicate, OCR, or receipt', tone: attentionCounts.check ? 'warning' : 'success' },
+    { label: 'ติดปัญหา', value: attentionCounts.blocked, detail: 'Sync or blocking issue', tone: attentionCounts.blocked ? 'danger' : 'success' },
   ];
 
   return (
@@ -141,6 +175,8 @@ export function ApprovalSummaryStrip({ requests = [], refreshing = false, isDeep
 export function ApprovalQueuePanel({
   filters,
   onFilterChange,
+  attentionFilter = 'all',
+  onAttentionFilterChange,
   statusOptions,
   entryTypeOptions,
   projectOptions,
@@ -149,6 +185,11 @@ export function ApprovalQueuePanel({
   onSelectRequest,
   formatEntryType,
 }) {
+  const attentionCounts = getAttentionCounts(requests);
+  const visibleRequests = attentionFilter === 'all'
+    ? requests
+    : requests.filter((item) => getQueueAttention(item).value === attentionFilter);
+
   return (
     <aside className="approval-queue-panel">
       <header className="approval-panel-header">
@@ -159,8 +200,23 @@ export function ApprovalQueuePanel({
           </span>
           <h2>Requests</h2>
         </div>
-        <strong>{requests.length}</strong>
+        <strong>{visibleRequests.length}</strong>
       </header>
+
+      <div className="approval-attention-tabs" role="tablist" aria-label="Filter review queue by attention state">
+        {ATTENTION_FILTERS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={attentionFilter === option.value ? 'active' : ''}
+            onClick={() => onAttentionFilterChange?.(option.value)}
+            aria-pressed={attentionFilter === option.value}
+          >
+            <span>{option.label}</span>
+            <strong>{attentionCounts[option.value]}</strong>
+          </button>
+        ))}
+      </div>
 
       <div className="approval-filter-grid">
         <select
@@ -193,12 +249,13 @@ export function ApprovalQueuePanel({
       </div>
 
       <div className="approval-queue-list">
-        {requests.length === 0 ? (
+        {visibleRequests.length === 0 ? (
           <div className="approval-empty-state">ไม่พบรายการในคิวตาม filter ปัจจุบัน</div>
         ) : (
-          requests.map((item) => {
+          visibleRequests.map((item) => {
             const isActive = item.request_id === selectedRequestId;
             const queueAlerts = getQueueAlerts(item);
+            const attention = getQueueAttention(item);
 
             return (
               <button
@@ -209,8 +266,11 @@ export function ApprovalQueuePanel({
               >
                 <span className="approval-queue-topline">
                   <strong>{item.project_name || '-'}</strong>
-                  <span className={`approval-status-badge ${getStatusTone(item.status)}`}>
-                    {titleizeStatus(item.status)}
+                  <span className="approval-queue-badges">
+                    <span className={`approval-chip ${attention.tone}`}>{attention.label}</span>
+                    <span className={`approval-status-badge ${getStatusTone(item.status)}`}>
+                      {titleizeStatus(item.status)}
+                    </span>
                   </span>
                 </span>
                 <span className="approval-queue-person">{item.vendor_name || item.requester_name || '-'}</span>
@@ -231,6 +291,29 @@ export function ApprovalQueuePanel({
         )}
       </div>
     </aside>
+  );
+}
+
+export function ApprovalDecisionBanner({ decision }) {
+  if (!decision) return null;
+
+  return (
+    <section className={`approval-decision-banner ${decision.tone || 'info'}`} aria-label="Approval decision guidance">
+      <span className="approval-decision-icon">
+        <AlertIcon tone={decision.tone} />
+      </span>
+      <div className="approval-decision-copy">
+        <span>{decision.label || 'Next decision'}</span>
+        <strong>{decision.title}</strong>
+        {decision.description ? <p>{decision.description}</p> : null}
+      </div>
+      {decision.nextAction ? (
+        <div className="approval-decision-next">
+          <span>Next</span>
+          <strong>{decision.nextAction}</strong>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -271,7 +354,7 @@ export function ApprovalAlertStack({ alerts = [] }) {
             <ShieldAlert size={15} />
             Needs Attention
           </span>
-          <h3>Alert management</h3>
+          <h3>What to check next</h3>
         </div>
         {alerts.length ? <strong>{alerts.length}</strong> : null}
       </header>
@@ -279,7 +362,7 @@ export function ApprovalAlertStack({ alerts = [] }) {
       {alerts.length === 0 ? (
         <div className="approval-alert-empty">
           <CheckCircle2 size={18} />
-          <span>No blocking alerts on this request.</span>
+          <span>No blocking alerts. Review the form and receipt before approving.</span>
         </div>
       ) : (
         <>
@@ -290,8 +373,16 @@ export function ApprovalAlertStack({ alerts = [] }) {
                   <AlertIcon tone={alert.tone} />
                 </span>
                 <span>
-                  <strong>{alert.title}</strong>
+                  <span className="approval-alert-title-row">
+                    <strong>{alert.title}</strong>
+                    {alert.level ? <em>{alert.level}</em> : null}
+                  </span>
                   {alert.message ? <small>{alert.message}</small> : null}
+                  {alert.nextAction ? (
+                    <small className="approval-alert-next">
+                      <strong>Next:</strong> {alert.nextAction}
+                    </small>
+                  ) : null}
                 </span>
                 {alert.action ? (
                   <button
