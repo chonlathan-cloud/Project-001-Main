@@ -7,19 +7,35 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 from urllib.parse import urlencode
 
 import httpx
 
 from app.core.config import get_settings
+from app.core.observability import log_event
 from app.services import daily_report_service
 from app.services.identity_service import get_subcontractor
+
+logger = logging.getLogger(__name__)
 
 
 def _report_url(report_id: str) -> str:
     settings = get_settings()
     query = urlencode({"report": report_id})
     return f"{settings.frontend_base_url}/project-reports?{query}"
+
+
+def _record_delivery_alert(report: dict, detail: str) -> None:
+    daily_report_service.ensure_staff_notification(
+        project_id=report["project_id"],
+        report_date=report["report_date"],
+        notification_type="LINE_DELIVERY_FAILURE",
+        title="ส่งรายงานไปยัง LINE ไม่สำเร็จ",
+        message=detail,
+        report_id=report["id"],
+        discriminator=str(report.get("published_version") or "current"),
+    )
 
 
 def _flex_message(report: dict) -> dict:
@@ -124,11 +140,26 @@ async def deliver_published_report(report: dict) -> str:
     access_token = settings.line_customer_channel_access_token
 
     if not access_token or not destination:
+        error_detail = (
+            "ยังไม่ได้ตั้งค่า LINE สำหรับลูกค้าหรือกลุ่ม LINE ของโครงการ"
+        )
         daily_report_service.update_delivery_status(
             report_id=report["id"],
             job_id=job["id"],
             delivery_status="NOT_CONFIGURED",
             last_error="Customer LINE token or active project destination is not configured.",
+        )
+        _record_delivery_alert(report, error_detail)
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_report_line_delivery_failed",
+            project_id=report["project_id"],
+            report_id=report["id"],
+            delivery_job_id=job["id"],
+            version=report.get("published_version"),
+            status="NOT_CONFIGURED",
+            error_category="LineDestinationNotConfigured",
         )
         return "NOT_CONFIGURED"
 
@@ -138,11 +169,26 @@ async def deliver_published_report(report: dict) -> str:
         or ""
     ).strip()
     if not target_id:
+        error_detail = (
+            "ไม่พบปลายทาง LINE ที่เปิดใช้งานสำหรับโครงการนี้"
+        )
         daily_report_service.update_delivery_status(
             report_id=report["id"],
             job_id=job["id"],
             delivery_status="NOT_CONFIGURED",
             last_error="Active project destination is missing line_target_id.",
+        )
+        _record_delivery_alert(report, error_detail)
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_report_line_delivery_failed",
+            project_id=report["project_id"],
+            report_id=report["id"],
+            delivery_job_id=job["id"],
+            version=report.get("published_version"),
+            status="NOT_CONFIGURED",
+            error_category="LineTargetMissing",
         )
         return "NOT_CONFIGURED"
 
@@ -164,12 +210,41 @@ async def deliver_published_report(report: dict) -> str:
             delivery_status="FAILED",
             last_error=str(exc)[:500],
         )
+        _record_delivery_alert(
+            report,
+            (
+                "ระบบส่งรายงานโครงการ "
+                f"{report.get('project_name') or report['project_id']} "
+                "ไปยัง LINE ไม่สำเร็จ"
+            ),
+        )
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_report_line_delivery_failed",
+            project_id=report["project_id"],
+            report_id=report["id"],
+            delivery_job_id=job["id"],
+            version=report.get("published_version"),
+            status="FAILED",
+            error_category=type(exc).__name__,
+        )
         return "FAILED"
 
     daily_report_service.update_delivery_status(
         report_id=report["id"],
         job_id=job["id"],
         delivery_status="SENT",
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_report_line_delivery_succeeded",
+        project_id=report["project_id"],
+        report_id=report["id"],
+        delivery_job_id=job["id"],
+        version=report.get("published_version"),
+        status="SENT",
     )
     return "SENT"
 
@@ -236,10 +311,16 @@ async def handle_customer_webhook(payload: dict) -> dict[str, int]:
                     )
                 response.raise_for_status()
                 replies_sent += 1
-            except Exception:
+            except Exception as exc:
                 # LINE retries webhooks. Candidate discovery is the durable action;
                 # a failed courtesy reply must not make the webhook fail.
-                pass
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "line_webhook_join_reply_failed",
+                    error_category=type(exc).__name__,
+                    status="FAILED",
+                )
     return {"events": len(payload.get("events") or []), "discovered": discovered, "replies_sent": replies_sent}
 
 
@@ -266,16 +347,25 @@ async def notify_subcontractor_submission(
     )
     if event_type == "CHANGES_REQUESTED":
         text = (
-            "Changes were requested for your daily report.\n"
-            f"Project: {submission.get('project_name') or submission.get('project_id')}\n"
-            f"Reason: {reason or 'Please review the Admin comments.'}\n"
+            "รายงานประจำวันของคุณต้องแก้ไข\n"
+            f"โครงการ: {submission.get('project_name') or submission.get('project_id')}\n"
+            "รายละเอียด: "
+            f"{reason or 'กรุณาตรวจสอบความคิดเห็นจาก Admin'}\n"
             f"{report_url}"
+        )
+    elif event_type in {"SUBMITTED", "RESUBMITTED"}:
+        text = (
+            "ระบบได้รับรายงานประจำวันของคุณแล้ว\n"
+            f"โครงการ: {submission.get('project_name') or submission.get('project_id')}\n"
+            f"วันที่: {submission.get('report_date')}\n"
+            "Admin/Owner จะตรวจสอบก่อนส่งให้ลูกค้า"
         )
     else:
         text = (
-            "Your daily report was accepted and included in the published project update.\n"
-            f"Project: {submission.get('project_name') or submission.get('project_id')}\n"
-            f"Date: {submission.get('report_date')}"
+            "รายงานของคุณได้รับการตรวจและรวมไว้"
+            "ในรายงานที่ส่งให้ลูกค้าแล้ว\n"
+            f"โครงการ: {submission.get('project_name') or submission.get('project_id')}\n"
+            f"วันที่: {submission.get('report_date')}"
         )
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -288,6 +378,16 @@ async def notify_subcontractor_submission(
                 json={"to": profile.line_uid, "messages": [{"type": "text", "text": text}]},
             )
         response.raise_for_status()
-    except Exception:
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "subcontractor_line_notification_failed",
+            project_id=submission.get("project_id"),
+            submission_id=submission.get("id"),
+            event_type=event_type,
+            error_category=type(exc).__name__,
+            status="FAILED",
+        )
         return "FAILED"
     return "SENT"

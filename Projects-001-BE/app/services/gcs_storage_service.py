@@ -10,6 +10,7 @@ import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
+from typing import BinaryIO
 from uuid import UUID, uuid4
 
 try:
@@ -173,6 +174,27 @@ def _upload_bytes_to_bucket_sync(
     return f"gs://{bucket_name}/{object_name}"
 
 
+def _upload_file_to_bucket_sync(
+    *,
+    bucket_name: str,
+    object_name: str,
+    file_obj: BinaryIO,
+    size_bytes: int,
+    content_type: str | None,
+) -> str:
+    client = _require_storage_client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(object_name)
+    file_obj.seek(0)
+    blob.upload_from_file(
+        file_obj,
+        size=size_bytes,
+        content_type=content_type or "application/octet-stream",
+        rewind=True,
+    )
+    return f"gs://{bucket_name}/{object_name}"
+
+
 async def upload_input_receipt_to_temp_storage(
     *,
     file_bytes: bytes,
@@ -263,7 +285,8 @@ async def upload_daily_report_media_to_storage(
     report_date: str,
     submission_id: str,
     media_id: str,
-    file_bytes: bytes,
+    file_obj: BinaryIO,
+    size_bytes: int,
     file_name: str | None,
     content_type: str | None,
 ) -> str:
@@ -276,10 +299,11 @@ async def upload_daily_report_media_to_storage(
         file_name=file_name,
     )
     return await asyncio.to_thread(
-        _upload_bytes_to_bucket_sync,
+        _upload_file_to_bucket_sync,
         bucket_name=bucket_name,
         object_name=object_name,
-        file_bytes=file_bytes,
+        file_obj=file_obj,
+        size_bytes=size_bytes,
         content_type=content_type,
     )
 

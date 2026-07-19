@@ -7,9 +7,14 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile, status
+from google.auth.exceptions import GoogleAuthError
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2 import id_token as google_id_token
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +26,7 @@ from app.api.deps.auth import (
 )
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.observability import log_event
 from app.models.boq import Project
 from app.schemas.daily_report_schema import (
     DailyReportAcknowledgementCreate,
@@ -33,6 +39,8 @@ from app.schemas.daily_report_schema import (
     DailyReportMediaAccessResponse,
     DailyReportMediaItem,
     DailyReportMembershipUpsert,
+    DailyReportNoWorkDayCreate,
+    DailyReportNoWorkDayItem,
     DailyReportProjectItem,
     DailyReportProjectSettingsItem,
     DailyReportProjectSettingsUpdate,
@@ -41,6 +49,7 @@ from app.schemas.daily_report_schema import (
     DailyReportSubmissionCreate,
     DailyReportSubmissionItem,
     DailyReportSubmissionUpdate,
+    DailyReportStaffNotificationItem,
     DailyReportVersionItem,
 )
 from app.schemas.responses import StandardResponse
@@ -51,7 +60,10 @@ from app.services.daily_report_line_service import (
     notify_subcontractor_submission,
     verify_customer_webhook_signature,
 )
-from app.services.daily_report_notification_service import run_deadline_tick
+from app.services.daily_report_notification_service import (
+    run_cycle_creation_scan,
+    run_due_action_scan,
+)
 from app.services.gcs_storage_service import (
     delete_storage_key,
     generate_signed_url_for_storage_key,
@@ -60,7 +72,35 @@ from app.services.gcs_storage_service import (
 from app.services.identity_service import get_subcontractor, list_subcontractors
 
 router = APIRouter(prefix="/daily-reports", tags=["Daily Reports"])
+internal_router = APIRouter(prefix="/internal/daily-reports", tags=["Daily Report Tasks"])
 DAILY_REPORT_STAFF_ROLES = {"admin", "owner"}
+logger = logging.getLogger(__name__)
+
+_PHOTO_CONTENT_TYPES = {
+    "image/gif",
+    "image/heic",
+    "image/heif",
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+}
+_VIDEO_CONTENT_TYPES = {
+    "video/3gpp",
+    "video/mp4",
+    "video/quicktime",
+    "video/webm",
+}
+_VOICE_CONTENT_TYPES = {
+    "audio/aac",
+    "audio/mp4",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "audio/webm",
+    "audio/x-m4a",
+    "audio/x-wav",
+}
 
 
 def _actor_id(user: AuthenticatedUser) -> str:
@@ -151,32 +191,60 @@ async def _visible_projects(
     return sorted(items, key=lambda item: item.name.lower())
 
 
-@router.post("/internal/deadline-tick", response_model=StandardResponse[dict])
-async def daily_report_deadline_tick(
-    x_daily_report_task_secret: str | None = Header(
-        default=None,
-        alias="X-Daily-Report-Task-Secret",
-    ),
-    db: AsyncSession = Depends(get_db),
-):
-    expected_secret = get_settings().daily_report_internal_task_secret
-    if not expected_secret:
+def _require_internal_task_auth(
+    *,
+    task_secret: str | None,
+    authorization: str | None,
+) -> None:
+    settings = get_settings()
+    if (
+        settings.daily_report_internal_task_secret
+        and task_secret
+        and hmac.compare_digest(
+            task_secret,
+            settings.daily_report_internal_task_secret,
+        )
+    ):
+        return
+
+    scheduler_account = str(
+        settings.daily_report_scheduler_service_account or ""
+    ).strip().lower()
+    scheduler_audience = str(settings.daily_report_scheduler_audience or "").strip()
+    if scheduler_account and scheduler_audience and authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and token:
+            try:
+                claims = google_id_token.verify_oauth2_token(
+                    token,
+                    GoogleAuthRequest(),
+                    scheduler_audience,
+                )
+            except (GoogleAuthError, ValueError):
+                claims = {}
+            token_email = str(claims.get("email") or "").strip().lower()
+            if token_email == scheduler_account and claims.get("email_verified") is not False:
+                return
+
+    if not settings.daily_report_internal_task_secret and not (
+        scheduler_account and scheduler_audience
+    ):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Daily Report internal task authentication is not configured.",
         )
-    if not x_daily_report_task_secret or not hmac.compare_digest(
-        x_daily_report_task_secret,
-        expected_secret,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Daily Report task authentication.",
-        )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid Daily Report task authentication.",
+    )
 
+
+async def _daily_report_scan_context(
+    db: AsyncSession,
+) -> tuple[list[dict], dict[str, list[str]]]:
     projects = list((await db.execute(select(Project))).scalars().all())
     active_projects = [
-        {"id": str(project.id), "name": project.name}
+        {"id": str(project.id), "name": project.name, "status": project.status}
         for project in projects
         if str(project.status or "").upper() not in {"COMPLETED", "ARCHIVED"}
     ]
@@ -186,12 +254,147 @@ async def daily_report_deadline_tick(
             continue
         for project_id in subcontractor.assigned_project_ids:
             project_subcontractors.setdefault(project_id, []).append(subcontractor.id)
-    return StandardResponse(
-        data=await run_deadline_tick(
+    return active_projects, project_subcontractors
+
+
+def _best_effort_global_failure_alert(*, failure_type: str, title: str) -> None:
+    try:
+        daily_report_service.ensure_global_staff_notification(
+            notification_type=failure_type,
+            title=title,
+            message="ระบบบันทึกข้อผิดพลาดแล้ว กรุณาตรวจสอบ Cloud Monitoring และลองใหม่",
+            discriminator=datetime.now(UTC).strftime("%Y%m%d%H"),
+        )
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_report_global_alert_persist_failed",
+            notification_type=failure_type,
+            error_category=type(exc).__name__,
+        )
+
+
+def _best_effort_project_failure_alert(
+    *,
+    project_id: str,
+    report_date: str,
+    failure_type: str,
+    title: str,
+    submission_id: str | None = None,
+    discriminator: str | None = None,
+) -> None:
+    try:
+        daily_report_service.ensure_staff_notification(
+            project_id=project_id,
+            report_date=report_date,
+            notification_type=failure_type,
+            title=title,
+            message="ระบบบันทึกข้อผิดพลาดแล้ว กรุณาลองใหม่หรือตรวจสอบระบบ",
+            submission_id=submission_id,
+            discriminator=discriminator,
+        )
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_report_project_alert_persist_failed",
+            project_id=project_id,
+            submission_id=submission_id,
+            notification_type=failure_type,
+            error_category=type(exc).__name__,
+        )
+
+
+@router.post("/internal/deadline-tick", response_model=StandardResponse[dict])
+@router.post("/internal/scan-due-actions", response_model=StandardResponse[dict])
+@internal_router.post("/scan-due-actions", response_model=StandardResponse[dict])
+async def daily_report_deadline_tick(
+    x_daily_report_task_secret: str | None = Header(
+        default=None,
+        alias="X-Daily-Report-Task-Secret",
+    ),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_internal_task_auth(
+        task_secret=x_daily_report_task_secret,
+        authorization=authorization,
+    )
+    try:
+        active_projects, project_subcontractors = await _daily_report_scan_context(db)
+        result = await run_due_action_scan(
             projects=active_projects,
             fallback_project_subcontractors=project_subcontractors,
         )
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_report_scheduler_failure",
+            event_type="SCAN_DUE_ACTIONS",
+            error_category=type(exc).__name__,
+        )
+        _best_effort_global_failure_alert(
+            failure_type="SCHEDULER_FAILURE",
+            title="ระบบตรวจรอบรายงานประจำวันไม่สำเร็จ",
+        )
+        raise
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_report_due_scan_completed",
+        projects_checked=result.get("projects_checked"),
+        cycles_ready=result.get("cycles_ready"),
+        notifications_sent=result.get("notifications_sent"),
+        notifications_failed=result.get("notifications_failed"),
+        status="SUCCESS",
     )
+    return StandardResponse(data=result)
+
+
+@router.post("/internal/create-due-cycles", response_model=StandardResponse[dict])
+@internal_router.post("/create-due-cycles", response_model=StandardResponse[dict])
+async def daily_report_create_due_cycles(
+    x_daily_report_task_secret: str | None = Header(
+        default=None,
+        alias="X-Daily-Report-Task-Secret",
+    ),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_internal_task_auth(
+        task_secret=x_daily_report_task_secret,
+        authorization=authorization,
+    )
+    try:
+        active_projects, project_subcontractors = await _daily_report_scan_context(db)
+        result = await run_cycle_creation_scan(
+            projects=active_projects,
+            fallback_project_subcontractors=project_subcontractors,
+        )
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_report_scheduler_failure",
+            event_type="CREATE_DUE_CYCLES",
+            error_category=type(exc).__name__,
+        )
+        _best_effort_global_failure_alert(
+            failure_type="SCHEDULER_FAILURE",
+            title="ระบบสร้างรอบรายงานประจำวันไม่สำเร็จ",
+        )
+        raise
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_report_cycle_scan_completed",
+        projects_checked=result.get("projects_checked"),
+        cycles_ready=result.get("cycles_ready"),
+        status="SUCCESS",
+    )
+    return StandardResponse(data=result)
 
 
 @router.post("/line/customer/webhook", response_model=StandardResponse[dict])
@@ -204,6 +407,12 @@ async def customer_line_webhook(
         body=body,
         signature=x_line_signature or "",
     ):
+        log_event(
+            logger,
+            logging.WARNING,
+            "line_webhook_signature_rejected",
+            status="REJECTED",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid LINE webhook signature.",
@@ -215,7 +424,14 @@ async def customer_line_webhook(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid LINE webhook payload.",
         ) from exc
-    return StandardResponse(data=await handle_customer_webhook(payload))
+    result = await handle_customer_webhook(payload)
+    log_event(
+        logger,
+        logging.INFO,
+        "line_customer_webhook_processed",
+        status="SUCCESS",
+    )
+    return StandardResponse(data=result)
 
 
 @router.get("/line/destination-candidates", response_model=StandardResponse[list[dict]])
@@ -282,6 +498,14 @@ async def create_my_submission(
             status_code=status.HTTP_409_CONFLICT,
             detail="Daily reporting is disabled for this project.",
         )
+    if daily_report_service.is_no_work_day(
+        project_id=request.project_id,
+        report_date=request.report_date,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This project date is marked as a no-work day.",
+        )
     return StandardResponse(
         data=daily_report_service.create_submission(
             project_id=request.project_id,
@@ -321,29 +545,111 @@ async def submit_my_submission(
     submission_id: str,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    return StandardResponse(
-        data=daily_report_service.submit_submission(
+    submitted = daily_report_service.submit_submission(
+        submission_id=submission_id,
+        subcontractor_id=_require_subcontractor(user),
+        actor_id=_actor_id(user),
+    )
+    notification_status = await notify_subcontractor_submission(
+        submission=submitted,
+        event_type=submitted["status"],
+    )
+    if notification_status == "FAILED":
+        _best_effort_project_failure_alert(
+            project_id=submitted["project_id"],
+            report_date=submitted["report_date"],
+            failure_type="LINE_SUBCONTRACTOR_NOTIFICATION_FAILURE",
+            title="แจ้งผลรายงานให้ผู้รับเหมาไม่สำเร็จ",
             submission_id=submission_id,
-            subcontractor_id=_require_subcontractor(user),
-            actor_id=_actor_id(user),
+            discriminator=f"{submission_id}-{submitted['status']}",
         )
+    log_event(
+        logger,
+        logging.INFO if notification_status != "FAILED" else logging.ERROR,
+        "daily_report_submission_received",
+        project_id=submitted["project_id"],
+        submission_id=submission_id,
+        status=submitted["status"],
+    )
+    return StandardResponse(
+        data=submitted
     )
 
 
-def _validate_media(file_bytes: bytes, content_type: str) -> tuple[str, int]:
+def _media_type_and_limit(content_type: str) -> tuple[str, int]:
     settings = get_settings()
-    if not file_bytes:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded media is empty.")
-    if content_type.startswith("image/"):
+    if content_type in _PHOTO_CONTENT_TYPES:
         return "PHOTO", settings.daily_report_photo_max_bytes
-    if content_type.startswith("video/"):
+    if content_type in _VIDEO_CONTENT_TYPES:
         return "VIDEO", settings.daily_report_video_max_bytes
-    if content_type.startswith("audio/"):
+    if content_type in _VOICE_CONTENT_TYPES:
         return "VOICE", settings.daily_report_audio_max_bytes
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Daily Report media must be an image, video, or audio file.",
+        detail="Unsupported Daily Report image, video, or audio format.",
     )
+
+
+async def _inspect_upload_with_limit(
+    file: UploadFile,
+    max_bytes: int,
+) -> tuple[int, bytes]:
+    total_bytes = 0
+    signature_prefix = b""
+    while chunk := await file.read(1024 * 1024):
+        total_bytes += len(chunk)
+        if total_bytes > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"Uploaded media exceeds the {max_bytes // (1024 * 1024)}MB limit.",
+            )
+        if len(signature_prefix) < 32:
+            signature_prefix = (signature_prefix + chunk)[:32]
+    if total_bytes == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded media is empty.",
+        )
+    await file.seek(0)
+    return total_bytes, signature_prefix
+
+
+def _validate_media_signature(file_bytes: bytes, content_type: str) -> None:
+    prefix = file_bytes[:32]
+    is_valid = True
+    if content_type in {"image/jpeg", "image/jpg"}:
+        is_valid = prefix.startswith(b"\xff\xd8\xff")
+    elif content_type == "image/png":
+        is_valid = prefix.startswith(b"\x89PNG\r\n\x1a\n")
+    elif content_type == "image/gif":
+        is_valid = prefix.startswith((b"GIF87a", b"GIF89a"))
+    elif content_type == "image/webp":
+        is_valid = prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP"
+    elif content_type in {"image/heic", "image/heif"}:
+        is_valid = prefix[4:8] == b"ftyp"
+    elif content_type in {"video/mp4", "video/quicktime", "video/3gpp"}:
+        is_valid = prefix[4:8] == b"ftyp"
+    elif content_type in {"video/webm", "audio/webm"}:
+        is_valid = prefix.startswith(b"\x1a\x45\xdf\xa3")
+    elif content_type in {"audio/mp4", "audio/x-m4a"}:
+        is_valid = prefix[4:8] == b"ftyp"
+    elif content_type == "audio/mpeg":
+        is_valid = prefix.startswith(b"ID3") or (
+            len(prefix) >= 2 and prefix[0] == 0xFF and prefix[1] & 0xE0 == 0xE0
+        )
+    elif content_type in {"audio/wav", "audio/x-wav"}:
+        is_valid = prefix.startswith(b"RIFF") and prefix[8:12] == b"WAVE"
+    elif content_type == "audio/ogg":
+        is_valid = prefix.startswith(b"OggS")
+    elif content_type == "audio/aac":
+        is_valid = (
+            len(prefix) >= 2 and prefix[0] == 0xFF and prefix[1] & 0xF6 == 0xF0
+        )
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded media content does not match its file type.",
+        )
 
 
 @router.post(
@@ -359,24 +665,41 @@ async def upload_submission_media(
     submission = daily_report_service.get_submission(submission_id)
     if submission.get("subcontractor_id") != subcontractor_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This submission belongs to another subcontractor.")
-    content_type = str(file.content_type or "application/octet-stream").lower()
-    file_bytes = await file.read()
-    media_type, max_bytes = _validate_media(file_bytes, content_type)
-    if len(file_bytes) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"{media_type.title()} exceeds the {max_bytes // (1024 * 1024)}MB limit.",
-        )
+    content_type = str(file.content_type or "application/octet-stream").lower().split(";", 1)[0]
+    media_type, max_bytes = _media_type_and_limit(content_type)
+    size_bytes, signature_prefix = await _inspect_upload_with_limit(file, max_bytes)
+    _validate_media_signature(signature_prefix, content_type)
     media_id = daily_report_service.new_media_id()
-    storage_key = await upload_daily_report_media_to_storage(
-        project_id=submission["project_id"],
-        report_date=submission["report_date"],
-        submission_id=submission_id,
-        media_id=media_id,
-        file_bytes=file_bytes,
-        file_name=file.filename,
-        content_type=content_type,
-    )
+    try:
+        storage_key = await upload_daily_report_media_to_storage(
+            project_id=submission["project_id"],
+            report_date=submission["report_date"],
+            submission_id=submission_id,
+            media_id=media_id,
+            file_obj=file.file,
+            size_bytes=size_bytes,
+            file_name=file.filename,
+            content_type=content_type,
+        )
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_report_upload_failed",
+            project_id=submission["project_id"],
+            submission_id=submission_id,
+            media_id=media_id,
+            error_category=type(exc).__name__,
+        )
+        _best_effort_project_failure_alert(
+            project_id=submission["project_id"],
+            report_date=submission["report_date"],
+            failure_type="UPLOAD_FAILURE",
+            title="อัปโหลดหลักฐานรายงานไม่สำเร็จ",
+            submission_id=submission_id,
+            discriminator=media_id,
+        )
+        raise
     try:
         media = daily_report_service.record_media(
             media_id=media_id,
@@ -386,12 +709,39 @@ async def upload_submission_media(
             media_type=media_type,
             file_name=file.filename or media_id,
             content_type=content_type,
-            size_bytes=len(file_bytes),
+            size_bytes=size_bytes,
             storage_key=storage_key,
         )
-    except Exception:
+    except Exception as exc:
         await delete_storage_key(storage_key)
+        log_event(
+            logger,
+            logging.ERROR,
+            "daily_report_upload_finalization_failed",
+            project_id=submission["project_id"],
+            submission_id=submission_id,
+            media_id=media_id,
+            error_category=type(exc).__name__,
+        )
+        _best_effort_project_failure_alert(
+            project_id=submission["project_id"],
+            report_date=submission["report_date"],
+            failure_type="UPLOAD_FINALIZATION_FAILURE",
+            title="บันทึกหลักฐานรายงานไม่สำเร็จ",
+            submission_id=submission_id,
+            discriminator=media_id,
+        )
         raise
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_report_upload_completed",
+        project_id=submission["project_id"],
+        submission_id=submission_id,
+        media_id=media_id,
+        size_bytes=size_bytes,
+        status="SUCCESS",
+    )
     return StandardResponse(data=media)
 
 
@@ -536,7 +886,7 @@ async def publish_daily_report(
         actor_id=_actor_id(user),
         actor_role=user.role,
     )
-    await deliver_published_report(published)
+    delivery_status = await deliver_published_report(published)
     await asyncio.gather(
         *[
             notify_subcontractor_submission(
@@ -545,6 +895,15 @@ async def publish_daily_report(
             )
             for submission_id in published.get("source_submission_ids") or []
         ]
+    )
+    log_event(
+        logger,
+        logging.INFO if delivery_status == "SENT" else logging.ERROR,
+        "daily_report_publish_delivery_completed",
+        project_id=published["project_id"],
+        report_id=report_id,
+        version=published.get("published_version"),
+        status=delivery_status,
     )
     return StandardResponse(data=daily_report_service.get_report(report_id))
 
@@ -618,6 +977,117 @@ async def update_daily_report_project_settings(
         data=daily_report_service.update_project_settings(
             project_id=project_id,
             updates=request.model_dump(exclude_unset=True),
+            actor_id=_actor_id(user),
+        )
+    )
+
+
+@router.get(
+    "/projects/{project_id}/no-work-days",
+    response_model=StandardResponse[list[DailyReportNoWorkDayItem]],
+)
+async def list_daily_report_no_work_days(
+    project_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_staff(user)
+    await _project(db, project_id)
+    _assert_staff_project_access(user, project_id)
+    return StandardResponse(data=daily_report_service.list_no_work_days(project_id=project_id))
+
+
+@router.post(
+    "/projects/{project_id}/no-work-days",
+    response_model=StandardResponse[DailyReportNoWorkDayItem],
+)
+async def set_daily_report_no_work_day(
+    project_id: str,
+    request: DailyReportNoWorkDayCreate,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_staff(user)
+    await _project(db, project_id)
+    _assert_staff_project_access(user, project_id)
+    return StandardResponse(
+        data=daily_report_service.set_no_work_day(
+            project_id=project_id,
+            report_date=request.report_date,
+            reason=request.reason,
+            actor_id=_actor_id(user),
+            actor_role=user.role,
+        )
+    )
+
+
+@router.delete(
+    "/projects/{project_id}/no-work-days/{report_date}",
+    response_model=StandardResponse[DailyReportNoWorkDayItem],
+)
+async def clear_daily_report_no_work_day(
+    project_id: str,
+    report_date: date,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_staff(user)
+    await _project(db, project_id)
+    _assert_staff_project_access(user, project_id)
+    return StandardResponse(
+        data=daily_report_service.clear_no_work_day(
+            project_id=project_id,
+            report_date=report_date,
+            actor_id=_actor_id(user),
+            actor_role=user.role,
+        )
+    )
+
+
+@router.get(
+    "/notifications",
+    response_model=StandardResponse[list[DailyReportStaffNotificationItem]],
+)
+async def list_daily_report_notifications(
+    unread_only: bool = Query(default=False),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _require_staff(user)
+    return StandardResponse(
+        data=daily_report_service.list_staff_notifications(
+            project_ids=_admin_project_ids(user),
+            unread_only=unread_only,
+        )
+    )
+
+
+@router.post(
+    "/notifications/{notification_id}/read",
+    response_model=StandardResponse[DailyReportStaffNotificationItem],
+)
+async def read_daily_report_notification(
+    notification_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _require_staff(user)
+    visible = next(
+        (
+            item
+            for item in daily_report_service.list_staff_notifications(
+                project_ids=_admin_project_ids(user),
+            )
+            if item.get("id") == notification_id
+        ),
+        None,
+    )
+    if visible is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Daily report notification {notification_id} not found.",
+        )
+    return StandardResponse(
+        data=daily_report_service.mark_staff_notification_read(
+            notification_id=notification_id,
             actor_id=_actor_id(user),
         )
     )
@@ -730,10 +1200,17 @@ async def ask_customer_report_question(
 ):
     report = daily_report_service.get_report(report_id, include_sources=False)
     _assert_customer_project_access(user, report["project_id"])
-    return StandardResponse(
-        data=daily_report_service.ask_report_question(
-            report_id=report_id,
-            customer_id=user.customer_id or "",
-            question=request.question,
-        )
+    question = daily_report_service.ask_report_question(
+        report_id=report_id,
+        customer_id=user.customer_id or "",
+        question=request.question,
     )
+    log_event(
+        logger,
+        logging.INFO,
+        "daily_report_customer_question_created",
+        project_id=report["project_id"],
+        report_id=report_id,
+        status="OPEN",
+    )
+    return StandardResponse(data=question)

@@ -41,6 +41,7 @@ import { signOutFirebaseClient } from '../firebaseClient';
 import { logoutLineClient } from '../liffClient';
 import logoImage from '../assets/Logo.png';
 import { isInspectionDefectOverdue } from './inspection/inspectionUtils';
+import SidebarToggleButton from './SidebarToggleButton';
 
 const MAX_BADGE_COUNT = 99;
 const INSPECTION_ACTIVE_STATUSES = new Set(['OPEN', 'IN_PROGRESS']);
@@ -191,7 +192,7 @@ function getSubcontractorRouteTitle(pathname) {
   return 'ส่งคำขอ';
 }
 
-const Sidebar = () => {
+const Sidebar = ({ collapsed = false, onToggleCollapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [authUser, setAuthUser] = useState(() => getStoredAuthUser());
@@ -205,6 +206,12 @@ const Sidebar = () => {
   const mobileCloseButtonRef = useRef(null);
   const isAdminUser = isAdminPortalUser(authUser);
   const isSubcontractor = isSubcontractorUser(authUser);
+  const isDesktopCollapsed = collapsed && !isMobileViewport;
+  const userDisplayName =
+    authUser?.display_name ||
+    authUser?.email ||
+    authUser?.subcontractor_id ||
+    (isAdminUser ? 'User' : 'ผู้ใช้งาน');
 
   useEffect(() => {
     return subscribeToAuthChanges(() => {
@@ -397,11 +404,17 @@ const Sidebar = () => {
 
       <aside
         id="primary-sidebar"
-        className={`app-sidebar${isSubcontractor ? ' subcontractor-sidebar' : ''}${mobileNavOpen ? ' mobile-open' : ''}`}
+        className={`app-sidebar${isSubcontractor ? ' subcontractor-sidebar' : ''}${mobileNavOpen ? ' mobile-open' : ''}${isDesktopCollapsed ? ' is-collapsed' : ''}`}
         aria-label={isAdminUser ? 'Admin navigation' : 'เมนูผู้รับเหมา'}
         aria-hidden={isSubcontractor && isMobileViewport ? !mobileNavOpen : undefined}
         inert={isSubcontractor && isMobileViewport && !mobileNavOpen ? '' : undefined}
       >
+        <SidebarToggleButton
+          collapsed={isDesktopCollapsed}
+          onToggle={onToggleCollapsed}
+          language={isAdminUser ? 'en' : 'th'}
+        />
+
         <div className="sidebar-brand">
           <img className="sidebar-brand-logo" src={logoImage} alt="RAYADEE" />
           <div className="sidebar-brand-subtitle">
@@ -428,6 +441,8 @@ const Sidebar = () => {
             type="button"
             className="sidebar-primary-action"
             onClick={() => navigate('/project')}
+            aria-label={isDesktopCollapsed ? 'New Project' : undefined}
+            title={isDesktopCollapsed ? 'New Project' : undefined}
           >
             <Plus size={16} strokeWidth={2.5} />
             <span>New Project</span>
@@ -443,6 +458,8 @@ const Sidebar = () => {
                 end={item.path === '/'}
                 onClick={() => setMobileNavOpen(false)}
                 className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
+                aria-label={isDesktopCollapsed ? item.name : undefined}
+                title={isDesktopCollapsed ? item.name : undefined}
               >
                 <item.icon size={18} strokeWidth={2} />
                 <span className="sidebar-nav-label">{item.name}</span>
@@ -459,6 +476,8 @@ const Sidebar = () => {
                   to={item.path}
                   onClick={() => setMobileNavOpen(false)}
                   className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
+                  aria-label={isDesktopCollapsed ? item.name : undefined}
+                  title={isDesktopCollapsed ? item.name : undefined}
                 >
                   <item.icon size={18} strokeWidth={2} />
                   <span className="sidebar-nav-label">{item.name}</span>
@@ -469,14 +488,19 @@ const Sidebar = () => {
           ) : null}
 
           <div className="sidebar-footer">
-            <div className="sidebar-user-card">
+            <div
+              className="sidebar-user-card"
+              aria-label={isDesktopCollapsed ? userDisplayName : undefined}
+              title={isDesktopCollapsed ? userDisplayName : undefined}
+              tabIndex={isDesktopCollapsed ? 0 : undefined}
+            >
               <SidebarUserAvatar user={authUser} />
               <div className="sidebar-user-meta">
                 <div className="sidebar-user-label">
                   {isAdminUser ? 'Signed in as' : 'เข้าสู่ระบบในชื่อ'}
                 </div>
                 <div className="sidebar-user-name">
-                  {authUser?.display_name || authUser?.email || authUser?.subcontractor_id || (isAdminUser ? 'User' : 'ผู้ใช้งาน')}
+                  {userDisplayName}
                 </div>
                 <div className="sidebar-user-role">
                   {isAdminUser ? authUser?.role || 'session' : 'ผู้รับเหมา'}
@@ -488,9 +512,13 @@ const Sidebar = () => {
               type="button"
               onClick={handleLogout}
               className="sidebar-logout-button"
+              aria-label={isDesktopCollapsed ? (isAdminUser ? 'Sign Out' : 'ออกจากระบบ') : undefined}
+              title={isDesktopCollapsed ? (isAdminUser ? 'Sign Out' : 'ออกจากระบบ') : undefined}
             >
               <LogOut size={16} />
-              {isAdminUser ? 'Sign Out' : 'ออกจากระบบ'}
+              <span className="sidebar-logout-label">
+                {isAdminUser ? 'Sign Out' : 'ออกจากระบบ'}
+              </span>
             </button>
           </div>
         </div>

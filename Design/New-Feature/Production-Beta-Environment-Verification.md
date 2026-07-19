@@ -223,3 +223,52 @@ Completed on 2026-07-01:
 | Accounts tested | Not recorded |
 | Flows tested | Not recorded |
 | Notes | User reported the smoke test passed after deploying both beta Cloud Run services. |
+
+## Daily Report Beta Cutover Preparation
+
+Completed on 2026-07-19. No demo business records were copied into beta, and
+no demo Cloud Run service or demo Scheduler job was changed.
+
+Deployment result:
+
+| Item | Result |
+| --- | --- |
+| Backend revision | `projects-001-be-beta-00003-mnz`, 100% traffic |
+| Frontend revision | `projects-001-fe-beta-00004-2zn`, 100% traffic |
+| Backend health | HTTP 200, `{"status":"ok"}` |
+| Protected API without session | HTTP 401 |
+| Frontend root and SPA routes | HTTP 200 |
+| Recent beta Cloud Run errors after deployment | None found |
+| Frontend production dependency audit | 0 vulnerabilities |
+
+The beta backend was verified to use:
+
+- Cloud SQL `project001-489710:asia-southeast1:project-001-beta`
+- Firestore `prod-beta`
+- Identity Platform tenant `beta-company-001-bswmk`
+- `kyc_id_cards-beta`
+- `project001-489710-work-inspection-beta`
+- `project001-489710-daily-reports-beta`
+- all subcontractor and customer LINE secret references
+- Phase 8 rate limits and privacy-safe logging
+
+Beta-only Scheduler jobs were created without modifying the demo jobs:
+
+| Job | Schedule | Test result |
+| --- | --- | --- |
+| `daily-report-cycle-creation-scan-beta` | Every 15 minutes | HTTP 200 |
+| `daily-report-due-action-scan-beta` | Every 5 minutes | HTTP 200 |
+
+Remaining LINE console cutover:
+
+- Set the shared subcontractor and customer LIFF Endpoint URLs to
+  `https://projects-001-fe-beta-678310400174.asia-southeast1.run.app/`.
+- Set the LINE Login callback URL to
+  `https://projects-001-fe-beta-678310400174.asia-southeast1.run.app/auth/line/callback`.
+- Set the customer Messaging API webhook URL to
+  `https://projects-001-be-beta-678310400174.asia-southeast1.run.app/api/v1/daily-reports/line/customer/webhook`.
+- Run LINE webhook Verify and repeat the beta LINE end-to-end flow after the
+  shared LINE applications are cut over.
+
+The LINE Developers browser session was not signed in during automation, so
+these three console settings were not changed.

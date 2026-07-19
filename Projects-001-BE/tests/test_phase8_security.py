@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import unittest
+from types import SimpleNamespace
+
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+
+from app.api.v1.daily_reports import (
+    _inspect_upload_with_limit,
+    _media_type_and_limit,
+    _validate_media_signature,
+)
+from app.core.rate_limit import FixedWindowRateLimiter, daily_report_rate_limit_rules
+from app.core.rate_limit import RateLimitMiddleware, RateLimitRule
+from app.core.observability import JsonLogFormatter
+
+
+class FakeUpload:
+    def __init__(self, chunks: list[bytes]):
+        self._chunks = list(chunks)
+        self.seek_position = None
+
+    async def read(self, _size: int) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b""
+
+    async def seek(self, position: int) -> None:
+        self.seek_position = position
+
+
+class Phase8SecurityTests(unittest.TestCase):
+    def test_structured_formatter_drops_non_allowlisted_private_fields(self):
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="safe event",
+            args=(),
+            exc_info=None,
+        )
+        record.event = "safe_event"
+        record.line_access_token = "must-not-appear"
+        rendered = JsonLogFormatter().format(record)
+        self.assertIn("safe_event", rendered)
+        self.assertNotIn("must-not-appear", rendered)
+        self.assertNotIn("line_access_token", rendered)
+
+    def test_fixed_window_rate_limit_rejects_after_limit(self):
+        limiter = FixedWindowRateLimiter()
+        first = limiter.consume(
+            rule_name="authentication",
+            client_key="ip:test",
+            limit=2,
+            now=120.0,
+        )
+        second = limiter.consume(
+            rule_name="authentication",
+            client_key="ip:test",
+            limit=2,
+            now=121.0,
+        )
+        third = limiter.consume(
+            rule_name="authentication",
+            client_key="ip:test",
+            limit=2,
+            now=122.0,
+        )
+        next_window = limiter.consume(
+            rule_name="authentication",
+            client_key="ip:test",
+            limit=2,
+            now=180.0,
+        )
+
+        self.assertTrue(first.allowed)
+        self.assertTrue(second.allowed)
+        self.assertFalse(third.allowed)
+        self.assertEqual(third.remaining, 0)
+        self.assertTrue(next_window.allowed)
+
+    def test_daily_report_rules_cover_required_high_risk_endpoints(self):
+        settings = SimpleNamespace(
+            rate_limit_auth_per_minute=20,
+            rate_limit_upload_per_minute=30,
+            rate_limit_question_per_minute=10,
+            rate_limit_webhook_per_minute=180,
+        )
+        rules = {rule.name: rule for rule in daily_report_rate_limit_rules(settings)}
+
+        self.assertTrue(
+            rules["authentication"].path_pattern.fullmatch(
+                "/api/v1/auth/line-login"
+            )
+        )
+        self.assertTrue(
+            rules["daily_report_upload"].path_pattern.fullmatch(
+                "/api/v1/daily-reports/me/submissions/submission-1/media"
+            )
+        )
+        self.assertTrue(
+            rules["daily_report_question"].path_pattern.fullmatch(
+                "/api/v1/daily-reports/customer/reports/report-1/questions"
+            )
+        )
+        self.assertTrue(
+            rules["line_customer_webhook"].path_pattern.fullmatch(
+                "/api/v1/daily-reports/line/customer/webhook"
+            )
+        )
+
+    def test_rate_limit_middleware_returns_retry_headers(self):
+        app = FastAPI()
+        app.add_middleware(
+            RateLimitMiddleware,
+            enabled=True,
+            rules=[
+                RateLimitRule.create(
+                    name="test",
+                    method="POST",
+                    path_pattern=r"/limited",
+                    requests_per_minute=2,
+                )
+            ],
+        )
+
+        @app.post("/limited")
+        async def limited():
+            return {"ok": True}
+
+        with TestClient(app) as client:
+            self.assertEqual(client.post("/limited").status_code, 200)
+            second = client.post("/limited")
+            rejected = client.post("/limited")
+
+        self.assertEqual(second.headers["X-RateLimit-Remaining"], "0")
+        self.assertEqual(rejected.status_code, 429)
+        self.assertIn("Retry-After", rejected.headers)
+
+    def test_upload_reader_rejects_oversized_body_before_full_read(self):
+        upload = FakeUpload([b"a" * 6, b"b" * 6])
+        with self.assertRaises(HTTPException) as context:
+            asyncio.run(_inspect_upload_with_limit(upload, 10))
+        self.assertEqual(context.exception.status_code, 413)
+
+    def test_upload_inspection_rewinds_without_buffering_complete_file(self):
+        upload = FakeUpload([b"\xff\xd8\xffabc", b"def"])
+        size_bytes, prefix = asyncio.run(_inspect_upload_with_limit(upload, 20))
+        self.assertEqual(size_bytes, 9)
+        self.assertEqual(prefix, b"\xff\xd8\xffabcdef")
+        self.assertEqual(upload.seek_position, 0)
+
+    def test_media_validation_accepts_jpeg_and_rejects_spoofed_png(self):
+        media_type, _max_bytes = _media_type_and_limit("image/jpeg")
+        self.assertEqual(media_type, "PHOTO")
+        _validate_media_signature(b"\xff\xd8\xff\xdbvalid", "image/jpeg")
+        with self.assertRaises(HTTPException) as context:
+            _validate_media_signature(b"not-a-png", "image/png")
+        self.assertEqual(context.exception.status_code, 400)
+
+
+if __name__ == "__main__":
+    unittest.main()

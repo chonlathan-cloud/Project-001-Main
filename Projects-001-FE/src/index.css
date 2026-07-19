@@ -27,7 +27,9 @@
   --shadow-card: 0 1px 4px rgba(47, 46, 44, 0.03);
   --radius-md: 8px;
   --radius-lg: 12px;
-  --sidebar-width: 260px;
+  --sidebar-expanded-width: 260px;
+  --sidebar-collapsed-width: 76px;
+  --sidebar-width: var(--sidebar-expanded-width);
 }
 
 * {
@@ -73,6 +75,7 @@ body {
   padding: 28px 36px 36px;
   overflow-y: auto;
   background: var(--bg-primary);
+  transition: margin-left 200ms ease;
 }
 
 .workspace-topbar {
@@ -380,6 +383,11 @@ body {
   inset: 0 auto 0 0;
   z-index: 100;
   box-shadow: none;
+  transition: width 200ms ease;
+}
+
+.sidebar-toggle-button {
+  display: none;
 }
 
 .sidebar-brand {
@@ -609,6 +617,135 @@ body {
   font-family: inherit;
   font-size: 12px;
   font-weight: 800;
+}
+
+@media (min-width: 769px) {
+  .main-content.sidebar-collapsed {
+    margin-left: var(--sidebar-collapsed-width);
+  }
+
+  .sidebar-toggle-button {
+    position: absolute;
+    z-index: 3;
+    top: 23px;
+    right: -16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    background: #ffffff;
+    color: var(--primary);
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(47, 46, 44, 0.12);
+    transition:
+      color 160ms ease,
+      background-color 160ms ease,
+      border-color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .sidebar-toggle-button:hover {
+    border-color: rgba(79, 111, 100, 0.32);
+    background: #f4f7f5;
+    color: var(--primary-hover);
+    transform: scale(1.04);
+  }
+
+  .sidebar-toggle-button:focus-visible {
+    outline: 3px solid rgba(79, 111, 100, 0.18);
+    outline-offset: 2px;
+  }
+
+  .app-sidebar.is-collapsed {
+    width: var(--sidebar-collapsed-width);
+  }
+
+  .app-sidebar.is-collapsed .sidebar-brand {
+    align-items: center;
+    min-height: 67px;
+    padding: 24px 10px 18px;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-brand-logo {
+    width: 52px;
+    max-height: 24px;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-brand-subtitle,
+  .app-sidebar.is-collapsed .sidebar-primary-action span,
+  .app-sidebar.is-collapsed .sidebar-nav-label,
+  .app-sidebar.is-collapsed .sidebar-user-meta,
+  .app-sidebar.is-collapsed .sidebar-logout-label {
+    display: none;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-primary-action {
+    width: 44px;
+    min-width: 44px;
+    margin: 0 auto 16px;
+    padding: 0;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-inner {
+    padding: 0 10px 12px;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-nav-link {
+    position: relative;
+    justify-content: center;
+    gap: 0;
+    min-height: 44px;
+    padding: 0;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-nav-link > svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-nav-count-badge {
+    position: absolute;
+    top: 2px;
+    right: 1px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    border: 2px solid #ffffff;
+    font-size: 9px;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-system {
+    padding-top: 10px;
+    margin-top: 10px;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-footer {
+    align-items: center;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-user-card {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    width: 44px;
+    padding: 4px;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-logout-button {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar,
+  .main-content,
+  .sidebar-toggle-button {
+    transition: none;
+  }
 }
 
 .subcontractor-mobile-header,

@@ -1790,6 +1790,18 @@ export async function getDailyReportQueue(status = '') {
   return Array.isArray(data) ? data : [];
 }
 
+export async function getDailyReportNotifications({ unreadOnly = false } = {}) {
+  const query = unreadOnly ? '?unread_only=true' : '';
+  const data = await apiRequest(`/api/v1/daily-reports/notifications${query}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function markDailyReportNotificationRead(notificationId) {
+  return apiRequest(`/api/v1/daily-reports/notifications/${notificationId}/read`, {
+    method: 'POST',
+  });
+}
+
 export async function getDailyReportProjectSettings(projectId) {
   return apiRequest(`/api/v1/daily-reports/projects/${projectId}/settings`);
 }

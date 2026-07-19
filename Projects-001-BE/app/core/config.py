@@ -23,7 +23,29 @@ class Settings(BaseSettings):
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
     app_debug: bool = Field(default=True, alias="APP_DEBUG")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="CORS_ORIGINS")
+    rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
+    rate_limit_auth_per_minute: int = Field(
+        default=20,
+        ge=1,
+        alias="RATE_LIMIT_AUTH_PER_MINUTE",
+    )
+    rate_limit_upload_per_minute: int = Field(
+        default=30,
+        ge=1,
+        alias="RATE_LIMIT_UPLOAD_PER_MINUTE",
+    )
+    rate_limit_question_per_minute: int = Field(
+        default=10,
+        ge=1,
+        alias="RATE_LIMIT_QUESTION_PER_MINUTE",
+    )
+    rate_limit_webhook_per_minute: int = Field(
+        default=180,
+        ge=1,
+        alias="RATE_LIMIT_WEBHOOK_PER_MINUTE",
+    )
 
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/project-001",
@@ -118,6 +140,14 @@ class Settings(BaseSettings):
     daily_report_internal_task_secret: str | None = Field(
         default=None,
         alias="DAILY_REPORT_INTERNAL_TASK_SECRET",
+    )
+    daily_report_scheduler_service_account: str | None = Field(
+        default=None,
+        alias="DAILY_REPORT_SCHEDULER_SERVICE_ACCOUNT",
+    )
+    daily_report_scheduler_audience: str | None = Field(
+        default=None,
+        alias="DAILY_REPORT_SCHEDULER_AUDIENCE",
     )
     signed_url_expires_minutes: int = Field(default=15, alias="SIGNED_URL_EXPIRES_MINUTES")
 

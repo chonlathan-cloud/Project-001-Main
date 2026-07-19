@@ -83,11 +83,21 @@ export function resolveLineEntryPortal(currentLocation = window.location) {
   const currentPath = normalizePath(currentLocation.pathname);
   const liffStatePath = normalizePath(searchParams.get('liff.state'));
   const candidatePath = liffStatePath || currentPath;
+  const hasLiffState = searchParams.has('liff.state');
 
   if (candidatePath.startsWith('/project-reports')) {
     return 'customer';
   }
   if (candidatePath.startsWith('/daily-reports/me')) {
+    return 'subcontractor';
+  }
+  if (
+    hasLiffState &&
+    (candidatePath === '/input' ||
+      candidatePath.startsWith('/inspection/tasks') ||
+      candidatePath.startsWith('/profile/me') ||
+      candidatePath === '/login')
+  ) {
     return 'subcontractor';
   }
   const callbackPortal = resolvePortalFromClientId(searchParams.get('liffClientId'));
@@ -114,6 +124,18 @@ export function resolveLineEntryTarget(currentLocation = window.location) {
   }
   if (candidatePath.startsWith('/daily-reports/me')) {
     return '/daily-reports/me';
+  }
+  if (candidatePath === '/input') {
+    return '/input';
+  }
+  if (candidatePath.startsWith('/inspection/tasks')) {
+    return '/inspection/tasks';
+  }
+  if (candidatePath.startsWith('/profile/me')) {
+    return '/profile/me';
+  }
+  if (candidatePath === '/login') {
+    return '/login';
   }
 
   const callbackPortal = resolvePortalFromClientId(searchParams.get('liffClientId'));

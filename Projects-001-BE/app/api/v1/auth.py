@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from app.api.deps.auth import AuthenticatedUser, get_current_user_allow_pending, role_permissions
 from app.core.config import get_settings
 from app.core.google_clients import get_firebase_auth
+from app.core.observability import log_event
 from app.core.security import issue_session_token
 from app.schemas.profile_schema import (
     AdminLoginRequest,
@@ -99,10 +100,11 @@ def _create_firebase_custom_token(uid: str, claims: dict | None = None) -> str |
         # Local ADC user credentials can verify ID tokens but cannot always sign
         # Firebase custom tokens. Keep the app login flow working with the
         # backend session token and surface a warning for production hardening.
-        logger.warning(
-            "firebase custom token generation skipped for uid=%s: %s",
-            uid,
-            exc,
+        log_event(
+            logger,
+            logging.WARNING,
+            "firebase_custom_token_generation_skipped",
+            error_category=type(exc).__name__,
         )
         return None
 
@@ -348,9 +350,15 @@ async def line_login(request: LineLoginRequest):
     except HTTPException:
         raise
     except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "line_login_failed",
+            error_category=type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"LINE login failed: {exc}",
+            detail="LINE login could not be completed.",
         ) from exc
 
 
@@ -418,9 +426,15 @@ async def sign_up(
     except HTTPException:
         raise
     except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "line_signup_failed",
+            error_category=type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sign-up failed: {exc}",
+            detail="Sign-up could not be completed.",
         ) from exc
 
 
@@ -496,9 +510,15 @@ async def submit_access_request(
     except HTTPException:
         raise
     except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "access_request_failed",
+            error_category=type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Access request failed: {exc}",
+            detail="Access request could not be completed.",
         ) from exc
 
 
@@ -622,9 +642,15 @@ async def admin_login(request: AdminLoginRequest):
     except HTTPException:
         raise
     except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "admin_login_failed",
+            error_category=type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Admin login failed: {exc}",
+            detail="Admin login could not be completed.",
         ) from exc
 
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowUpRight,
+  BellRing,
   CalendarDays,
   Camera,
   CheckCircle2,
@@ -22,10 +23,12 @@ import {
   getDailyReportMediaUrl,
   getDailyReportLineDestination,
   getDailyReportLineDestinationCandidates,
+  getDailyReportNotifications,
   getDailyReportProjectSettings,
   getDailyReportProjects,
   getDailyReportQueue,
   publishDailyReport,
+  markDailyReportNotificationRead,
   requestDailyReportChanges,
   retryDailyReportDelivery,
   startDailyReportCorrection,
@@ -39,6 +42,16 @@ import {
   DailyReportStatusBadge,
 } from './dailyReportUi';
 import { formatReportDate } from './dailyReportUtils';
+
+const WORKING_DAY_OPTIONS = [
+  { value: 1, label: 'จ.' },
+  { value: 2, label: 'อ.' },
+  { value: 3, label: 'พ.' },
+  { value: 4, label: 'พฤ.' },
+  { value: 5, label: 'ศ.' },
+  { value: 6, label: 'ส.' },
+  { value: 7, label: 'อา.' },
+];
 
 function draftFromReport(report) {
   return {
@@ -69,6 +82,8 @@ export default function DailyReportReviewWorkspace() {
   const [projectSettings, setProjectSettings] = useState(null);
   const [lineDestination, setLineDestination] = useState(null);
   const [lineDestinationCandidates, setLineDestinationCandidates] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
 
   const editable = ['PENDING_REVIEW', 'CHANGES_REQUESTED', 'CORRECTION_DRAFT'].includes(report?.status);
   const issueCount = useMemo(() => draft.issues.filter((issue) => issue?.title).length, [draft.issues]);
@@ -91,9 +106,25 @@ export default function DailyReportReviewWorkspace() {
     }
   }, [statusFilter]);
 
+  const loadNotifications = useCallback(async () => {
+    setNotificationsLoading(true);
+    try {
+      const items = await getDailyReportNotifications({ unreadOnly: true });
+      setNotifications(items);
+    } catch (error) {
+      setNotice({
+        tone: 'warning',
+        message: error.message || 'Unable to load Daily Report notifications.',
+      });
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadQueue({ preserveSelection: false });
-  }, [loadQueue]);
+    loadNotifications();
+  }, [loadNotifications, loadQueue]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -118,11 +149,29 @@ export default function DailyReportReviewWorkspace() {
   }, [selectedId]);
 
   const refreshCurrent = async () => {
-    await loadQueue();
+    await Promise.all([loadQueue(), loadNotifications()]);
     if (selectedId) {
       const item = await getDailyReport(selectedId);
       setReport(item);
       setDraft(draftFromReport(item));
+    }
+  };
+
+  const openNotification = async (item) => {
+    setBusy(`notification-${item.id}`);
+    try {
+      if (item.report_id) {
+        setSelectedId(item.report_id);
+      }
+      await markDailyReportNotificationRead(item.id);
+      setNotifications((current) => current.filter((notification) => notification.id !== item.id));
+    } catch (error) {
+      setNotice({
+        tone: 'danger',
+        message: error.message || 'Unable to update this notification.',
+      });
+    } finally {
+      setBusy('');
     }
   };
 
@@ -290,7 +339,12 @@ export default function DailyReportReviewWorkspace() {
         updateDailyReportProjectSettings(settingsProjectId, {
           enabled: projectSettings.enabled,
           timezone: projectSettings.timezone,
+          working_days: projectSettings.working_days,
+          cycle_creation_time: projectSettings.cycle_creation_time,
+          first_reminder_time: projectSettings.first_reminder_time,
           submission_due_time: projectSettings.submission_due_time,
+          overdue_grace_minutes: projectSettings.overdue_grace_minutes,
+          draft_time: projectSettings.draft_time,
           review_target_time: projectSettings.review_target_time,
           reminder_minutes_before: projectSettings.reminder_minutes_before,
         }),
@@ -333,6 +387,56 @@ export default function DailyReportReviewWorkspace() {
 
       <DailyReportNotice tone={notice?.tone}>{notice?.message}</DailyReportNotice>
 
+      <section className="dr-card dr-staff-alerts" aria-labelledby="daily-report-alerts-title">
+        <header>
+          <div className="dr-staff-alerts-title">
+            <BellRing />
+            <div>
+              <span className="dr-eyebrow">ADMIN / OWNER ALERTS</span>
+              <h3 id="daily-report-alerts-title">รายการที่ต้องตรวจสอบ</h3>
+            </div>
+          </div>
+          <span className="dr-alert-count">{notifications.length} รายการใหม่</span>
+        </header>
+        {notificationsLoading ? (
+          <div className="dr-loading compact">
+            <LoaderCircle className="spin" /> กำลังโหลดการแจ้งเตือน…
+          </div>
+        ) : null}
+        {!notificationsLoading && notifications.length === 0 ? (
+          <div className="dr-staff-alerts-empty">
+            <CheckCircle2 />
+            <span>ยังไม่มีรายการใหม่ที่ต้องดำเนินการ</span>
+          </div>
+        ) : null}
+        {!notificationsLoading && notifications.length > 0 ? (
+          <div className="dr-staff-alert-list">
+            {notifications.map((item) => (
+              <article key={item.id}>
+                <div>
+                  <strong>{item.title}</strong>
+                  <p>{item.message}</p>
+                  <span><CalendarDays /> {formatReportDate(item.report_date)}</span>
+                </div>
+                <button
+                  type="button"
+                  className="dr-button secondary"
+                  onClick={() => openNotification(item)}
+                  disabled={busy === `notification-${item.id}`}
+                >
+                  {busy === `notification-${item.id}` ? (
+                    <LoaderCircle className="spin" />
+                  ) : (
+                    <CheckCircle2 />
+                  )}
+                  {item.report_id ? 'เปิดและรับทราบ' : 'รับทราบ'}
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
       {showSettings ? (
         <section className="dr-card dr-settings-panel">
           <header>
@@ -361,11 +465,61 @@ export default function DailyReportReviewWorkspace() {
               />
             </label>
             <label className="dr-field">
+              <span>สร้างรอบรายงาน</span>
+              <input
+                type="time"
+                value={projectSettings?.cycle_creation_time || '06:00'}
+                onChange={(event) => setProjectSettings((current) => ({
+                  ...current,
+                  cycle_creation_time: event.target.value,
+                }))}
+                disabled={!projectSettings}
+              />
+            </label>
+            <label className="dr-field">
+              <span>แจ้งเตือนครั้งแรก</span>
+              <input
+                type="time"
+                value={projectSettings?.first_reminder_time || '16:00'}
+                onChange={(event) => setProjectSettings((current) => ({
+                  ...current,
+                  first_reminder_time: event.target.value,
+                }))}
+                disabled={!projectSettings}
+              />
+            </label>
+            <label className="dr-field">
               <span>Subcontractor deadline</span>
               <input
                 type="time"
                 value={projectSettings?.submission_due_time || '17:00'}
                 onChange={(event) => setProjectSettings((current) => ({ ...current, submission_due_time: event.target.value }))}
+                disabled={!projectSettings}
+              />
+            </label>
+            <label className="dr-field">
+              <span>แจ้งว่าส่งช้า หลังครบกำหนด (นาที)</span>
+              <input
+                type="number"
+                min="0"
+                max="1440"
+                value={projectSettings?.overdue_grace_minutes ?? 15}
+                onChange={(event) => setProjectSettings((current) => ({
+                  ...current,
+                  overdue_grace_minutes: Number(event.target.value),
+                }))}
+                disabled={!projectSettings}
+              />
+            </label>
+            <label className="dr-field">
+              <span>สร้างร่างสรุป</span>
+              <input
+                type="time"
+                value={projectSettings?.draft_time || '18:00'}
+                onChange={(event) => setProjectSettings((current) => ({
+                  ...current,
+                  draft_time: event.target.value,
+                }))}
                 disabled={!projectSettings}
               />
             </label>
@@ -381,7 +535,7 @@ export default function DailyReportReviewWorkspace() {
             <label className="dr-field">
               <span>Reminder minutes before deadline</span>
               <input
-                value={(projectSettings?.reminder_minutes_before || [120, 30]).join(', ')}
+                value={(projectSettings?.reminder_minutes_before || [60]).join(', ')}
                 onChange={(event) => setProjectSettings((current) => ({
                   ...current,
                   reminder_minutes_before: event.target.value
@@ -392,6 +546,32 @@ export default function DailyReportReviewWorkspace() {
                 disabled={!projectSettings}
               />
             </label>
+            <fieldset className="dr-field dr-working-days">
+              <legend>วันทำงานของโครงการ</legend>
+              <div>
+                {WORKING_DAY_OPTIONS.map((day) => {
+                  const selectedDays = projectSettings?.working_days || [1, 2, 3, 4, 5, 6];
+                  const checked = selectedDays.includes(day.value);
+                  return (
+                    <label key={day.value} className={checked ? 'selected' : ''}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setProjectSettings((current) => {
+                          const currentDays = current?.working_days || [1, 2, 3, 4, 5, 6];
+                          const nextDays = checked
+                            ? currentDays.filter((value) => value !== day.value)
+                            : [...currentDays, day.value].sort((left, right) => left - right);
+                          return { ...current, working_days: nextDays };
+                        })}
+                        disabled={!projectSettings}
+                      />
+                      <span>{day.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
             <label className="dr-settings-toggle">
               <input
                 type="checkbox"

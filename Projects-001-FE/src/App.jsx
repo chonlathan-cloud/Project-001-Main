@@ -17,6 +17,17 @@ import {
 import { getCurrentProfile } from './api'
 import './index.css'
 
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'rayadee_sidebar_collapsed'
+
+function getStoredSidebarCollapsed() {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
 const DashboardPage = lazy(() => import('./DashboardPage'))
 const ProjectPage = lazy(() => import('./ProjectPage'))
 const ProjectDetailPage = lazy(() => import('./ProjectDetailPage'))
@@ -45,7 +56,20 @@ function ProtectedLayout({
   const location = useLocation()
   const [authUser, setAuthUser] = useState(() => getStoredAuthUser())
   const [sessionToken, setSessionToken] = useState(() => getStoredSessionToken())
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(getStoredSidebarCollapsed)
   const profileSyncTokenRef = useRef('')
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current
+      try {
+        window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next))
+      } catch {
+        // The layout still works when browser storage is unavailable.
+      }
+      return next
+    })
+  }
 
   useEffect(() => (
     subscribeToAuthChanges(() => {
@@ -125,8 +149,11 @@ function ProtectedLayout({
 
   return (
     <>
-      <Sidebar />
-      <main className="main-content">
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
+      />
+      <main className={`main-content${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
         <WorkspaceTopbar authUser={authUser} pathname={location.pathname} />
         <Suspense fallback={<Loading />}>
           <Outlet />

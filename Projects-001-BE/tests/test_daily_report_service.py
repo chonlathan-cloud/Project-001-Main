@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
-from datetime import date
+from datetime import UTC, date, datetime
 from itertools import count
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.services import daily_report_service
+from app.services import daily_report_notification_service
 
 
 class FakeSnapshot:
@@ -33,6 +36,13 @@ class FakeDocument:
             current.update(deepcopy(payload))
             self._store[self.id] = current
             return
+        self._store[self.id] = deepcopy(payload)
+
+    def create(self, payload: dict):
+        if self.id in self._store:
+            from google.api_core.exceptions import AlreadyExists
+
+            raise AlreadyExists("Document already exists.")
         self._store[self.id] = deepcopy(payload)
 
     def delete(self):
@@ -208,6 +218,246 @@ class DailyReportServiceTests(unittest.TestCase):
                 principal_id="customer-1",
             )
         )
+
+    def test_global_staff_alert_is_visible_to_every_admin_scope(self):
+        project_alert = daily_report_service.ensure_staff_notification(
+            project_id="project-1",
+            report_date="2026-07-20",
+            notification_type="UPLOAD_FAILURE",
+            title="Project failure",
+            message="Project-scoped failure",
+        )
+        global_alert = daily_report_service.ensure_global_staff_notification(
+            notification_type="SCHEDULER_FAILURE",
+            title="Global failure",
+            message="Global system failure",
+            discriminator="2026072010",
+        )
+
+        project_one_items = daily_report_service.list_staff_notifications(
+            project_ids={"project-1"}
+        )
+        project_two_items = daily_report_service.list_staff_notifications(
+            project_ids={"project-2"}
+        )
+
+        self.assertIn(project_alert["id"], {item["id"] for item in project_one_items})
+        self.assertIn(global_alert["id"], {item["id"] for item in project_one_items})
+        self.assertNotIn(project_alert["id"], {item["id"] for item in project_two_items})
+        self.assertIn(global_alert["id"], {item["id"] for item in project_two_items})
+        self.assertEqual(global_alert["scope"], "GLOBAL")
+
+    def test_cycle_snapshot_and_no_work_day_are_stable(self):
+        defaults = daily_report_service.get_project_settings("project-1")
+        self.assertEqual(defaults["timezone"], "Asia/Bangkok")
+        self.assertEqual(defaults["working_days"], [1, 2, 3, 4, 5, 6])
+        self.assertEqual(defaults["cycle_creation_time"], "06:00")
+        self.assertEqual(defaults["first_reminder_time"], "16:00")
+        self.assertEqual(defaults["overdue_grace_minutes"], 15)
+        self.assertEqual(defaults["draft_time"], "18:00")
+
+        first = daily_report_service.ensure_daily_cycle(
+            project_id="project-1",
+            project_name="Riverside Residence",
+            report_date="2026-07-20",
+            submission_due_at=datetime(2026, 7, 20, 10, 0, tzinfo=UTC),
+            review_target_at=datetime(2026, 7, 20, 12, 0, tzinfo=UTC),
+            expected_subcontractor_ids=["sub-1"],
+        )
+        second = daily_report_service.ensure_daily_cycle(
+            project_id="project-1",
+            project_name="Changed Project Name",
+            report_date="2026-07-20",
+            submission_due_at=datetime(2026, 7, 20, 11, 0, tzinfo=UTC),
+            review_target_at=datetime(2026, 7, 20, 13, 0, tzinfo=UTC),
+            expected_subcontractor_ids=["sub-2"],
+        )
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(second["expected_subcontractor_ids"], ["sub-1"])
+        self.assertEqual(second["submission_due_at"], datetime(2026, 7, 20, 10, 0, tzinfo=UTC))
+
+        no_work = daily_report_service.set_no_work_day(
+            project_id="project-1",
+            report_date="2026-07-20",
+            reason="วันหยุดโครงการ",
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+        self.assertEqual(no_work["status"], "ACTIVE")
+        self.assertTrue(
+            daily_report_service.is_no_work_day(
+                project_id="project-1",
+                report_date="2026-07-20",
+            )
+        )
+        cycle = daily_report_service.get_daily_cycle(
+            project_id="project-1",
+            report_date="2026-07-20",
+        )
+        self.assertEqual(cycle["status"], "NO_WORK")
+
+    def test_due_scanner_sends_each_reminder_once_and_creates_overdue_alert(self):
+        daily_report_service.update_project_settings(
+            project_id="project-1",
+            updates={"expected_subcontractor_ids": ["sub-1"]},
+            actor_id="owner@example.com",
+        )
+        projects = [{"id": "project-1", "name": "Riverside Residence", "status": "ACTIVE"}]
+        profile = SimpleNamespace(is_active=True, line_uid="U123")
+        runtime_settings = SimpleNamespace(frontend_base_url="https://example.test")
+
+        with (
+            patch.object(
+                daily_report_notification_service,
+                "get_settings",
+                return_value=runtime_settings,
+            ),
+            patch.object(
+                daily_report_notification_service,
+                "get_subcontractor",
+                return_value=profile,
+            ),
+            patch.object(
+                daily_report_notification_service,
+                "_send_line_text",
+                new=AsyncMock(),
+            ) as send_line,
+        ):
+            first = asyncio.run(
+                daily_report_notification_service.run_due_action_scan(
+                    projects=projects,
+                    fallback_project_subcontractors={},
+                    now=datetime(2026, 7, 20, 9, 0, tzinfo=UTC),
+                )
+            )
+            repeated = asyncio.run(
+                daily_report_notification_service.run_due_action_scan(
+                    projects=projects,
+                    fallback_project_subcontractors={},
+                    now=datetime(2026, 7, 20, 9, 1, tzinfo=UTC),
+                )
+            )
+            overdue = asyncio.run(
+                daily_report_notification_service.run_due_action_scan(
+                    projects=projects,
+                    fallback_project_subcontractors={},
+                    now=datetime(2026, 7, 20, 10, 15, tzinfo=UTC),
+                )
+            )
+
+        self.assertEqual(first["notifications_sent"], 1)
+        self.assertEqual(repeated["notifications_sent"], 0)
+        self.assertEqual(repeated["notifications_skipped"], 1)
+        self.assertEqual(overdue["notifications_sent"], 1)
+        self.assertEqual(overdue["overdue_alerts_created"], 1)
+        self.assertEqual(send_line.await_count, 2)
+        cycle = daily_report_service.get_daily_cycle(
+            project_id="project-1",
+            report_date="2026-07-20",
+        )
+        self.assertEqual(cycle["status"], "OVERDUE")
+        staff_alerts = daily_report_service.list_staff_notifications(project_ids={"project-1"})
+        self.assertEqual(staff_alerts[0]["notification_type"], "MISSING_SUBMISSIONS")
+
+    def test_due_scanner_skips_no_work_dates(self):
+        daily_report_service.update_project_settings(
+            project_id="project-1",
+            updates={"enabled": True},
+            actor_id="owner@example.com",
+        )
+        daily_report_service.set_no_work_day(
+            project_id="project-1",
+            report_date="2026-07-20",
+            reason="หยุดงานตามแผน",
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+        runtime_settings = SimpleNamespace(frontend_base_url="https://example.test")
+        with patch.object(
+            daily_report_notification_service,
+            "get_settings",
+            return_value=runtime_settings,
+        ):
+            result = asyncio.run(
+                daily_report_notification_service.run_due_action_scan(
+                    projects=[{"id": "project-1", "name": "Riverside Residence"}],
+                    fallback_project_subcontractors={"project-1": ["sub-1"]},
+                    now=datetime(2026, 7, 20, 9, 0, tzinfo=UTC),
+                )
+            )
+        self.assertEqual(result["cycles_ready"], 0)
+        self.assertEqual(result["projects_skipped"], 1)
+
+    def test_due_scanner_skips_unconfigured_disabled_and_completed_projects(self):
+        daily_report_service.update_project_settings(
+            project_id="disabled-project",
+            updates={"enabled": False},
+            actor_id="owner@example.com",
+        )
+        runtime_settings = SimpleNamespace(frontend_base_url="https://example.test")
+        with patch.object(
+            daily_report_notification_service,
+            "get_settings",
+            return_value=runtime_settings,
+        ):
+            result = asyncio.run(
+                daily_report_notification_service.run_due_action_scan(
+                    projects=[
+                        {"id": "unconfigured-project", "name": "Unconfigured"},
+                        {"id": "disabled-project", "name": "Disabled"},
+                        {
+                            "id": "completed-project",
+                            "name": "Completed",
+                            "status": "COMPLETED",
+                        },
+                    ],
+                    fallback_project_subcontractors={},
+                    now=datetime(2026, 7, 20, 9, 0, tzinfo=UTC),
+                )
+            )
+        self.assertEqual(result["projects_checked"], 0)
+        self.assertEqual(result["projects_skipped"], 3)
+        self.assertEqual(result["cycles_ready"], 0)
+
+    def test_draft_and_review_alerts_do_not_publish_report(self):
+        self._submitted_source()
+        daily_report_service.update_project_settings(
+            project_id="project-1",
+            updates={"expected_subcontractor_ids": ["sub-1"]},
+            actor_id="owner@example.com",
+        )
+        runtime_settings = SimpleNamespace(frontend_base_url="https://example.test")
+        projects = [{"id": "project-1", "name": "Riverside Residence"}]
+        with patch.object(
+            daily_report_notification_service,
+            "get_settings",
+            return_value=runtime_settings,
+        ):
+            draft_result = asyncio.run(
+                daily_report_notification_service.run_due_action_scan(
+                    projects=projects,
+                    fallback_project_subcontractors={},
+                    now=datetime(2026, 7, 18, 11, 0, tzinfo=UTC),
+                )
+            )
+            review_result = asyncio.run(
+                daily_report_notification_service.run_due_action_scan(
+                    projects=projects,
+                    fallback_project_subcontractors={},
+                    now=datetime(2026, 7, 18, 12, 0, tzinfo=UTC),
+                )
+            )
+
+        self.assertEqual(draft_result["draft_alerts_created"], 1)
+        self.assertEqual(review_result["review_alerts_created"], 1)
+        report = daily_report_service.list_reports(project_ids={"project-1"})[0]
+        self.assertEqual(report["status"], "PENDING_REVIEW")
+        self.assertIsNone(report["published_at"])
+        cycle = daily_report_service.get_daily_cycle(
+            project_id="project-1",
+            report_date="2026-07-18",
+        )
+        self.assertEqual(cycle["status"], "PENDING_REVIEW")
 
 
 if __name__ == "__main__":

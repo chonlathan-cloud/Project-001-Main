@@ -20,9 +20,14 @@ class DailyReportProjectSettingsItem(BaseModel):
     project_id: str
     enabled: bool = True
     timezone: str = "Asia/Bangkok"
+    working_days: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5, 6])
+    cycle_creation_time: str = "06:00"
+    first_reminder_time: str = "16:00"
     submission_due_time: str = "17:00"
+    overdue_grace_minutes: int = 15
+    draft_time: str = "18:00"
     review_target_time: str = "19:00"
-    reminder_minutes_before: list[int] = Field(default_factory=lambda: [120, 30])
+    reminder_minutes_before: list[int] = Field(default_factory=lambda: [60])
     expected_subcontractor_ids: list[str] = Field(default_factory=list)
     updated_at: datetime | None = None
     updated_by: str | None = None
@@ -31,12 +36,23 @@ class DailyReportProjectSettingsItem(BaseModel):
 class DailyReportProjectSettingsUpdate(BaseModel):
     enabled: bool | None = None
     timezone: str | None = None
+    working_days: list[int] | None = None
+    cycle_creation_time: str | None = None
+    first_reminder_time: str | None = None
     submission_due_time: str | None = None
+    overdue_grace_minutes: int | None = Field(default=None, ge=0, le=1440)
+    draft_time: str | None = None
     review_target_time: str | None = None
     reminder_minutes_before: list[int] | None = None
     expected_subcontractor_ids: list[str] | None = None
 
-    @field_validator("submission_due_time", "review_target_time")
+    @field_validator(
+        "cycle_creation_time",
+        "first_reminder_time",
+        "submission_due_time",
+        "draft_time",
+        "review_target_time",
+    )
     @classmethod
     def validate_time(cls, value: str | None) -> str | None:
         if value is None:
@@ -48,6 +64,59 @@ class DailyReportProjectSettingsUpdate(BaseModel):
         if not 0 <= hour <= 23 or not 0 <= minute <= 59:
             raise ValueError("time must use HH:MM format.")
         return f"{hour:02d}:{minute:02d}"
+
+    @field_validator("working_days")
+    @classmethod
+    def validate_working_days(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        normalized = sorted(set(value))
+        if any(day < 1 or day > 7 for day in normalized):
+            raise ValueError("working_days must contain ISO weekdays from 1 to 7.")
+        return normalized
+
+    @field_validator("reminder_minutes_before")
+    @classmethod
+    def validate_reminder_minutes(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        if any(minutes < 0 or minutes > 1440 for minutes in value):
+            raise ValueError("reminder minutes must be between 0 and 1440.")
+        return sorted(set(value), reverse=True)
+
+
+class DailyReportNoWorkDayCreate(BaseModel):
+    report_date: date
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class DailyReportNoWorkDayItem(BaseModel):
+    id: str
+    project_id: str
+    report_date: str
+    status: str = "ACTIVE"
+    reason: str | None = None
+    created_at: datetime | None = None
+    created_by: str | None = None
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class DailyReportStaffNotificationItem(BaseModel):
+    id: str
+    project_id: str
+    report_date: str
+    notification_type: str
+    audience: str = "STAFF"
+    scope: str = "PROJECT"
+    status: str
+    title: str
+    message: str
+    report_id: str | None = None
+    submission_id: str | None = None
+    missing_subcontractor_ids: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class DailyReportSubmissionCreate(BaseModel):

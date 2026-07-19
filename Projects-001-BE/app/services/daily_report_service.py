@@ -13,11 +13,13 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
+from google.api_core.exceptions import AlreadyExists
 
 from app.core.google_clients import get_firestore_client
 
 SETTINGS_COLLECTION = "daily_report_project_settings"
 CYCLES_COLLECTION = "daily_report_cycles"
+NO_WORK_DAYS_COLLECTION = "daily_report_no_work_days"
 SUBMISSIONS_COLLECTION = "daily_report_submissions"
 MEDIA_COLLECTION = "daily_report_media"
 REPORTS_COLLECTION = "daily_reports"
@@ -39,6 +41,25 @@ CONSOLIDATABLE_SUBMISSION_STATUSES = {
     "CHANGES_REQUESTED",
 }
 REVIEWABLE_REPORT_STATUSES = {"PENDING_REVIEW", "CHANGES_REQUESTED", "CORRECTION_DRAFT"}
+RECEIVED_SUBMISSION_STATUSES = {
+    "SUBMITTED",
+    "RESUBMITTED",
+    "ACCEPTED",
+    "CHANGES_REQUESTED",
+}
+DEFAULT_PROJECT_SETTINGS = {
+    "enabled": True,
+    "timezone": "Asia/Bangkok",
+    "working_days": [1, 2, 3, 4, 5, 6],
+    "cycle_creation_time": "06:00",
+    "first_reminder_time": "16:00",
+    "submission_due_time": "17:00",
+    "overdue_grace_minutes": 15,
+    "draft_time": "18:00",
+    "review_target_time": "19:00",
+    "reminder_minutes_before": [60],
+    "expected_subcontractor_ids": [],
+}
 
 
 def _client():
@@ -143,24 +164,22 @@ def get_project_settings(project_id: str) -> dict[str, Any]:
     if snapshot.exists:
         payload = _public(snapshot)
         payload.setdefault("project_id", project_id)
-        payload.setdefault("enabled", True)
-        payload.setdefault("timezone", "Asia/Bangkok")
-        payload.setdefault("submission_due_time", "17:00")
-        payload.setdefault("review_target_time", "19:00")
-        payload.setdefault("reminder_minutes_before", [120, 30])
-        payload.setdefault("expected_subcontractor_ids", [])
+        for key, value in DEFAULT_PROJECT_SETTINGS.items():
+            payload.setdefault(key, list(value) if isinstance(value, list) else value)
         return payload
     return {
         "project_id": project_id,
-        "enabled": True,
-        "timezone": "Asia/Bangkok",
-        "submission_due_time": "17:00",
-        "review_target_time": "19:00",
-        "reminder_minutes_before": [120, 30],
-        "expected_subcontractor_ids": [],
+        **{
+            key: list(value) if isinstance(value, list) else value
+            for key, value in DEFAULT_PROJECT_SETTINGS.items()
+        },
         "updated_at": None,
         "updated_by": None,
     }
+
+
+def has_project_settings(project_id: str) -> bool:
+    return _client().collection(SETTINGS_COLLECTION).document(project_id).get().exists
 
 
 def update_project_settings(
@@ -173,12 +192,25 @@ def update_project_settings(
     allowed = {
         "enabled",
         "timezone",
+        "working_days",
+        "cycle_creation_time",
+        "first_reminder_time",
         "submission_due_time",
+        "overdue_grace_minutes",
+        "draft_time",
         "review_target_time",
         "reminder_minutes_before",
         "expected_subcontractor_ids",
     }
     payload = {key: value for key, value in updates.items() if key in allowed}
+    if "working_days" in payload:
+        payload["working_days"] = sorted(
+            {
+                int(value)
+                for value in payload["working_days"]
+                if 1 <= int(value) <= 7
+            }
+        )
     if "reminder_minutes_before" in payload:
         payload["reminder_minutes_before"] = sorted(
             {max(0, int(value)) for value in payload["reminder_minutes_before"]},
@@ -215,27 +247,190 @@ def ensure_daily_cycle(
     submission_due_at: datetime,
     review_target_at: datetime,
     expected_subcontractor_ids: list[str],
+    timezone_name: str = "Asia/Bangkok",
 ) -> dict[str, Any]:
     normalized_date = _normalize_date(report_date)
     cycle_id = _stable_id("cycle", project_id, normalized_date)
     ref = _client().collection(CYCLES_COLLECTION).document(cycle_id)
     snapshot = ref.get()
+    if snapshot.exists:
+        return _public(snapshot)
+
     now = _now_utc()
+    expected_ids = list(dict.fromkeys(expected_subcontractor_ids))
     payload = {
         "id": cycle_id,
         "project_id": project_id,
         "project_name": project_name,
         "report_date": normalized_date,
+        "timezone": timezone_name,
         "status": "COLLECTING",
         "submission_due_at": submission_due_at,
         "review_target_at": review_target_at,
-        "expected_subcontractor_ids": list(dict.fromkeys(expected_subcontractor_ids)),
+        "expected_subcontractor_ids": expected_ids,
+        "submitted_subcontractor_ids": [],
+        "missing_subcontractor_ids": expected_ids,
+        "report_id": None,
+        "created_at": now,
         "updated_at": now,
     }
-    if not snapshot.exists:
-        payload["created_at"] = now
-    ref.set(payload, merge=True)
+    try:
+        ref.create(payload)
+    except AlreadyExists:
+        return _public(ref.get())
     return payload
+
+
+def get_daily_cycle(*, project_id: str, report_date: date | str) -> dict[str, Any] | None:
+    normalized_date = _normalize_date(report_date)
+    cycle_id = _stable_id("cycle", project_id, normalized_date)
+    snapshot = _client().collection(CYCLES_COLLECTION).document(cycle_id).get()
+    return _public(snapshot) if snapshot.exists else None
+
+
+def update_daily_cycle(
+    *,
+    project_id: str,
+    report_date: date | str,
+    status_value: str | None = None,
+    submitted_subcontractor_ids: list[str] | None = None,
+    missing_subcontractor_ids: list[str] | None = None,
+    report_id: str | None = None,
+) -> dict[str, Any] | None:
+    cycle = get_daily_cycle(project_id=project_id, report_date=report_date)
+    if cycle is None:
+        return None
+    if cycle.get("status") in {"NO_WORK", "CANCELLED", "CLOSED", "PUBLISHED"}:
+        return cycle
+    updates: dict[str, Any] = {"updated_at": _now_utc()}
+    if status_value:
+        updates["status"] = _clean_text(status_value).upper()
+    if submitted_subcontractor_ids is not None:
+        updates["submitted_subcontractor_ids"] = list(
+            dict.fromkeys(_clean_text(item) for item in submitted_subcontractor_ids if _clean_text(item))
+        )
+    if missing_subcontractor_ids is not None:
+        updates["missing_subcontractor_ids"] = list(
+            dict.fromkeys(_clean_text(item) for item in missing_subcontractor_ids if _clean_text(item))
+        )
+    if report_id is not None:
+        updates["report_id"] = _optional_text(report_id)
+    _client().collection(CYCLES_COLLECTION).document(cycle["id"]).set(updates, merge=True)
+    cycle.update(updates)
+    return cycle
+
+
+def get_no_work_day(*, project_id: str, report_date: date | str) -> dict[str, Any] | None:
+    normalized_date = _normalize_date(report_date)
+    item_id = _stable_id("no-work", project_id, normalized_date)
+    snapshot = _client().collection(NO_WORK_DAYS_COLLECTION).document(item_id).get()
+    if not snapshot.exists:
+        return None
+    payload = _public(snapshot)
+    return payload if _clean_text(payload.get("status")).upper() == "ACTIVE" else None
+
+
+def is_no_work_day(*, project_id: str, report_date: date | str) -> bool:
+    return get_no_work_day(project_id=project_id, report_date=report_date) is not None
+
+
+def list_no_work_days(*, project_id: str) -> list[dict[str, Any]]:
+    return sorted(
+        [
+            item
+            for item in _stream_collection(NO_WORK_DAYS_COLLECTION)
+            if item.get("project_id") == project_id
+            and _clean_text(item.get("status")).upper() == "ACTIVE"
+        ],
+        key=lambda item: _clean_text(item.get("report_date")),
+        reverse=True,
+    )
+
+
+def set_no_work_day(
+    *,
+    project_id: str,
+    report_date: date | str,
+    reason: str | None,
+    actor_id: str,
+    actor_role: str,
+) -> dict[str, Any]:
+    normalized_date = _normalize_date(report_date)
+    received = list_submissions(
+        project_id=project_id,
+        report_date=normalized_date,
+        statuses=RECEIVED_SUBMISSION_STATUSES,
+    )
+    if received:
+        raise _conflict("A no-work day cannot be set after a subcontractor report was submitted.")
+
+    item_id = _stable_id("no-work", project_id, normalized_date)
+    ref = _client().collection(NO_WORK_DAYS_COLLECTION).document(item_id)
+    existing = ref.get()
+    now = _now_utc()
+    payload = {
+        "id": item_id,
+        "project_id": project_id,
+        "report_date": normalized_date,
+        "status": "ACTIVE",
+        "reason": _optional_text(reason),
+        "updated_at": now,
+        "updated_by": actor_id,
+    }
+    if not existing.exists:
+        payload["created_at"] = now
+        payload["created_by"] = actor_id
+    ref.set(payload, merge=True)
+
+    cycle = get_daily_cycle(project_id=project_id, report_date=normalized_date)
+    if cycle is not None:
+        _client().collection(CYCLES_COLLECTION).document(cycle["id"]).set(
+            {"status": "NO_WORK", "updated_at": now},
+            merge=True,
+        )
+    _event(
+        project_id=project_id,
+        event_type="NO_WORK_DAY_SET",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        detail={"report_date": normalized_date, "reason": payload["reason"]},
+    )
+    return {**(_public(existing) if existing.exists else {}), **payload}
+
+
+def clear_no_work_day(
+    *,
+    project_id: str,
+    report_date: date | str,
+    actor_id: str,
+    actor_role: str,
+) -> dict[str, Any]:
+    normalized_date = _normalize_date(report_date)
+    item = get_no_work_day(project_id=project_id, report_date=normalized_date)
+    if item is None:
+        raise _not_found("Daily report no-work day", normalized_date)
+    now = _now_utc()
+    updates = {
+        "status": "CANCELLED",
+        "updated_at": now,
+        "updated_by": actor_id,
+    }
+    _client().collection(NO_WORK_DAYS_COLLECTION).document(item["id"]).set(updates, merge=True)
+    cycle = get_daily_cycle(project_id=project_id, report_date=normalized_date)
+    if cycle is not None and cycle.get("status") == "NO_WORK":
+        _client().collection(CYCLES_COLLECTION).document(cycle["id"]).set(
+            {"status": "COLLECTING", "updated_at": now},
+            merge=True,
+        )
+    _event(
+        project_id=project_id,
+        event_type="NO_WORK_DAY_CLEARED",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        detail={"report_date": normalized_date},
+    )
+    item.update(updates)
+    return item
 
 
 def claim_notification(
@@ -281,7 +476,10 @@ def claim_notification(
         "created_at": now,
         "updated_at": now,
     }
-    ref.set(payload)
+    try:
+        ref.create(payload)
+    except AlreadyExists:
+        return None
     return payload
 
 
@@ -305,6 +503,121 @@ def complete_notification(
         },
         merge=True,
     )
+
+
+def ensure_staff_notification(
+    *,
+    project_id: str,
+    report_date: date | str,
+    notification_type: str,
+    title: str,
+    message: str,
+    report_id: str | None = None,
+    submission_id: str | None = None,
+    missing_subcontractor_ids: list[str] | None = None,
+    discriminator: str | None = None,
+    scope: str = "PROJECT",
+) -> dict[str, Any] | None:
+    normalized_date = _normalize_date(report_date)
+    normalized_type = _clean_text(notification_type).upper()
+    normalized_scope = _clean_text(scope).upper() or "PROJECT"
+    if normalized_scope not in {"PROJECT", "GLOBAL"}:
+        normalized_scope = "PROJECT"
+    notification_id = _stable_id(
+        "notification",
+        project_id,
+        normalized_date,
+        "staff",
+        normalized_type,
+        discriminator or "",
+    )
+    ref = _client().collection(NOTIFICATIONS_COLLECTION).document(notification_id)
+    now = _now_utc()
+    payload = {
+        "id": notification_id,
+        "project_id": project_id,
+        "report_date": normalized_date,
+        "notification_type": normalized_type,
+        "audience": "STAFF",
+        "scope": normalized_scope,
+        "status": "UNREAD",
+        "title": _clean_text(title),
+        "message": _clean_text(message),
+        "report_id": _optional_text(report_id),
+        "submission_id": _optional_text(submission_id),
+        "missing_subcontractor_ids": list(
+            dict.fromkeys(
+                _clean_text(item)
+                for item in missing_subcontractor_ids or []
+                if _clean_text(item)
+            )
+        ),
+        "created_at": now,
+        "updated_at": now,
+    }
+    try:
+        ref.create(payload)
+    except AlreadyExists:
+        return None
+    return payload
+
+
+def ensure_global_staff_notification(
+    *,
+    notification_type: str,
+    title: str,
+    message: str,
+    discriminator: str | None = None,
+) -> dict[str, Any] | None:
+    """Create one alert visible to every active Admin and Owner."""
+
+    return ensure_staff_notification(
+        project_id="__global__",
+        report_date=_now_utc().date(),
+        notification_type=notification_type,
+        title=title,
+        message=message,
+        discriminator=discriminator,
+        scope="GLOBAL",
+    )
+
+
+def list_staff_notifications(
+    *,
+    project_ids: set[str] | None,
+    unread_only: bool = False,
+) -> list[dict[str, Any]]:
+    items = [
+        item
+        for item in _stream_collection(NOTIFICATIONS_COLLECTION)
+        if _clean_text(item.get("audience")).upper() == "STAFF"
+        and (
+            _clean_text(item.get("scope")).upper() == "GLOBAL"
+            or project_ids is None
+            or item.get("project_id") in project_ids
+        )
+        and (not unread_only or _clean_text(item.get("status")).upper() == "UNREAD")
+    ]
+    return sorted(items, key=lambda item: _sort_datetime(item.get("created_at")), reverse=True)
+
+
+def mark_staff_notification_read(
+    *,
+    notification_id: str,
+    actor_id: str,
+) -> dict[str, Any]:
+    item = _get_doc(NOTIFICATIONS_COLLECTION, notification_id, "Daily report notification")
+    if _clean_text(item.get("audience")).upper() != "STAFF":
+        raise _not_found("Daily report staff notification", notification_id)
+    updates = {
+        "status": "READ",
+        "read_at": _now_utc(),
+        "read_by": actor_id,
+        "updated_at": _now_utc(),
+    }
+    _client().collection(NOTIFICATIONS_COLLECTION).document(notification_id).set(updates, merge=True)
+    item.update(updates)
+    return item
 
 
 def upsert_project_membership(
@@ -571,6 +884,11 @@ def submit_submission(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This submission belongs to another subcontractor.")
     if current.get("status") not in EDITABLE_SUBMISSION_STATUSES:
         raise _conflict("This submission is already in review or finalized.")
+    if is_no_work_day(
+        project_id=current["project_id"],
+        report_date=current["report_date"],
+    ):
+        raise _conflict("This project date is marked as a no-work day.")
     _validate_submission_ready(current)
     next_status = "RESUBMITTED" if current.get("status") == "CHANGES_REQUESTED" else "SUBMITTED"
     now = _now_utc()
@@ -589,6 +907,57 @@ def submit_submission(
         report_date=current["report_date"],
         actor_id=actor_id,
         actor_role="subcontractor",
+    )
+    cycle = get_daily_cycle(
+        project_id=current["project_id"],
+        report_date=current["report_date"],
+    )
+    if cycle is not None:
+        received_submissions = list_submissions(
+            project_id=current["project_id"],
+            report_date=current["report_date"],
+            statuses=RECEIVED_SUBMISSION_STATUSES,
+        )
+        submitted_ids = sorted(
+            {
+                _clean_text(item.get("subcontractor_id"))
+                for item in received_submissions
+                if _clean_text(item.get("subcontractor_id"))
+            }
+        )
+        expected_ids = list(cycle.get("expected_subcontractor_ids") or [])
+        missing_ids = [item for item in expected_ids if item not in submitted_ids]
+        update_daily_cycle(
+            project_id=current["project_id"],
+            report_date=current["report_date"],
+            status_value="PENDING_REVIEW" if expected_ids and not missing_ids else "PARTIALLY_SUBMITTED",
+            submitted_subcontractor_ids=submitted_ids,
+            missing_subcontractor_ids=missing_ids,
+            report_id=report["id"],
+        )
+    notification_type = (
+        "CHANGE_REQUEST_RESPONSE"
+        if next_status == "RESUBMITTED"
+        else "NEW_SUBMISSION"
+    )
+    notification_title = (
+        "ผู้รับเหมาส่งรายงานแก้ไขแล้ว"
+        if next_status == "RESUBMITTED"
+        else "มีรายงานใหม่"
+    )
+    ensure_staff_notification(
+        project_id=current["project_id"],
+        report_date=current["report_date"],
+        notification_type=notification_type,
+        title=notification_title,
+        message=(
+            f"{current.get('subcontractor_name') or 'ผู้รับเหมา'} "
+            "ส่งรายงานประจำวัน"
+            f"ของโครงการ {current.get('project_name') or current['project_id']} แล้ว"
+        ),
+        report_id=report["id"],
+        submission_id=submission_id,
+        discriminator=submission_id,
     )
     _event(
         project_id=current["project_id"],
@@ -873,6 +1242,12 @@ def publish_report(
         "updated_by": actor_id,
     }
     _client().collection(REPORTS_COLLECTION).document(report_id).set(updates, merge=True)
+    update_daily_cycle(
+        project_id=report["project_id"],
+        report_date=report["report_date"],
+        status_value="PUBLISHED",
+        report_id=report_id,
+    )
     for submission_id in report.get("source_submission_ids") or []:
         _client().collection(SUBMISSIONS_COLLECTION).document(submission_id).set(
             {"status": "ACCEPTED", "updated_at": now, "updated_by": actor_id},
@@ -1180,6 +1555,15 @@ def ask_report_question(
         "updated_at": now,
     }
     ref.set(payload)
+    ensure_staff_notification(
+        project_id=report["project_id"],
+        report_date=report["report_date"],
+        notification_type="CUSTOMER_QUESTION",
+        title="ลูกค้ามีคำถามเกี่ยวกับรายงาน",
+        message=question.strip(),
+        report_id=report_id,
+        discriminator=ref.id,
+    )
     _event(
         project_id=report["project_id"],
         report_id=report_id,

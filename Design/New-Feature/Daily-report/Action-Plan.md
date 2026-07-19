@@ -1847,7 +1847,7 @@ Phase gate:
 
 ### Phase 7: Scheduling and Reminders
 
-Status: Ready to start — implementation has not started.
+Status: Implemented locally on 2026-07-19 — Cloud Scheduler configuration and deployed-environment verification remain.
 
 Tasks:
 
@@ -1858,6 +1858,18 @@ Tasks:
 - Add overdue notifications.
 - Add review-target alerts.
 - Add working-day and no-work rules.
+
+Implementation notes:
+
+- Added authenticated global cycle-creation and due-action scan endpoints.
+- Added per-project schedule settings with `Asia/Bangkok` defaults.
+- Added immutable expected-subcontractor cycle snapshots.
+- Added Thai LINE cycle, reminder, overdue, and submission-received messages.
+- Added durable Admin/Owner alerts for missing submissions, new submissions, change responses, draft readiness, review targets, LINE delivery failures, and customer questions.
+- Added Admin/Owner no-work-day APIs.
+- Added an idempotent Cloud Scheduler configuration helper using OIDC.
+- Added focused backend tests for idempotency, no-work suppression, overdue alerts, draft/review alerts, and manual publication.
+- Deployment instructions: `Phase-7-Scheduler-Runbook.md`.
 
 Exit criteria:
 
@@ -1879,6 +1891,36 @@ Tasks:
 - Run security and privacy review.
 - Complete mobile/accessibility QA.
 - Run beta project pilot.
+
+Implementation status (2026-07-19): in progress.
+
+Implemented:
+
+- Added privacy-safe structured request and operational logs with request IDs.
+- Added rate limits for authentication, uploads, customer questions, and the customer LINE webhook.
+- Added bounded upload reads plus supported MIME and file-signature validation.
+- Added global system-failure notifications for all active Admins/Owners and retained project-scoped failure routing.
+- Removed internal exception details from authentication failure responses.
+- Added Firestore composite-index configuration; all eight indexes report `READY` in `prod-beta`.
+- Confirmed `prod-beta` point-in-time recovery and delete protection are enabled.
+- Enabled GCS Autoclass with `ARCHIVE` terminal storage, 7-day soft delete, public access prevention, and uniform access.
+- Added only incomplete-multipart cleanup after 7 days; valid evidence has no delete lifecycle.
+- Added Cloud Logging metrics for Scheduler, LINE delivery, subcontractor notification, upload, webhook signature, rate-limit, and server failures.
+- Added repeatable Storage, Firestore index, monitoring, and dedicated beta IAM helpers.
+- Added focused security tests and the Phase 8 operations runbook.
+- Deployed the hardened backend and frontend revisions to the isolated beta
+  Cloud Run services on 2026-07-19.
+- Created beta-only cycle-creation and due-action Scheduler jobs and confirmed
+  both OIDC requests returned HTTP 200.
+
+Remaining before Phase 8 exit:
+
+- Cut the shared LINE OA/LIFF applications over to the beta URLs and repeat the
+  beta E2E regression.
+- Provide and verify the shared monitoring email channel.
+- Create the currently missing dedicated beta runtime identity, move beta services away from the shared over-privileged `backend-runtime` identity, then remove unused broad roles.
+
+Operations and rollback instructions: `Phase-8-Hardening-Runbook.md`.
 
 Exit criteria:
 

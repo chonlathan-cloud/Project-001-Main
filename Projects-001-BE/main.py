@@ -7,6 +7,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
+from app.core.observability import (
+    RequestObservabilityMiddleware,
+    configure_structured_logging,
+)
+from app.core.rate_limit import RateLimitMiddleware, daily_report_rate_limit_rules
 from app.api.v1 import (
     auth,
     bills,
@@ -23,6 +28,7 @@ from app.api.v1 import (
 )
 
 app_settings = get_settings()
+configure_structured_logging(app_settings.log_level)
 
 app = FastAPI(
     title="Project_001 API",
@@ -31,15 +37,25 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
-# CORS Middleware (allow all origins for development)
+# Security and observability middleware
 # ---------------------------------------------------------------------------
 app.add_middleware(
+    RateLimitMiddleware,
+    enabled=app_settings.rate_limit_enabled,
+    rules=daily_report_rate_limit_rules(app_settings),
+)
+
+cors_origins = app_settings.cors_origins
+if not cors_origins and app_settings.is_development:
+    cors_origins = ["*"]
+app.add_middleware(
     CORSMiddleware,
-    allow_origins=app_settings.cors_origins or ["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials="*" not in cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RequestObservabilityMiddleware)
 
 # ---------------------------------------------------------------------------
 # Register all API v1 Routers
@@ -58,6 +74,7 @@ app.include_router(subcontractor.router, prefix=API_V1_PREFIX)
 app.include_router(settings.router, prefix=API_V1_PREFIX)
 app.include_router(chat.router, prefix=API_V1_PREFIX)
 app.include_router(daily_reports.router, prefix=API_V1_PREFIX)
+app.include_router(daily_reports.internal_router, prefix=API_V1_PREFIX)
 
 
 @app.get("/health", tags=["Health"])
