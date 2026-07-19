@@ -354,14 +354,116 @@
   cursor: pointer;
 }
 
-.dr-file-input:focus + .dr-file-picker {
+.dr-file-input:focus ~ .dr-upload-actions .dr-file-picker {
   outline: 3px solid rgba(79, 111, 100, 0.16);
   outline-offset: 2px;
+}
+
+.dr-upload-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  gap: 8px;
+}
+
+.dr-file-picker.primary {
+  border-color: var(--dr-primary);
+  background: var(--dr-primary);
+  color: #fff;
 }
 
 .dr-file-picker.disabled {
   cursor: not-allowed;
   opacity: 0.55;
+  pointer-events: none;
+}
+
+.dr-pending-media {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dr-pending-media > article {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 34px;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--dr-line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.dr-pending-media-preview {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--dr-soft);
+  color: var(--dr-primary);
+}
+
+.dr-pending-media-preview img,
+.dr-pending-media-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.dr-pending-media > article > div:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.dr-pending-media strong,
+.dr-pending-media span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dr-pending-media strong {
+  font-size: 12px;
+}
+
+.dr-pending-media span {
+  color: var(--dr-muted);
+  font-size: 10px;
+}
+
+.dr-pending-media span.state-uploading {
+  color: #76551b;
+}
+
+.dr-pending-media span.state-failed {
+  color: #9f342d;
+}
+
+.dr-pending-media > article > button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: #fff3f2;
+  color: #9f342d;
+  cursor: pointer;
+}
+
+.dr-pending-media > article > button:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+
+.dr-upload-helper {
+  color: var(--dr-muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .dr-file-list,
@@ -1616,5 +1718,285 @@
 
   .dr-customer-photos > div:last-child {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .dr-subcontractor.dr-workspace {
+    gap: 12px;
+    padding: 0 0 calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .dr-subcontractor .dr-hero {
+    gap: 10px;
+    padding: 6px 4px 0;
+  }
+
+  .dr-subcontractor .dr-hero h2 {
+    margin: 2px 0 4px;
+    font-size: 25px;
+  }
+
+  .dr-subcontractor .dr-hero p {
+    font-size: 13px;
+  }
+
+  .dr-subcontractor .dr-notice {
+    margin: 0 2px;
+    padding: 11px 12px;
+    font-size: 13px;
+  }
+
+  .dr-subcontractor .dr-context-card {
+    grid-template-columns: minmax(0, 1fr) 104px;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .dr-subcontractor .dr-context-card > label:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .dr-subcontractor .dr-context-card select,
+  .dr-subcontractor .dr-context-card input,
+  .dr-subcontractor .dr-field input,
+  .dr-subcontractor .dr-field select,
+  .dr-subcontractor .dr-field textarea,
+  .dr-subcontractor .dr-issue-editor input,
+  .dr-subcontractor .dr-issue-editor select,
+  .dr-subcontractor .dr-issue-editor textarea {
+    min-height: 46px;
+    font-size: 16px;
+  }
+
+  .dr-subcontractor .dr-context-summary {
+    min-height: 46px;
+    padding: 7px;
+  }
+
+  .dr-subcontractor .dr-context-summary span {
+    font-size: 9px;
+    text-align: center;
+  }
+
+  .dr-subcontractor .dr-context-summary strong {
+    font-size: 20px;
+  }
+
+  .dr-subcontractor .dr-stepper {
+    position: sticky;
+    z-index: 20;
+    top: calc(63px + env(safe-area-inset-top));
+    overflow: hidden;
+    border: 1px solid var(--dr-line);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 4px 14px rgba(44, 61, 54, 0.06);
+    backdrop-filter: blur(10px);
+  }
+
+  .dr-subcontractor .dr-stepper button {
+    display: grid;
+    min-width: 0;
+    min-height: 56px;
+    justify-items: center;
+    gap: 3px;
+    padding: 7px 4px;
+    font-size: 10px;
+    line-height: 1.25;
+    text-align: center;
+  }
+
+  .dr-subcontractor .dr-stepper button > span {
+    width: 22px;
+    height: 22px;
+  }
+
+  .dr-subcontractor .dr-form-card {
+    overflow: visible;
+    border-radius: 12px;
+  }
+
+  .dr-subcontractor .dr-form-section {
+    gap: 16px;
+    padding: 16px 12px 18px;
+  }
+
+  .dr-subcontractor .dr-section-heading {
+    gap: 9px;
+    padding-bottom: 13px;
+  }
+
+  .dr-subcontractor .dr-section-heading h3 {
+    font-size: 17px;
+  }
+
+  .dr-subcontractor .dr-section-heading p {
+    font-size: 12px;
+  }
+
+  .dr-subcontractor .dr-form-section > .dr-upload {
+    order: 1;
+  }
+
+  .dr-subcontractor .dr-form-section > .dr-work-summary {
+    order: 2;
+  }
+
+  .dr-subcontractor .dr-form-section > .dr-form-grid {
+    order: 3;
+  }
+
+  .dr-subcontractor .dr-form-grid,
+  .dr-subcontractor .dr-check-grid,
+  .dr-subcontractor .dr-review-summary {
+    gap: 10px;
+  }
+
+  .dr-subcontractor .dr-upload {
+    gap: 11px;
+    padding: 14px 12px;
+  }
+
+  .dr-subcontractor .dr-upload-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dr-subcontractor .dr-file-picker {
+    width: 100%;
+    min-height: 46px;
+    padding: 9px 8px;
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .dr-subcontractor .dr-pending-media {
+    grid-template-columns: 1fr;
+  }
+
+  .dr-subcontractor .dr-pending-media > article {
+    grid-template-columns: 58px minmax(0, 1fr) 40px;
+    min-height: 70px;
+  }
+
+  .dr-subcontractor .dr-pending-media-preview {
+    width: 58px;
+    height: 58px;
+  }
+
+  .dr-subcontractor .dr-pending-media > article > button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .dr-subcontractor .dr-upload > .dr-button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .dr-subcontractor .dr-check-grid label {
+    min-height: 52px;
+    padding: 12px;
+    font-size: 14px;
+  }
+
+  .dr-subcontractor .dr-check-grid input {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+  }
+
+  .dr-subcontractor .dr-issue-editor {
+    grid-template-columns: minmax(0, 1fr) 44px;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--dr-line);
+    border-radius: 10px;
+    background: var(--dr-soft);
+  }
+
+  .dr-subcontractor .dr-issue-editor input,
+  .dr-subcontractor .dr-issue-editor textarea {
+    grid-column: 1 / -1;
+  }
+
+  .dr-subcontractor .dr-issue-editor textarea {
+    grid-row: auto;
+  }
+
+  .dr-subcontractor .dr-issue-editor select {
+    grid-column: 1;
+  }
+
+  .dr-subcontractor .dr-issue-editor button {
+    grid-column: 2;
+    min-height: 44px;
+  }
+
+  .dr-subcontractor .dr-form-actions {
+    position: sticky;
+    z-index: 18;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 7px;
+    align-items: stretch;
+    padding:
+      10px
+      10px
+      calc(10px + env(safe-area-inset-bottom));
+    border: 1px solid var(--dr-line);
+    border-radius: 0 0 12px 12px;
+    background: rgba(250, 251, 249, 0.96);
+    box-shadow: 0 -8px 24px rgba(44, 61, 54, 0.08);
+    backdrop-filter: blur(10px);
+  }
+
+  .dr-subcontractor .dr-form-actions > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .dr-subcontractor .dr-form-actions .dr-button {
+    width: 100%;
+    min-height: 44px;
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .dr-subcontractor .dr-form-actions > .dr-button {
+    width: 46px;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .dr-subcontractor .dr-history {
+    gap: 10px;
+    padding: 14px 12px;
+  }
+
+  .dr-subcontractor .dr-history-list > button {
+    align-items: flex-start;
+    padding: 11px 10px;
+  }
+
+  .dr-subcontractor .dr-history-list > button > div {
+    min-width: 0;
+  }
+
+  .dr-subcontractor .dr-history-list strong,
+  .dr-subcontractor .dr-history-list span {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 350px) {
+  .dr-subcontractor .dr-file-picker {
+    font-size: 11px;
+  }
+
+  .dr-subcontractor .dr-form-actions .dr-button {
+    font-size: 11px;
   }
 }

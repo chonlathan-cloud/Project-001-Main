@@ -58,7 +58,8 @@ export default function CustomerReportWorkspace() {
         }
       })
       .catch((error) => {
-        if (active) setNotice({ tone: 'danger', message: error.message || 'Unable to load project reports.' });
+        console.error('Unable to load customer project reports.', error);
+        if (active) setNotice({ tone: 'danger', message: 'ไม่สามารถโหลดรายงานโครงการได้ กรุณาลองใหม่อีกครั้ง' });
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -91,7 +92,8 @@ export default function CustomerReportWorkspace() {
         if (active) setMediaUrls(Object.fromEntries(urlEntries));
       })
       .catch((error) => {
-        if (active) setNotice({ tone: 'danger', message: error.message || 'Unable to open this report.' });
+        console.error('Unable to open customer project report.', error);
+        if (active) setNotice({ tone: 'danger', message: 'ไม่สามารถเปิดรายงานฉบับนี้ได้ กรุณาลองใหม่อีกครั้ง' });
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -105,10 +107,11 @@ export default function CustomerReportWorkspace() {
       await acknowledgeCustomerDailyReport(report.id);
       setNotice({
         tone: 'success',
-        message: 'Acknowledged. This confirms receipt only; it is not contractual acceptance.',
+        message: 'รับทราบรายงานแล้ว การรับทราบหมายถึงได้รับข้อมูลเท่านั้น ไม่ใช่การอนุมัติงานหรือเปลี่ยนแปลงสัญญา',
       });
     } catch (error) {
-      setNotice({ tone: 'danger', message: error.message || 'Unable to acknowledge this report.' });
+      console.error('Unable to acknowledge customer project report.', error);
+      setNotice({ tone: 'danger', message: 'ไม่สามารถรับทราบรายงานได้ กรุณาลองใหม่อีกครั้ง' });
     } finally {
       setBusy('');
     }
@@ -116,16 +119,17 @@ export default function CustomerReportWorkspace() {
 
   const askQuestion = async () => {
     if (question.trim().length < 3) {
-      setNotice({ tone: 'danger', message: 'Please enter a clear question.' });
+      setNotice({ tone: 'danger', message: 'กรุณาพิมพ์คำถามอย่างน้อย 3 ตัวอักษร' });
       return;
     }
     setBusy('question');
     try {
       await askCustomerDailyReportQuestion(report.id, question.trim());
       setQuestion('');
-      setNotice({ tone: 'success', message: 'Your report-linked question was sent to the project team.' });
+      setNotice({ tone: 'success', message: 'ส่งคำถามให้ทีมงานโครงการแล้ว' });
     } catch (error) {
-      setNotice({ tone: 'danger', message: error.message || 'Unable to send the question.' });
+      console.error('Unable to send customer project report question.', error);
+      setNotice({ tone: 'danger', message: 'ไม่สามารถส่งคำถามได้ กรุณาลองใหม่อีกครั้ง' });
     } finally {
       setBusy('');
     }
@@ -138,51 +142,51 @@ export default function CustomerReportWorkspace() {
   };
 
   return (
-    <div className="dr-customer-shell">
+    <div className="dr-customer-shell" lang="th">
       <header className="dr-customer-header">
         <img src={logoImage} alt="RAYADEE" />
-        <div><strong>Project progress</strong><span>{authUser?.display_name || 'Customer'}</span></div>
-        <button type="button" onClick={signOut} aria-label="Sign out"><LogOut /></button>
+        <div><strong>ความคืบหน้าโครงการ</strong><span>{authUser?.display_name || 'ลูกค้า'}</span></div>
+        <button type="button" onClick={signOut} aria-label="ออกจากระบบ" title="ออกจากระบบ"><LogOut /></button>
       </header>
 
       <main className="dr-customer-main">
         <DailyReportNotice tone={notice?.tone}>{notice?.message}</DailyReportNotice>
-        {loading ? <div className="dr-card dr-loading"><LoaderCircle className="spin" /> Loading approved report…</div> : null}
+        {loading ? <div className="dr-card dr-loading"><LoaderCircle className="spin" /> กำลังโหลดรายงาน…</div> : null}
 
         {!loading && reports.length === 0 ? (
           <section className="dr-card dr-empty-state large">
             <HardHat />
-            <strong>No published reports yet</strong>
-            <span>The latest Admin/Owner-approved progress report will appear here.</span>
+            <strong>ยังไม่มีรายงานที่เผยแพร่</strong>
+            <span>เมื่อผู้ดูแลตรวจสอบและเผยแพร่รายงานแล้ว รายงานจะแสดงที่หน้านี้</span>
           </section>
         ) : null}
 
         {!loading && report ? (
           <>
             <button type="button" className="dr-customer-back" onClick={() => setSearchParams({})}>
-              <ArrowLeft /> Approved daily reports
+              <ArrowLeft /> รายงานประจำวันทั้งหมด
             </button>
             <section className="dr-card dr-customer-report">
               <div className="dr-customer-title">
                 <div>
-                  <span className="dr-eyebrow">APPROVED DAILY PROGRESS</span>
-                  <h1>{report.project_name || report.title}</h1>
-                  <p><CalendarDays /> {formatReportDate(report.report_date)} · Version {report.published_version}</p>
+                  <span className="dr-eyebrow">รายงานความคืบหน้าที่อนุมัติแล้ว</span>
+                  <h1>{report.project_name || report.title || 'รายงานโครงการ'}</h1>
+                  <p><CalendarDays /> {formatReportDate(report.report_date, 'th-TH')} · ฉบับที่ {report.published_version || 1}</p>
                 </div>
-                <DailyReportStatusBadge status={report.status} />
+                <DailyReportStatusBadge status={report.status} locale="th" />
               </div>
 
               <div className="dr-customer-kpis">
-                <div><span>Progress</span><strong>{report.progress_percent == null ? '—' : `${report.progress_percent}%`}</strong></div>
-                <div><span>On site</span><strong>{report.manpower_total || 0}</strong><small>people</small></div>
-                <div><span>Issues</span><strong>{report.issues?.length || 0}</strong></div>
+                <div><span>ความคืบหน้า</span><strong>{report.progress_percent == null ? '—' : `${report.progress_percent}%`}</strong></div>
+                <div><span>ทีมงานหน้างาน</span><strong>{report.manpower_total || 0}</strong><small>คน</small></div>
+                <div><span>เรื่องที่ต้องติดตาม</span><strong>{report.issues?.length || 0}</strong></div>
               </div>
 
               <article className="dr-customer-section">
                 <div className="dr-customer-section-icon"><HardHat /></div>
                 <div>
-                  <h2>Today’s progress</h2>
-                  <p className="dr-preserve-lines">{report.summary}</p>
+                  <h2>งานที่ทำวันนี้</h2>
+                  <p className="dr-preserve-lines">{report.summary || 'ยังไม่มีรายละเอียดงานวันนี้'}</p>
                 </div>
               </article>
 
@@ -190,12 +194,12 @@ export default function CustomerReportWorkspace() {
                 <article className="dr-customer-section issues">
                   <div className="dr-customer-section-icon"><AlertTriangle /></div>
                   <div>
-                    <h2>Issues to note</h2>
+                    <h2>เรื่องที่ต้องติดตาม</h2>
                     <div className="dr-customer-issues">
                       {report.issues.map((issue, index) => (
                         <div key={`${issue.title}-${index}`}>
-                          <strong>{issue.title || 'Site issue'}</strong>
-                          <span>{issue.detail || 'The project team is monitoring this item.'}</span>
+                          <strong>{issue.title || 'ประเด็นหน้างาน'}</strong>
+                          <span>{issue.detail || 'ทีมงานโครงการกำลังติดตามเรื่องนี้'}</span>
                         </div>
                       ))}
                     </div>
@@ -204,29 +208,29 @@ export default function CustomerReportWorkspace() {
               ) : (
                 <article className="dr-customer-section positive">
                   <div className="dr-customer-section-icon"><CheckCircle2 /></div>
-                  <div><h2>No issues reported</h2><p>No customer-facing blockers were included in this approved report.</p></div>
+                  <div><h2>ไม่พบปัญหาที่ต้องแจ้ง</h2><p>รายงานฉบับนี้ไม่มีปัญหาที่กระทบลูกค้า</p></div>
                 </article>
               )}
 
               <article className="dr-customer-section">
                 <div className="dr-customer-section-icon"><CalendarDays /></div>
                 <div>
-                  <h2>Tomorrow’s plan</h2>
-                  <p className="dr-preserve-lines">{report.tomorrow_plan || 'The next-day plan was not stated.'}</p>
+                  <h2>แผนงานวันถัดไป</h2>
+                  <p className="dr-preserve-lines">{report.tomorrow_plan || 'ยังไม่ได้ระบุแผนงานวันถัดไป'}</p>
                 </div>
               </article>
 
               {report.customer_note ? (
-                <div className="dr-customer-note"><strong>Project team note</strong><span>{report.customer_note}</span></div>
+                <div className="dr-customer-note"><strong>หมายเหตุจากทีมงานโครงการ</strong><span>{report.customer_note}</span></div>
               ) : null}
 
               {Object.values(mediaUrls).some(Boolean) ? (
                 <section className="dr-customer-photos">
-                  <div className="dr-inline-heading"><h2><Camera /> Site photos</h2><span>Approved report evidence</span></div>
+                  <div className="dr-inline-heading"><h2><Camera /> รูปภาพหน้างาน</h2><span>รูปประกอบรายงานที่อนุมัติแล้ว</span></div>
                   <div>
                     {(report.media || []).filter((media) => mediaUrls[media.id]).map((media) => (
                       <a href={mediaUrls[media.id]} target="_blank" rel="noreferrer" key={media.id}>
-                        <img src={mediaUrls[media.id]} alt={media.file_name || 'Site evidence'} />
+                        <img src={mediaUrls[media.id]} alt={media.file_name || 'รูปภาพหน้างาน'} />
                       </a>
                     ))}
                   </div>
@@ -236,17 +240,23 @@ export default function CustomerReportWorkspace() {
               <footer className="dr-customer-actions">
                 <div>
                   <Check />
-                  <span><strong>Acknowledge receipt</strong>This does not approve work or change the contract.</span>
+                  <span><strong>รับทราบรายงาน</strong>เป็นการยืนยันว่าได้รับข้อมูลแล้ว ไม่ใช่การอนุมัติงานหรือเปลี่ยนแปลงสัญญา</span>
                   <button type="button" className="dr-button primary" onClick={acknowledge} disabled={Boolean(busy)}>
-                    {busy === 'ack' ? <LoaderCircle className="spin" /> : <CheckCircle2 />} I have seen this report
+                    {busy === 'ack' ? <LoaderCircle className="spin" /> : <CheckCircle2 />} ยืนยันว่าได้รับรายงานแล้ว
                   </button>
                 </div>
                 <div>
                   <MessageCircleQuestion />
-                  <span><strong>Ask the project team</strong>Your question stays linked to this report.</span>
-                  <textarea rows="3" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Type a question about this update…" />
+                  <span><strong>สอบถามทีมงานโครงการ</strong>ทีมงานจะเห็นว่าคำถามนี้เกี่ยวกับรายงานฉบับนี้</span>
+                  <textarea
+                    rows="3"
+                    value={question}
+                    onChange={(event) => setQuestion(event.target.value)}
+                    placeholder="พิมพ์คำถามเกี่ยวกับรายงานนี้…"
+                    aria-label="คำถามถึงทีมงานโครงการ"
+                  />
                   <button type="button" className="dr-button secondary" onClick={askQuestion} disabled={Boolean(busy)}>
-                    {busy === 'question' ? <LoaderCircle className="spin" /> : <Send />} Send question
+                    {busy === 'question' ? <LoaderCircle className="spin" /> : <Send />} ส่งคำถาม
                   </button>
                 </div>
               </footer>
@@ -254,10 +264,10 @@ export default function CustomerReportWorkspace() {
 
             {reports.length > 1 ? (
               <section className="dr-card dr-customer-history">
-                <div className="dr-inline-heading"><h2>Previous reports</h2><span>{reports.length}</span></div>
+                <div className="dr-inline-heading"><h2>รายงานก่อนหน้า</h2><span>{reports.length} ฉบับ</span></div>
                 {reports.filter((item) => item.id !== report.id).slice(0, 6).map((item) => (
                   <button type="button" key={item.id} onClick={() => setSearchParams({ report: item.id })}>
-                    <span><strong>{item.project_name || item.project_id}</strong>{formatReportDate(item.report_date)}</span>
+                    <span><strong>{item.project_name || item.project_id}</strong>{formatReportDate(item.report_date, 'th-TH')}</span>
                     <ChevronRight />
                   </button>
                 ))}
@@ -268,11 +278,11 @@ export default function CustomerReportWorkspace() {
 
         {!loading && !report && reports.length > 0 ? (
           <section className="dr-card dr-customer-history">
-            <div className="dr-inline-heading"><h2>Approved reports</h2><span>{reports.length}</span></div>
+            <div className="dr-inline-heading"><h2>รายงานที่อนุมัติแล้ว</h2><span>{reports.length} ฉบับ</span></div>
             {reports.map((item) => (
               <button type="button" key={item.id} onClick={() => setSearchParams({ report: item.id })}>
-                <span><strong>{item.project_name || item.project_id}</strong>{formatReportDate(item.report_date)}</span>
-                <div><DailyReportStatusBadge status={item.status} /><ChevronRight /></div>
+                <span><strong>{item.project_name || item.project_id}</strong>{formatReportDate(item.report_date, 'th-TH')}</span>
+                <div><DailyReportStatusBadge status={item.status} locale="th" /><ChevronRight /></div>
               </button>
             ))}
           </section>

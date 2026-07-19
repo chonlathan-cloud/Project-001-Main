@@ -85,6 +85,16 @@ function payloadFromForm(form) {
   };
 }
 
+function fileKey(file) {
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
+function appendUniqueFiles(currentFiles, selectedFiles) {
+  const items = new Map(currentFiles.map((file) => [fileKey(file), file]));
+  selectedFiles.forEach((file) => items.set(fileKey(file), file));
+  return [...items.values()];
+}
+
 export default function SubcontractorDailyReportWorkspace() {
   const [searchParams] = useSearchParams();
   const linkedProjectId = searchParams.get('project') || '';
@@ -96,6 +106,7 @@ export default function SubcontractorDailyReportWorkspace() {
   const [activeSubmission, setActiveSubmission] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [files, setFiles] = useState([]);
+  const [fileUploadStates, setFileUploadStates] = useState({});
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -107,6 +118,16 @@ export default function SubcontractorDailyReportWorkspace() {
       (item) => item.project_id === projectId && item.report_date === reportDate,
     ) || null,
     [projectId, reportDate, submissions],
+  );
+  const filePreviews = useMemo(
+    () => files.map((file) => ({
+      file,
+      key: fileKey(file),
+      url: file.type.startsWith('image/') || file.type.startsWith('video/')
+        ? URL.createObjectURL(file)
+        : '',
+    })),
+    [files],
   );
 
   const load = useCallback(async () => {
@@ -140,8 +161,15 @@ export default function SubcontractorDailyReportWorkspace() {
     setActiveSubmission(matchingSubmission);
     setForm(formFromSubmission(matchingSubmission));
     setFiles([]);
+    setFileUploadStates({});
     setStep(1);
   }, [matchingSubmission]);
+
+  useEffect(() => () => {
+    filePreviews.forEach((preview) => {
+      if (preview.url) URL.revokeObjectURL(preview.url);
+    });
+  }, [filePreviews]);
 
   const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const updateNested = (section, field, value) => {
@@ -182,12 +210,35 @@ export default function SubcontractorDailyReportWorkspace() {
     }
   };
 
+  const addSelectedFiles = (event) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    if (selectedFiles.length === 0) return;
+    setFiles((current) => appendUniqueFiles(current, selectedFiles));
+    setFileUploadStates((current) => ({
+      ...current,
+      ...Object.fromEntries(selectedFiles.map((file) => [fileKey(file), 'waiting'])),
+    }));
+    event.target.value = '';
+  };
+
+  const removeSelectedFile = (targetKey) => {
+    setFiles((current) => current.filter((file) => fileKey(file) !== targetKey));
+    setFileUploadStates((current) => {
+      const next = { ...current };
+      delete next[targetKey];
+      return next;
+    });
+  };
+
   const uploadSelectedFiles = async (draft, selectedFiles) => {
     let next = draft;
 
     for (let index = 0; index < selectedFiles.length; index += 1) {
+      const selectedKey = fileKey(selectedFiles[index]);
+      setFileUploadStates((current) => ({ ...current, [selectedKey]: 'uploading' }));
       try {
         const uploaded = await uploadDailyReportMedia(draft.id, selectedFiles[index]);
+        setFileUploadStates((current) => ({ ...current, [selectedKey]: 'uploaded' }));
         next = {
           ...next,
           media_ids: [...new Set([...(next.media_ids || []), uploaded.id])],
@@ -199,12 +250,19 @@ export default function SubcontractorDailyReportWorkspace() {
             : [next, ...current]
         ));
       } catch (error) {
-        setFiles(selectedFiles.slice(index));
+        const remainingFiles = selectedFiles.slice(index);
+        const remainingKeys = new Set(remainingFiles.map((file) => fileKey(file)));
+        setFiles(remainingFiles);
+        setFileUploadStates((current) => Object.fromEntries(
+          Object.entries({ ...current, [selectedKey]: 'failed' })
+            .filter(([key]) => remainingKeys.has(key)),
+        ));
         throw error;
       }
     }
 
     setFiles([]);
+    setFileUploadStates({});
     return next;
   };
 
@@ -367,7 +425,7 @@ export default function SubcontractorDailyReportWorkspace() {
                   <HardHat />
                   <div><h3>วันนี้ทำอะไรที่หน้างานบ้าง?</h3><p>ระบุงานที่ทำให้ชัดเจน เพื่อให้ตรวจสอบได้ง่าย</p></div>
                 </div>
-                <label className="dr-field full">
+                <label className="dr-field full dr-work-summary">
                   <span>สรุปงานที่ทำ *</span>
                   <textarea
                     rows="5"
@@ -422,21 +480,63 @@ export default function SubcontractorDailyReportWorkspace() {
                 <div className="dr-upload">
                   <div><Camera /><strong>หลักฐานหน้างาน *</strong><span>ต้องมีรูปภาพอย่างน้อย 1 รูป ส่วนวิดีโอและเสียงบันทึกไม่บังคับ</span></div>
                   <input
+                    id="daily-report-camera"
+                    className="dr-file-input"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={addSelectedFiles}
+                    disabled={!isEditable || Boolean(busy)}
+                  />
+                  <input
                     id="daily-report-evidence"
                     className="dr-file-input"
                     type="file"
                     multiple
                     accept="image/*,video/*,audio/*"
-                    onChange={(event) => setFiles(Array.from(event.target.files || []))}
-                    disabled={!isEditable}
+                    onChange={addSelectedFiles}
+                    disabled={!isEditable || Boolean(busy)}
                   />
-                  <label className={`dr-file-picker${isEditable ? '' : ' disabled'}`} htmlFor="daily-report-evidence">
-                    <Camera size={16} /> เลือกไฟล์จากอุปกรณ์
-                  </label>
+                  <div className="dr-upload-actions">
+                    <label className={`dr-file-picker primary${isEditable && !busy ? '' : ' disabled'}`} htmlFor="daily-report-camera">
+                      <Camera size={17} /> ถ่ายรูปหน้างาน
+                    </label>
+                    <label className={`dr-file-picker${isEditable && !busy ? '' : ' disabled'}`} htmlFor="daily-report-evidence">
+                      <CloudUpload size={17} /> เลือกจากเครื่อง
+                    </label>
+                  </div>
                   {files.length > 0 ? (
-                    <div className="dr-file-list">
-                      {files.map((file) => (
-                        <span key={`${file.name}-${file.size}`}>{file.name} · รออัปโหลด</span>
+                    <div className="dr-pending-media" aria-label="ไฟล์ที่รออัปโหลด">
+                      {filePreviews.map((preview) => (
+                        <article key={preview.key}>
+                          <div className="dr-pending-media-preview">
+                            {preview.file.type.startsWith('image/') ? (
+                              <img src={preview.url} alt="" />
+                            ) : preview.file.type.startsWith('video/') ? (
+                              <video src={preview.url} muted />
+                            ) : (
+                              <CloudUpload aria-hidden="true" />
+                            )}
+                          </div>
+                          <div>
+                            <strong>{preview.file.name}</strong>
+                            <span className={`state-${fileUploadStates[preview.key] || 'waiting'}`}>
+                              {fileUploadStates[preview.key] === 'uploading'
+                                ? 'กำลังอัปโหลด…'
+                                : fileUploadStates[preview.key] === 'failed'
+                                  ? 'อัปโหลดไม่สำเร็จ · พร้อมลองใหม่'
+                                  : 'รออัปโหลด'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeSelectedFile(preview.key)}
+                            disabled={fileUploadStates[preview.key] === 'uploading'}
+                            aria-label={`นำ ${preview.file.name} ออกจากรายการ`}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </article>
                       ))}
                     </div>
                   ) : null}
@@ -449,11 +549,16 @@ export default function SubcontractorDailyReportWorkspace() {
                     {busy === 'upload' ? <LoaderCircle className="spin" /> : <CloudUpload />}
                     อัปโหลดไฟล์ที่เลือก
                   </button>
+                  {files.length > 0 ? (
+                    <small className="dr-upload-helper">
+                      หากยังไม่กดอัปโหลด ระบบจะอัปโหลดไฟล์เหล่านี้ให้อัตโนมัติก่อนส่งรายงาน
+                    </small>
+                  ) : null}
                   {(activeSubmission?.media_ids || []).length > 0 ? (
                     <div className="dr-media-chips">
                       {activeSubmission.media_ids.map((mediaId, index) => (
                         <span key={mediaId}>
-                          <Camera size={14} /> หลักฐาน {index + 1}
+                          <Check size={14} /> หลักฐาน {index + 1} · อัปโหลดแล้ว
                           {isEditable ? (
                             <button type="button" onClick={() => removeMedia(mediaId)} aria-label={`ลบหลักฐาน ${index + 1}`}>
                               {busy === `delete-${mediaId}` ? <LoaderCircle className="spin" /> : <Trash2 />}
@@ -536,15 +641,6 @@ export default function SubcontractorDailyReportWorkspace() {
                     </div>
                   ))}
                 </div>
-              </div>
-            ) : null}
-
-            {step === 3 ? (
-              <div className="dr-form-section">
-                <div className="dr-section-heading">
-                  <Send />
-                  <div><h3>แผนวันพรุ่งนี้และตรวจทานครั้งสุดท้าย</h3><p>ผู้ดูแลหรือเจ้าของโครงการจะตรวจรายงานนี้ก่อนส่งข้อมูลให้ลูกค้า</p></div>
-                </div>
                 <label className="dr-field full">
                   <span>แผนงานวันพรุ่งนี้ *</span>
                   <textarea
@@ -555,6 +651,15 @@ export default function SubcontractorDailyReportWorkspace() {
                     placeholder="เช่น ดำเนินงานติดตั้งโครงฝ้าต่อ และสรุปงานประสานระบบที่ค้างอยู่…"
                   />
                 </label>
+              </div>
+            ) : null}
+
+            {step === 3 ? (
+              <div className="dr-form-section">
+                <div className="dr-section-heading">
+                  <Send />
+                  <div><h3>แผนวันพรุ่งนี้และตรวจทานครั้งสุดท้าย</h3><p>ผู้ดูแลหรือเจ้าของโครงการจะตรวจรายงานนี้ก่อนส่งข้อมูลให้ลูกค้า</p></div>
+                </div>
                 <label className="dr-field full">
                   <span>หมายเหตุภายใน</span>
                   <textarea

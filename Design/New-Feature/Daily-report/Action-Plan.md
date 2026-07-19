@@ -1766,6 +1766,8 @@ Exit criteria:
 
 ### Phase 6: LINE Delivery
 
+Status: Complete — acceptance testing confirmed by the user on 2026-07-19.
+
 Tasks:
 
 - Add customer OA webhook.
@@ -1786,9 +1788,20 @@ Exit criteria:
 
 ### Phase 6.5: Subcontractor Portal Mobile Readiness
 
+Status: Complete — release gate passed on 2026-07-19.
+
 Detailed plan:
 
 - [Subcontractor Mobile Responsive Plan](./Subcontractor-Mobile-Responsive-Plan.md)
+
+Implementation status (2026-07-19):
+
+- Local frontend implementation complete for Sidebar, Topbar, Daily Report, Input, and Profile.
+- Frontend lint and production build pass.
+- Demo deployment and real iPhone/Android LINE testing passed.
+- Subcontractor and customer mobile UI/UX, LINE flows, uploads, publication, acknowledgement, questions, permissions, and desktop regressions passed.
+- No critical or high-priority defects remain open.
+- Phase 6.5 is closed and its Phase 7 release gate is satisfied.
 
 Scope:
 
@@ -1830,8 +1843,11 @@ Phase gate:
 
 - Phase 7 must not begin until Phase 6.5 passes in demo.
 - Subcontractor reminders must not be enabled until the mobile portal is ready.
+- Gate result: passed on 2026-07-19.
 
 ### Phase 7: Scheduling and Reminders
+
+Status: Ready to start — implementation has not started.
 
 Tasks:
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   BadgeCheck,
   Bot,
@@ -10,10 +10,12 @@ import {
   HelpCircle,
   LayoutDashboard,
   LogOut,
+  Menu,
   Plus,
   Settings,
   TrendingUp,
   UserRound,
+  X,
 } from 'lucide-react';
 
 import {
@@ -182,18 +184,64 @@ function SidebarUserAvatar({ user }) {
   );
 }
 
+function getSubcontractorRouteTitle(pathname) {
+  if (pathname.startsWith('/daily-reports')) return 'รายงานประจำวัน';
+  if (pathname.startsWith('/inspection')) return 'งานตรวจแก้';
+  if (pathname.startsWith('/profile')) return 'โปรไฟล์ของฉัน';
+  return 'ส่งคำขอ';
+}
+
 const Sidebar = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [authUser, setAuthUser] = useState(() => getStoredAuthUser());
   const [navBadges, setNavBadges] = useState({});
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
+  ));
   const profileSyncKeyRef = useRef('');
+  const mobileMenuButtonRef = useRef(null);
+  const mobileCloseButtonRef = useRef(null);
   const isAdminUser = isAdminPortalUser(authUser);
+  const isSubcontractor = isSubcontractorUser(authUser);
 
   useEffect(() => {
     return subscribeToAuthChanges(() => {
       setAuthUser(getStoredAuthUser());
     });
   }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)');
+    const handleChange = (event) => {
+      setIsMobileViewport(event.matches);
+      if (!event.matches) setMobileNavOpen(false);
+    };
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isSubcontractor || !isMobileViewport) return undefined;
+
+    document.body.classList.toggle('subcontractor-mobile-nav-open', mobileNavOpen);
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && mobileNavOpen) {
+        setMobileNavOpen(false);
+        mobileMenuButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    if (mobileNavOpen) {
+      window.requestAnimationFrame(() => mobileCloseButtonRef.current?.focus());
+    }
+
+    return () => {
+      document.body.classList.remove('subcontractor-mobile-nav-open');
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isMobileViewport, isSubcontractor, mobileNavOpen]);
 
   useEffect(() => {
     const sessionToken = getStoredSessionToken();
@@ -309,53 +357,91 @@ const Sidebar = () => {
   }, [isAdminUser, navBadges]);
 
   const handleLogout = async () => {
+    setMobileNavOpen(false);
     clearAuthSession();
     await Promise.allSettled([signOutFirebaseClient(), logoutLineClient()]);
     navigate('/login', { replace: true });
   };
 
   return (
-    <aside className="app-sidebar">
-      <div className="sidebar-brand">
-        <img className="sidebar-brand-logo" src={logoImage} alt="DOUBLEBO" />
-        <div className="sidebar-brand-subtitle">
-          {isAdminUser ? 'Admin Portal' : 'พื้นที่ผู้รับเหมา'}
-        </div>
-      </div>
-
-      {canAccessOwnerArea(authUser) ? (
-        <button
-          type="button"
-          className="sidebar-primary-action"
-          onClick={() => navigate('/project')}
-        >
-          <Plus size={16} strokeWidth={2.5} />
-          <span>New Project</span>
-        </button>
+    <>
+      {isSubcontractor ? (
+        <header className="subcontractor-mobile-header">
+          <img src={logoImage} alt="RAYADEE" />
+          <div>
+            <span>พื้นที่ผู้รับเหมา</span>
+            <strong>{getSubcontractorRouteTitle(location.pathname)}</strong>
+          </div>
+          <button
+            ref={mobileMenuButtonRef}
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            aria-controls="primary-sidebar"
+            aria-expanded={mobileNavOpen}
+            aria-label="เปิดเมนู"
+          >
+            <Menu size={22} />
+          </button>
+        </header>
       ) : null}
 
-      <div className="sidebar-inner">
-        <nav className="sidebar-nav" aria-label="Primary navigation">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.name}
-              to={item.path}
-              end={item.path === '/'}
-              className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
-            >
-              <item.icon size={18} strokeWidth={2} />
-              <span className="sidebar-nav-label">{item.name}</span>
-              <SidebarNavBadge badge={item.badge} label={item.name} />
-            </NavLink>
-          ))}
-        </nav>
+      {isSubcontractor ? (
+        <button
+          type="button"
+          className={`subcontractor-sidebar-backdrop${mobileNavOpen ? ' open' : ''}`}
+          onClick={() => setMobileNavOpen(false)}
+          aria-label="ปิดเมนู"
+          tabIndex={mobileNavOpen ? 0 : -1}
+        />
+      ) : null}
 
-        {systemItems.length > 0 ? (
-          <div className="sidebar-system">
-            {systemItems.map((item) => (
+      <aside
+        id="primary-sidebar"
+        className={`app-sidebar${isSubcontractor ? ' subcontractor-sidebar' : ''}${mobileNavOpen ? ' mobile-open' : ''}`}
+        aria-label={isAdminUser ? 'Admin navigation' : 'เมนูผู้รับเหมา'}
+        aria-hidden={isSubcontractor && isMobileViewport ? !mobileNavOpen : undefined}
+        inert={isSubcontractor && isMobileViewport && !mobileNavOpen ? '' : undefined}
+      >
+        <div className="sidebar-brand">
+          <img className="sidebar-brand-logo" src={logoImage} alt="RAYADEE" />
+          <div className="sidebar-brand-subtitle">
+            {isAdminUser ? 'Admin Portal' : 'พื้นที่ผู้รับเหมา'}
+          </div>
+          {isSubcontractor ? (
+            <button
+              ref={mobileCloseButtonRef}
+              type="button"
+              className="subcontractor-sidebar-close"
+              onClick={() => {
+                setMobileNavOpen(false);
+                mobileMenuButtonRef.current?.focus();
+              }}
+              aria-label="ปิดเมนู"
+            >
+              <X size={20} />
+            </button>
+          ) : null}
+        </div>
+
+        {canAccessOwnerArea(authUser) ? (
+          <button
+            type="button"
+            className="sidebar-primary-action"
+            onClick={() => navigate('/project')}
+          >
+            <Plus size={16} strokeWidth={2.5} />
+            <span>New Project</span>
+          </button>
+        ) : null}
+
+        <div className="sidebar-inner">
+          <nav className="sidebar-nav" aria-label="Primary navigation">
+            {navItems.map((item) => (
               <NavLink
                 key={item.name}
                 to={item.path}
+                end={item.path === '/'}
+                onClick={() => setMobileNavOpen(false)}
                 className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
               >
                 <item.icon size={18} strokeWidth={2} />
@@ -363,36 +449,53 @@ const Sidebar = () => {
                 <SidebarNavBadge badge={item.badge} label={item.name} />
               </NavLink>
             ))}
-          </div>
-        ) : null}
+          </nav>
 
-        <div className="sidebar-footer">
-          <div className="sidebar-user-card">
-            <SidebarUserAvatar user={authUser} />
-            <div className="sidebar-user-meta">
-              <div className="sidebar-user-label">
-                {isAdminUser ? 'Signed in as' : 'เข้าสู่ระบบในชื่อ'}
-              </div>
-              <div className="sidebar-user-name">
-                {authUser?.display_name || authUser?.email || authUser?.subcontractor_id || (isAdminUser ? 'User' : 'ผู้ใช้งาน')}
-              </div>
-              <div className="sidebar-user-role">
-                {isAdminUser ? authUser?.role || 'session' : 'ผู้รับเหมา'}
+          {systemItems.length > 0 ? (
+            <div className="sidebar-system">
+              {systemItems.map((item) => (
+                <NavLink
+                  key={item.name}
+                  to={item.path}
+                  onClick={() => setMobileNavOpen(false)}
+                  className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
+                >
+                  <item.icon size={18} strokeWidth={2} />
+                  <span className="sidebar-nav-label">{item.name}</span>
+                  <SidebarNavBadge badge={item.badge} label={item.name} />
+                </NavLink>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="sidebar-footer">
+            <div className="sidebar-user-card">
+              <SidebarUserAvatar user={authUser} />
+              <div className="sidebar-user-meta">
+                <div className="sidebar-user-label">
+                  {isAdminUser ? 'Signed in as' : 'เข้าสู่ระบบในชื่อ'}
+                </div>
+                <div className="sidebar-user-name">
+                  {authUser?.display_name || authUser?.email || authUser?.subcontractor_id || (isAdminUser ? 'User' : 'ผู้ใช้งาน')}
+                </div>
+                <div className="sidebar-user-role">
+                  {isAdminUser ? authUser?.role || 'session' : 'ผู้รับเหมา'}
+                </div>
               </div>
             </div>
-          </div>
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="sidebar-logout-button"
-          >
-            <LogOut size={16} />
-            {isAdminUser ? 'Sign Out' : 'ออกจากระบบ'}
-          </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="sidebar-logout-button"
+            >
+              <LogOut size={16} />
+              {isAdminUser ? 'Sign Out' : 'ออกจากระบบ'}
+            </button>
+          </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 };
 

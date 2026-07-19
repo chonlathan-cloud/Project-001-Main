@@ -1,9 +1,23 @@
 # Phase 6.5: Subcontractor Portal Mobile Responsive Plan
 
-Status: Planned  
+Status: Complete — demo and physical-device acceptance testing passed
 Decision date: 2026-07-19  
+Completion date: 2026-07-19
 Implementation type: Responsive React web and LIFF optimization  
 Native application: Out of scope  
+
+Implementation progress (2026-07-19):
+
+- Shared mobile header and off-canvas subcontractor navigation implemented.
+- Daily Report camera/gallery evidence flow, previews, upload states, and mobile step actions implemented.
+- Input camera/gallery capture, stacked workflow, mobile line items, on-demand preview, review sheet, and sticky submit implemented.
+- Profile desktop inline grids replaced with responsive sections and mobile touch targets.
+- Existing API calls, permissions, validation, and backend behavior preserved.
+- Frontend lint and production build pass.
+- Google Stitch could not be queried because the connector requires authentication; the checked-in RAYADEE design and Daily Report mockup were used as the implementation reference.
+- Demo deployment, iPhone LINE, Android LINE, customer portal, and desktop regression checks passed.
+- Upload recovery, session states, permissions, Thai content, customer acknowledgement, and report-linked questions passed.
+- No critical or high-priority defects remain open.
 
 ## 1. Decision Summary
 
@@ -553,10 +567,15 @@ Phase 7 must not begin until the Phase 6.5 acceptance criteria pass in the demo 
 
 Scheduling and reminder work may be prepared separately, but reminders must not be activated for subcontractors until the mobile portal is ready.
 
-## 15. Open Items Before Implementation
+Gate result: passed on 2026-07-19. Phase 7 may begin.
 
-- Restore Google Stitch authentication and compare the plan against the latest design tokens.
-- Approve the four mobile wireframes: Shell, Daily Report, Input, and Profile.
-- Confirm the two physical beta devices used for final LINE testing.
+## 15. Completion Record
+
+- Shared shell, Daily Report, Input, Profile, customer portal, and Thai customer report passed.
+- iPhone LINE and Android LINE acceptance flows passed.
+- Camera, gallery, upload retry, submission, review, publication, acknowledgement, and questions passed.
+- Desktop regression checks passed.
+- Frontend lint and production build passed.
+- Google Stitch authentication remains a tooling limitation and is not a Phase 6.5 release blocker.
 
 No native-application decisions are required for this phase.

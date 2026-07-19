@@ -294,7 +294,7 @@ const StatCard = ({ value, label, subtext, icon }) => {
   const IconComponent = icon;
 
   return (
-    <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '18px', minHeight: '168px' }}>
+    <div className="profile-stat-card" style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '18px', minHeight: '168px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' }}>
         <div>
           <div style={{ fontSize: '28px', fontWeight: '700', color: 'var(--text-main)', marginBottom: '4px' }}>
@@ -322,7 +322,7 @@ const StatCard = ({ value, label, subtext, icon }) => {
 };
 
 const AvatarCircle = ({ name, imageUrl, size = 120 }) => (
-  <div style={{
+  <div className="profile-avatar" style={{
     width: `${size}px`,
     height: `${size}px`,
     borderRadius: '50%',
@@ -351,7 +351,7 @@ const AvatarCircle = ({ name, imageUrl, size = 120 }) => (
 );
 
 const DetailRow = ({ label, value }) => (
-  <div style={{ display: 'grid', gap: '4px' }}>
+  <div className="profile-detail-row" style={{ display: 'grid', gap: '4px' }}>
     <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
       {label}
     </div>
@@ -365,8 +365,8 @@ const DetailPanel = ({ title, icon, actions, children }) => {
   const IconComponent = icon;
 
   return (
-    <div style={cardStyle}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '18px' }}>
+    <div className="profile-detail-panel" style={cardStyle}>
+      <div className="profile-detail-panel-heading" style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', marginBottom: '18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
           <div style={{
             width: '36px',
@@ -393,7 +393,7 @@ const DetailPanel = ({ title, icon, actions, children }) => {
 };
 
 const EditableField = ({ label, value, onChange, type = 'text', readOnly = false }) => (
-  <label style={{ display: 'grid' }}>
+  <label className="profile-editable-field" style={{ display: 'grid' }}>
     <span style={labelStyle}>{label}</span>
     <input
       type={type}
@@ -772,8 +772,8 @@ const ProfilePage = () => {
   const pendingAmountValue = hasScopedActivityMetrics ? pendingStat?.value || '0' : '-';
 
   return (
-    <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-      <div style={{ marginBottom: '28px' }}>
+    <div className={`profile-page-responsive${isSubcontractor ? ' profile-page-subcontractor' : ''}`} style={{ maxWidth: '1400px', margin: '0 auto' }}>
+      <div className="profile-page-heading" style={{ marginBottom: '28px' }}>
         <h1 style={{ fontSize: '32px', marginBottom: '8px', fontWeight: '700', color: 'var(--text-main)' }}>
           {isSubcontractor ? 'โปรไฟล์ของฉัน' : 'My Profile'}
         </h1>
@@ -784,8 +784,8 @@ const ProfilePage = () => {
         </p>
       </div>
 
-      <div className="profile-hero-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(300px, 0.65fr)', gap: '24px' }}>
-        <div style={{ ...cardStyle, display: 'flex', gap: '24px', alignItems: 'center' }}>
+      <div className="profile-hero-grid" style={{ display: 'grid', gap: '24px' }}>
+        <div className="profile-identity-card" style={{ ...cardStyle, display: 'flex', gap: '24px', alignItems: 'center' }}>
           <AvatarCircle name={profileName} imageUrl={avatarUrl} size={120} />
 
           <div style={{ minWidth: 0, flex: 1 }}>
@@ -854,7 +854,7 @@ const ProfilePage = () => {
           </div>
         </div>
 
-        <div style={{
+        <div className="profile-approved-card" style={{
           ...cardStyle,
           backgroundColor: 'var(--primary)',
           borderColor: 'var(--primary)',
@@ -886,7 +886,7 @@ const ProfilePage = () => {
         <StatusMessage tone="danger">{profileError}</StatusMessage>
       </div>
 
-      <div className="profile-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginTop: '24px' }}>
+      <div className="profile-stats-grid" style={{ display: 'grid', gap: '20px', marginTop: '24px' }}>
         {hasScopedActivityMetrics ? (
           stats.map((stat) => {
             const Icon = iconMap[stat.id] || User;
@@ -905,8 +905,8 @@ const ProfilePage = () => {
         )}
       </div>
 
-      <div className="profile-bottom-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, 0.65fr)', gap: '24px', marginTop: '24px' }}>
-        <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '22px' }}>
+      <div className="profile-bottom-grid" style={{ display: 'grid', gap: '24px', marginTop: '24px' }}>
+        <div className="profile-activity-card" style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '22px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
             <div>
               <h2 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: 'var(--text-main)' }}>

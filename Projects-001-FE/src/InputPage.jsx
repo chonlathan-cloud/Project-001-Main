@@ -1,5 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, CheckCircle2, LoaderCircle, Plus, RotateCcw, TriangleAlert, X } from 'lucide-react';
+import {
+  ArrowUp,
+  Camera,
+  CheckCircle2,
+  Eye,
+  LoaderCircle,
+  Plus,
+  RotateCcw,
+  TriangleAlert,
+  X,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Loading from './components/Loading';
 import ConstructionAnimation from './components/ConstructionAnimation';
@@ -791,8 +801,11 @@ const InputPage = () => {
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [entryTypeTouched, setEntryTypeTouched] = useState(false);
+  const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
 
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const previewPanelRef = useRef(null);
 
   useEffect(() => {
     const loadProjects = async () => {
@@ -975,11 +988,27 @@ const InputPage = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+    setMobilePreviewOpen(false);
   };
 
   const handlePickFile = () => {
     if (isExtracting || isSubmitting) return;
     fileInputRef.current?.click();
+  };
+
+  const handlePickCamera = () => {
+    if (isExtracting || isSubmitting) return;
+    cameraInputRef.current?.click();
+  };
+
+  const openMobilePreview = () => {
+    setMobilePreviewOpen(true);
+    window.requestAnimationFrame(() => {
+      previewPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
 
   const handleFileChange = async (event) => {
@@ -996,6 +1025,7 @@ const InputPage = () => {
     setFlashMessage('');
     setTouchedFields({});
     setHasAttemptedSubmit(false);
+    setMobilePreviewOpen(false);
 
     try {
       setIsExtracting(true);
@@ -1278,6 +1308,10 @@ const InputPage = () => {
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
+      if (cameraInputRef.current) {
+        cameraInputRef.current.value = '';
+      }
+      setMobilePreviewOpen(false);
     } catch (error) {
       setSubmitError(error.message || 'ส่งคำขอไม่สำเร็จ');
     } finally {
@@ -1406,8 +1440,9 @@ const InputPage = () => {
     hasBlockingInputRequirements;
 
   return (
-    <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '20px' }}>
+    <div className="subcontractor-input-page" style={{ maxWidth: '1400px', margin: '0 auto', padding: '20px' }}>
       <div
+        className="subcontractor-input-heading"
         style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -1426,6 +1461,7 @@ const InputPage = () => {
         </div>
         <button
           type="button"
+          className="input-clear-draft-button"
           onClick={handleClearDraft}
           disabled={isExtracting || isSubmitting}
           style={{
@@ -1457,10 +1493,10 @@ const InputPage = () => {
           alignItems: 'start',
         }}
       >
-        <MotionDiv layout style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <MotionDiv className="input-form-column" layout style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <form onSubmit={handleSubmit}>
             <div
-              className="card"
+              className="card input-form-card"
               style={{
                 backgroundColor: 'var(--card-bg)',
                 padding: '32px 24px',
@@ -1488,6 +1524,7 @@ const InputPage = () => {
               {submitError ? <StatusBanner tone="error" text={submitError} /> : null}
 
               <div
+                className="input-upload-panel"
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
@@ -1518,42 +1555,74 @@ const InputPage = () => {
                   style={{ display: 'none' }}
                   onChange={handleFileChange}
                 />
-                <button
-                  type="button"
-                  onClick={handlePickFile}
-                  disabled={isExtracting || isSubmitting}
-                  style={{
-                    width: '100%',
-                    height: '140px',
-                    backgroundColor: 'var(--card-bg)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    cursor: isExtracting || isSubmitting ? 'wait' : 'pointer',
-                    color: 'var(--text-main)',
-                    opacity: isSubmitting ? 0.7 : 1,
-                  }}
-                >
-                  {isExtracting ? (
-                    <>
-                      <LoaderCircle size={18} className="spin" />
-                      <span style={{ fontSize: '14px', fontWeight: '600' }}>กำลังอ่านข้อมูลจากบิล...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span style={{ fontSize: '14px', fontWeight: '600' }}>
-                        {selectedFile ? selectedFile.name : 'อัปโหลดรูปใบเสร็จ / PDF'}
-                      </span>
-                      <ArrowUp size={16} />
-                    </>
-                  )}
-                </button>
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: 'none' }}
+                  onChange={handleFileChange}
+                />
+                <div className="input-upload-actions">
+                  <button
+                    type="button"
+                    className="input-camera-button"
+                    onClick={handlePickCamera}
+                    disabled={isExtracting || isSubmitting}
+                  >
+                    <Camera size={18} />
+                    ถ่ายรูปใบเสร็จ
+                  </button>
+                  <button
+                    type="button"
+                    className="input-upload-button"
+                    onClick={handlePickFile}
+                    disabled={isExtracting || isSubmitting}
+                    style={{
+                      width: '100%',
+                      height: '140px',
+                      backgroundColor: 'var(--card-bg)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      cursor: isExtracting || isSubmitting ? 'wait' : 'pointer',
+                      color: 'var(--text-main)',
+                      opacity: isSubmitting ? 0.7 : 1,
+                    }}
+                  >
+                    {isExtracting ? (
+                      <>
+                        <LoaderCircle size={18} className="spin" />
+                        <span style={{ fontSize: '14px', fontWeight: '600' }}>กำลังอ่านข้อมูลจากบิล...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ fontSize: '14px', fontWeight: '600' }}>
+                          {selectedFile ? selectedFile.name : 'อัปโหลดรูปใบเสร็จ / PDF'}
+                        </span>
+                        <ArrowUp size={16} />
+                      </>
+                    )}
+                  </button>
+                </div>
+                {selectedFile || extractData || submitResult ? (
+                  <button
+                    type="button"
+                    className="input-mobile-preview-toggle"
+                    onClick={openMobilePreview}
+                    aria-controls="input-document-preview"
+                    aria-expanded={mobilePreviewOpen}
+                  >
+                    <Eye size={17} />
+                    {submitResult ? 'ดูผลการส่งคำขอ' : 'ดูตัวอย่างเอกสารและผล OCR'}
+                  </button>
+                ) : null}
               </div>
 
-              <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
+              <div className="input-section-title" style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
                 2. รายละเอียดคำขอ
               </div>
 
@@ -1729,7 +1798,7 @@ const InputPage = () => {
                 {...inputFieldRequirements.vatMode}
               />
 
-              <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
+              <div className="input-section-title" style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
                 3. บัญชีรับเงิน
               </div>
 
@@ -1773,9 +1842,10 @@ const InputPage = () => {
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '4px' }}>
+              <div className="input-form-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '4px' }}>
                 <button
                   type="button"
+                  className="input-form-clear"
                   onClick={handleClearDraft}
                   disabled={isExtracting || isSubmitting}
                   style={{
@@ -1793,6 +1863,7 @@ const InputPage = () => {
                 </button>
                 <button
                   type="submit"
+                  className="input-form-submit"
                   disabled={isSubmitDisabled}
                   style={{
                     backgroundColor: 'var(--primary)',
@@ -1816,7 +1887,9 @@ const InputPage = () => {
         </MotionDiv>
 
         <MotionDiv
-          className="input-preview-panel"
+          id="input-document-preview"
+          ref={previewPanelRef}
+          className={`input-preview-panel${mobilePreviewOpen ? ' mobile-open' : ''}`}
           layout
           style={{
             flex: '0 0 min(520px, 42vw)',
@@ -1835,6 +1908,14 @@ const InputPage = () => {
           }}
         >
           <div className="input-preview-panel-shell">
+            <button
+              type="button"
+              className="input-preview-close-mobile"
+              onClick={() => setMobilePreviewOpen(false)}
+            >
+              <X size={17} />
+              กลับไปกรอกข้อมูล
+            </button>
             <AnimatePresence mode="wait">
               {submitResult ? (
                 <MotionDiv

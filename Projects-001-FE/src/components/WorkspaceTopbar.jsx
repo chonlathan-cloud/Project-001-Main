@@ -94,7 +94,7 @@ export default function WorkspaceTopbar({ authUser, pathname }) {
   );
 
   return (
-    <header className="workspace-topbar">
+    <header className={`workspace-topbar${isSubcontractor ? ' subcontractor-workspace-topbar' : ''}`}>
       <div>
         <h1 className="workspace-title">{meta.title}</h1>
         <p className="workspace-description">{meta.description}</p>
