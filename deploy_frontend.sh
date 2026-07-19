@@ -42,10 +42,45 @@ set -a
 source "${FRONTEND_BUILD_ENV_FILE}"
 set +a
 
+load_frontend_build_secret() {
+  local target_name="$1"
+  local secret_name="$2"
+  local secret_value
+
+  if [[ -z "${secret_name}" ]]; then
+    return
+  fi
+
+  secret_value="$(
+    gcloud secrets versions access latest \
+      --secret "${secret_name}" \
+      --project "${GCP_PROJECT_ID}"
+  )"
+  printf -v "${target_name}" '%s' "${secret_value}"
+  export "${target_name}"
+}
+
 if [[ -z "${VITE_API_BASE_URL:-}" ]]; then
   VITE_API_BASE_URL="$(gcloud run services describe "${BACKEND_SERVICE_NAME}" --region "${GCP_REGION}" --format='value(status.url)')"
   export VITE_API_BASE_URL
 fi
+
+if [[ -z "${VITE_LINE_SUBCONTRACTOR_LIFF_ID:-}" ]]; then
+  load_frontend_build_secret \
+    VITE_LINE_SUBCONTRACTOR_LIFF_ID \
+    "${FRONTEND_LINE_SUBCONTRACTOR_LIFF_SECRET:-}"
+fi
+if [[ -z "${VITE_LINE_SUBCONTRACTOR_LIFF_ID:-}" ]]; then
+  VITE_LINE_SUBCONTRACTOR_LIFF_ID="${VITE_LINE_LIFF_ID:-}"
+  export VITE_LINE_SUBCONTRACTOR_LIFF_ID
+fi
+if [[ -z "${VITE_LINE_CUSTOMER_LIFF_ID:-}" ]]; then
+  load_frontend_build_secret \
+    VITE_LINE_CUSTOMER_LIFF_ID \
+    "${FRONTEND_LINE_CUSTOMER_LIFF_SECRET:-}"
+fi
+VITE_LINE_LIFF_ID="${VITE_LINE_LIFF_ID:-${VITE_LINE_SUBCONTRACTOR_LIFF_ID:-}}"
+export VITE_LINE_LIFF_ID
 
 VITE_APP_ENV="${VITE_APP_ENV:-demo}"
 VITE_IDENTITY_PLATFORM_TENANT_ID="${VITE_IDENTITY_PLATFORM_TENANT_ID:-}"
@@ -60,7 +95,8 @@ REQUIRED_BUILD_VARS=(
   VITE_FIREBASE_STORAGE_BUCKET
   VITE_FIREBASE_APP_ID
   VITE_FIREBASE_MESSAGING_SENDER_ID
-  VITE_LINE_LIFF_ID
+  VITE_LINE_SUBCONTRACTOR_LIFF_ID
+  VITE_LINE_CUSTOMER_LIFF_ID
 )
 
 for key in "${REQUIRED_BUILD_VARS[@]}"; do
@@ -100,6 +136,8 @@ docker buildx build \
   --build-arg "VITE_FIREBASE_MESSAGING_SENDER_ID=${VITE_FIREBASE_MESSAGING_SENDER_ID}" \
   --build-arg "VITE_IDENTITY_PLATFORM_TENANT_ID=${VITE_IDENTITY_PLATFORM_TENANT_ID}" \
   --build-arg "VITE_LINE_LIFF_ID=${VITE_LINE_LIFF_ID}" \
+  --build-arg "VITE_LINE_SUBCONTRACTOR_LIFF_ID=${VITE_LINE_SUBCONTRACTOR_LIFF_ID}" \
+  --build-arg "VITE_LINE_CUSTOMER_LIFF_ID=${VITE_LINE_CUSTOMER_LIFF_ID}" \
   --build-arg "VITE_BOQ_BATCH_SYNC_MAX_TABS=${VITE_BOQ_BATCH_SYNC_MAX_TABS}" \
   --push \
   "${FRONTEND_SOURCE_DIR}"

@@ -6,11 +6,16 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps.auth import AuthenticatedUser, require_admin_user, require_owner_user
 from app.core.config import get_settings
+from app.core.database import get_db
+from app.models.boq import Project
 from app.schemas.profile_schema import (
     AccessRequestItem,
     ApproveAccessRequestRequest,
@@ -31,7 +36,9 @@ from app.services.gcs_storage_service import generate_signed_url_for_storage_key
 from app.services.identity_service import (
     approve_access_request,
     admin_doc_id_for_email,
+    create_customer_profile,
     create_subcontractor_profile,
+    customer_doc_id_for_identity,
     get_access_request,
     get_admin,
     get_subcontractor_by_email,
@@ -49,6 +56,7 @@ from app.services.identity_service import (
     update_subcontractor_profile,
     upsert_admin,
 )
+from app.services import daily_report_service
 
 router = APIRouter(prefix="/settings", tags=["Admin Settings"])
 ADMIN_SUBCONTRACTOR_UPDATE_FIELDS = {
@@ -75,7 +83,58 @@ async def _profile_item(profile) -> SubcontractorProfileItem:
 def _admin_item(entry) -> AdminDirectoryItem:
     payload = asdict(entry)
     payload["timezone"] = entry.time
+    payload["assigned_project_ids"] = daily_report_service.list_membership_project_ids(
+        principal_type="admin",
+        principal_id=entry.email,
+    )
     return AdminDirectoryItem(**payload)
+
+
+def _sync_admin_project_memberships(
+    *,
+    email: str,
+    project_ids: list[str],
+    actor_id: str,
+) -> None:
+    current_ids = set(
+        daily_report_service.list_membership_project_ids(
+            principal_type="admin",
+            principal_id=email,
+        )
+    )
+    desired_ids = {str(project_id).strip() for project_id in project_ids if str(project_id).strip()}
+    for project_id in current_ids | desired_ids:
+        daily_report_service.upsert_project_membership(
+            project_id=project_id,
+            principal_type="admin",
+            principal_id=email,
+            is_active=project_id in desired_ids,
+            actor_id=actor_id,
+        )
+
+
+async def _validate_project_ids(db: AsyncSession, project_ids: list[str]) -> None:
+    if not project_ids:
+        return
+    try:
+        project_uuids = [UUID(project_id) for project_id in project_ids]
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Project IDs must be valid UUIDs.",
+        ) from exc
+    existing_project_ids = {
+        str(project_id)
+        for project_id in (
+            await db.execute(select(Project.id).where(Project.id.in_(project_uuids)))
+        ).scalars().all()
+    }
+    missing_project_ids = sorted(set(project_ids) - existing_project_ids)
+    if missing_project_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown project IDs: {', '.join(missing_project_ids)}.",
+        )
 
 
 def _access_request_item(entry) -> AccessRequestItem:
@@ -247,7 +306,9 @@ async def get_admin_detail(
 async def create_admin(
     request: UpsertAdminRequest,
     user: AuthenticatedUser = Depends(require_owner_user),
+    db: AsyncSession = Depends(get_db),
 ):
+    await _validate_project_ids(db, request.assigned_project_ids)
     doc_id = admin_doc_id_for_email(str(request.email))
     _reject_self_role_or_status_update(
         user,
@@ -272,6 +333,11 @@ async def create_admin(
         is_active=request.is_active,
         granted_by=user.email or user.subject,
     )
+    _sync_admin_project_memberships(
+        email=entry.email,
+        project_ids=request.assigned_project_ids,
+        actor_id=user.email or user.subject,
+    )
     return StandardResponse(data=_admin_item(entry))
 
 
@@ -280,10 +346,20 @@ async def edit_admin(
     admin_id: str,
     request: UpdateAdminRequest,
     user: AuthenticatedUser = Depends(require_owner_user),
+    db: AsyncSession = Depends(get_db),
 ):
     updates = request.model_dump(exclude_none=True)
+    assigned_project_ids = updates.pop("assigned_project_ids", None)
+    if assigned_project_ids is not None:
+        await _validate_project_ids(db, assigned_project_ids)
     _reject_self_role_or_status_update(user, admin_id, updates)
     entry = update_admin(admin_id, updates=updates)
+    if assigned_project_ids is not None:
+        _sync_admin_project_memberships(
+            email=entry.email,
+            project_ids=assigned_project_ids,
+            actor_id=user.email or user.subject,
+        )
     return StandardResponse(data=_admin_item(entry))
 
 
@@ -302,6 +378,7 @@ async def approve_pending_access_request(
     request_id: str,
     request: ApproveAccessRequestRequest,
     user: AuthenticatedUser = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db),
 ):
     _require_owner_for_internal_approval(user, request.account_type)
     access_request = get_access_request(request_id)
@@ -317,6 +394,7 @@ async def approve_pending_access_request(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Admin and staff approvals require a Gmail identity.",
             )
+        await _validate_project_ids(db, request.project_ids)
         roles = request.roles or [request.role]
         display_name = request.display_name or access_request.display_name or access_request.contact_name
         entry = upsert_admin(
@@ -340,6 +418,59 @@ async def approve_pending_access_request(
             role=entry.role,
             roles=entry.roles,
             decided_by=user.email or user.subject,
+        )
+        _sync_admin_project_memberships(
+            email=entry.email,
+            project_ids=request.project_ids,
+            actor_id=user.email or user.subject,
+        )
+        return StandardResponse(data=_access_request_item(approved))
+
+    if request.account_type == "customer":
+        if not access_request.line_uid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Customer approval requires a LINE identity.",
+            )
+        if not request.project_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Customer approval requires at least one project.",
+            )
+        await _validate_project_ids(db, request.project_ids)
+        customer_name = (
+            request.display_name
+            or access_request.company_name
+            or access_request.display_name
+            or access_request.contact_name
+            or "Customer"
+        )
+        customer = create_customer_profile(
+            customer_id=customer_doc_id_for_identity(
+                email=access_request.email,
+                line_uid=access_request.line_uid,
+            ),
+            email=access_request.email,
+            line_uid=access_request.line_uid,
+            line_picture_url=access_request.picture_url,
+            name=customer_name,
+            contact_name=request.contact_name or access_request.contact_name,
+            phone=request.phone or access_request.phone,
+        )
+        actor_id = user.email or user.subject
+        for project_id in request.project_ids:
+            daily_report_service.upsert_project_membership(
+                project_id=project_id,
+                principal_type="customer",
+                principal_id=customer.id,
+                is_active=True,
+                actor_id=actor_id,
+            )
+        approved = approve_access_request(
+            request_id,
+            account_type="customer",
+            target_customer_id=customer.id,
+            decided_by=actor_id,
         )
         return StandardResponse(data=_access_request_item(approved))
 

@@ -19,10 +19,12 @@ from app.core.google_clients import get_firestore_client
 USERS_COLLECTION = "users"
 ADMINS_COLLECTION = "admins"
 ACCESS_REQUESTS_COLLECTION = "access_requests"
+CUSTOMERS_COLLECTION = "customers"
 OWNER_ROLE = "owner"
 ADMIN_ROLE = "admin"
 INSPECTOR_ROLE = "inspector"
 SUBCONTRACTOR_ROLE = "subcontractor"
+CUSTOMER_ROLE = "customer"
 PENDING_ROLE = "pending"
 ADMIN_ROLES = {OWNER_ROLE, ADMIN_ROLE, INSPECTOR_ROLE}
 ADMIN_ACCESS_ROLES = {OWNER_ROLE, ADMIN_ROLE}
@@ -113,11 +115,19 @@ def _stable_doc_id(prefix: str, value: str) -> str:
     return f"{cleaned_prefix}-{digest}"
 
 
-def access_request_doc_id(*, provider: str, email: str | None = None, line_uid: str | None = None) -> str:
+def access_request_doc_id(
+    *,
+    provider: str,
+    email: str | None = None,
+    line_uid: str | None = None,
+    account_type: str | None = None,
+) -> str:
     normalized_provider = _normalize_provider(provider)
     if normalized_provider == "google":
         return f"google-{_email_doc_id(email or '')}"
-    return _stable_doc_id("line", line_uid or email or normalized_provider)
+    scope = str(account_type or "").strip().lower()
+    prefix = f"line-{scope}" if scope == CUSTOMER_ROLE else "line"
+    return _stable_doc_id(prefix, line_uid or email or normalized_provider)
 
 
 def subcontractor_doc_id_for_identity(*, email: str | None = None, line_uid: str | None = None) -> str:
@@ -183,6 +193,20 @@ class AdminDirectoryEntry:
 
 
 @dataclass(slots=True)
+class CustomerProfile:
+    id: str
+    email: str | None
+    line_uid: str | None
+    line_picture_url: str | None
+    name: str
+    contact_name: str | None
+    phone: str | None
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+@dataclass(slots=True)
 class AccessRequest:
     id: str
     provider: str
@@ -203,6 +227,7 @@ class AccessRequest:
     decided_roles: list[str]
     target_admin_id: str | None
     target_subcontractor_id: str | None
+    target_customer_id: str | None
     rejection_reason: str | None
     decided_by: str | None
     created_at: datetime | None
@@ -296,11 +321,27 @@ def _access_request_from_dict(doc_id: str, payload: dict[str, Any]) -> AccessReq
         else [],
         target_admin_id=_normalize_optional_text(payload.get("target_admin_id")),
         target_subcontractor_id=_normalize_optional_text(payload.get("target_subcontractor_id")),
+        target_customer_id=_normalize_optional_text(payload.get("target_customer_id")),
         rejection_reason=_normalize_optional_text(payload.get("rejection_reason")),
         decided_by=_normalize_optional_text(payload.get("decided_by")),
         created_at=_datetime_value(payload.get("created_at")),
         updated_at=_datetime_value(payload.get("updated_at")),
         decided_at=_datetime_value(payload.get("decided_at")),
+    )
+
+
+def _customer_from_dict(doc_id: str, payload: dict[str, Any]) -> CustomerProfile:
+    return CustomerProfile(
+        id=doc_id,
+        email=_normalize_email(str(payload.get("email") or "")) or None,
+        line_uid=_normalize_optional_text(payload.get("line_uid")),
+        line_picture_url=_normalize_optional_text(payload.get("line_picture_url")),
+        name=str(payload.get("name") or doc_id),
+        contact_name=_normalize_optional_text(payload.get("contact_name")),
+        phone=_normalize_optional_text(payload.get("phone")),
+        is_active=bool(payload.get("is_active", True)),
+        created_at=_datetime_value(payload.get("created_at")),
+        updated_at=_datetime_value(payload.get("updated_at")),
     )
 
 
@@ -358,6 +399,59 @@ def get_subcontractor_by_email(email: str) -> SubcontractorProfile | None:
     if snapshot is None:
         return None
     return _subcontractor_from_dict(snapshot.id, snapshot.to_dict() or {})
+
+
+def customer_doc_id_for_identity(*, email: str | None = None, line_uid: str | None = None) -> str:
+    identity = _normalize_email(email or "") or str(line_uid or "").strip()
+    return _stable_doc_id("customer", identity or "customer")
+
+
+def get_customer(customer_id: str) -> CustomerProfile:
+    snapshot = _ensure_firestore().collection(CUSTOMERS_COLLECTION).document(customer_id).get()
+    if not snapshot.exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Customer profile {customer_id} not found.",
+        )
+    return _customer_from_dict(snapshot.id, snapshot.to_dict() or {})
+
+
+def get_customer_by_line_uid(line_uid: str) -> CustomerProfile | None:
+    docs = (
+        _ensure_firestore()
+        .collection(CUSTOMERS_COLLECTION)
+        .where("line_uid", "==", line_uid)
+        .limit(1)
+        .stream()
+    )
+    snapshot = next(iter(docs), None)
+    return _customer_from_dict(snapshot.id, snapshot.to_dict() or {}) if snapshot else None
+
+
+def create_customer_profile(
+    *,
+    customer_id: str,
+    email: str | None,
+    line_uid: str | None,
+    line_picture_url: str | None,
+    name: str,
+    contact_name: str | None,
+    phone: str | None,
+) -> CustomerProfile:
+    now = _now_utc()
+    payload = {
+        "email": _normalize_email(email or "") or None,
+        "line_uid": _normalize_optional_text(line_uid),
+        "line_picture_url": _normalize_optional_text(line_picture_url),
+        "name": name.strip(),
+        "contact_name": _normalize_optional_text(contact_name) or name.strip(),
+        "phone": _normalize_optional_text(phone),
+        "is_active": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+    _ensure_firestore().collection(CUSTOMERS_COLLECTION).document(customer_id).set(payload)
+    return _customer_from_dict(customer_id, payload)
 
 
 def create_subcontractor_profile(
@@ -510,8 +604,14 @@ def get_access_request_by_identity(
     provider: str,
     email: str | None = None,
     line_uid: str | None = None,
+    account_type: str | None = None,
 ) -> AccessRequest | None:
-    doc_id = access_request_doc_id(provider=provider, email=email, line_uid=line_uid)
+    doc_id = access_request_doc_id(
+        provider=provider,
+        email=email,
+        line_uid=line_uid,
+        account_type=account_type,
+    )
     client = _ensure_firestore()
     snapshot = client.collection(ACCESS_REQUESTS_COLLECTION).document(doc_id).get()
     if not snapshot.exists:
@@ -558,6 +658,7 @@ def upsert_access_request(
         provider=normalized_provider,
         email=normalized_email,
         line_uid=normalized_line_uid,
+        account_type=requested_account_type,
     )
     client = _ensure_firestore()
     ref = client.collection(ACCESS_REQUESTS_COLLECTION).document(doc_id)
@@ -606,21 +707,30 @@ def approve_access_request(
     account_type: str,
     target_admin_id: str | None = None,
     target_subcontractor_id: str | None = None,
+    target_customer_id: str | None = None,
     role: str | None = None,
     roles: list[str] | None = None,
     decided_by: str | None = None,
 ) -> AccessRequest:
     normalized_account_type = str(account_type or "").strip().lower()
     normalized_roles = _normalize_admin_roles(roles, default_role=role or ADMIN_ROLE) if normalized_account_type == "admin" else []
+    decided_role = (
+        _primary_role_for_roles(normalized_roles)
+        if normalized_roles
+        else CUSTOMER_ROLE
+        if normalized_account_type == "customer"
+        else SUBCONTRACTOR_ROLE
+    )
     return update_access_request(
         request_id,
         updates={
             "status": "approved",
             "decided_account_type": normalized_account_type,
-            "decided_role": _primary_role_for_roles(normalized_roles) if normalized_roles else SUBCONTRACTOR_ROLE,
+            "decided_role": decided_role,
             "decided_roles": normalized_roles,
             "target_admin_id": _normalize_optional_text(target_admin_id),
             "target_subcontractor_id": _normalize_optional_text(target_subcontractor_id),
+            "target_customer_id": _normalize_optional_text(target_customer_id),
             "rejection_reason": None,
             "decided_by": _normalize_optional_text(decided_by),
             "decided_at": _now_utc(),

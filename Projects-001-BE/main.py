@@ -11,6 +11,7 @@ from app.api.v1 import (
     auth,
     bills,
     chat,
+    daily_reports,
     dashboard,
     insights,
     inspection,
@@ -56,6 +57,7 @@ app.include_router(profile.router, prefix=API_V1_PREFIX)
 app.include_router(subcontractor.router, prefix=API_V1_PREFIX)
 app.include_router(settings.router, prefix=API_V1_PREFIX)
 app.include_router(chat.router, prefix=API_V1_PREFIX)
+app.include_router(daily_reports.router, prefix=API_V1_PREFIX)
 
 
 @app.get("/health", tags=["Health"])

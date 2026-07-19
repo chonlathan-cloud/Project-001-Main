@@ -151,6 +151,9 @@ export function resolvePostLoginPath(user) {
   if (isSubcontractorUser(user)) {
     return '/input';
   }
+  if (isCustomerUser(user)) {
+    return '/project-reports';
+  }
   if (isOwnerUser(user)) {
     return '/';
   }
@@ -211,6 +214,10 @@ export function isAdminPortalUser(user) {
 
 export function isSubcontractorUser(user) {
   return normalizeRoles(user).includes('subcontractor');
+}
+
+export function isCustomerUser(user) {
+  return normalizeRoles(user).includes('customer');
 }
 
 export function isPendingAccessUser(user) {

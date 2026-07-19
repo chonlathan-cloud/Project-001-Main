@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, ShieldCheck, Smartphone, UserPlus } from 'lucide-react';
 
@@ -55,6 +55,15 @@ async function preloadCurrentProfile() {
 const LoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const portal = searchParams.get('portal') === 'customer' ? 'customer' : 'subcontractor';
+  const isCustomerPortal = portal === 'customer';
+  const requestedReturnTo = searchParams.get('returnTo') || '';
+  const returnTo = requestedReturnTo.startsWith('/') && !requestedReturnTo.startsWith('//')
+    ? requestedReturnTo
+    : '';
+  const autoLine = searchParams.get('autoLine') === '1';
+  const autoLineAttemptedRef = useRef(false);
   const [loadingAction, setLoadingAction] = useState('');
   const [error, setError] = useState('');
   const [authNotice, setAuthNotice] = useState(() => (
@@ -94,24 +103,24 @@ const LoginPage = () => {
     }
   };
 
-  const handleLineLogin = async () => {
+  const handleLineLogin = useCallback(async () => {
     setLoadingAction('line');
     setError('');
     setAuthNotice(null);
     clearAuthNotice();
 
     try {
-      const liffClient = await beginLineLogin();
+      const liffClient = await beginLineLogin(portal, returnTo);
       if (!liffClient) {
         return;
       }
 
-      const lineAccessToken = await getActiveLineAccessToken();
+      const lineAccessToken = await getActiveLineAccessToken(portal);
       if (!lineAccessToken) {
         throw new Error('LINE login did not return an access token.');
       }
 
-      const response = await lineLogin({ lineAccessToken });
+      const response = await lineLogin({ lineAccessToken, portal });
       if (response?.status === 'REQUIRE_SIGNUP') {
         savePendingLineAuth(response);
         navigate('/signup', { replace: true });
@@ -121,20 +130,26 @@ const LoginPage = () => {
       saveAuthSession(response);
       clearPendingLineAuth();
       const syncedUser = await preloadCurrentProfile();
-      navigate(resolvePostLoginPath(syncedUser || response.user), { replace: true });
+      navigate(returnTo || resolvePostLoginPath(syncedUser || response.user), { replace: true });
     } catch (loginError) {
       setError(loginError.message || 'Failed to sign in with LINE.');
     } finally {
       setLoadingAction('');
     }
-  };
+  }, [navigate, portal, returnTo]);
+
+  useEffect(() => {
+    if (!autoLine || autoLineAttemptedRef.current) return;
+    autoLineAttemptedRef.current = true;
+    handleLineLogin();
+  }, [autoLine, handleLineLogin]);
 
   const handleRegisterNavigation = () => {
     setError('');
     setAuthNotice(null);
     clearAuthNotice();
     clearPendingLineAuth();
-    navigate('/signup');
+    navigate(`/signup?portal=${portal}`);
   };
 
   return (
@@ -161,7 +176,9 @@ const LoginPage = () => {
           <div style={{ marginBottom: '26px' }}>
             <h1 style={{ fontSize: '32px', marginBottom: '8px', color: 'var(--text-main)' }}>RAYADEE</h1>
             <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-              Approved users can sign in with Google or LINE. New users must register and wait for admin approval.
+              {isCustomerPortal
+                ? 'Customers sign in through RYD PROJECT CUSTOMER. New customer access must be approved for a project.'
+                : 'Approved users can sign in with Google or LINE. New users must register and wait for admin approval.'}
             </p>
           </div>
 
@@ -182,15 +199,17 @@ const LoginPage = () => {
           ) : null}
 
           <div style={{ display: 'grid', gap: '14px' }}>
-            <button
-              type="button"
-              style={actionButton('primary')}
-              onClick={handleAdminGoogleLogin}
-              disabled={loadingAction !== ''}
-            >
-              <ShieldCheck size={18} />
-              {loadingAction === 'admin' ? 'Signing in with Google...' : 'Continue with Google'}
-            </button>
+            {!isCustomerPortal ? (
+              <button
+                type="button"
+                style={actionButton('primary')}
+                onClick={handleAdminGoogleLogin}
+                disabled={loadingAction !== ''}
+              >
+                <ShieldCheck size={18} />
+                {loadingAction === 'admin' ? 'Signing in with Google...' : 'Continue with Google'}
+              </button>
+            ) : null}
 
             <button
               type="button"
@@ -199,7 +218,11 @@ const LoginPage = () => {
               disabled={loadingAction !== ''}
             >
               <Smartphone size={18} />
-              {loadingAction === 'line' ? 'Connecting LINE...' : 'Continue with LINE'}
+              {loadingAction === 'line'
+                ? 'Connecting LINE...'
+                : isCustomerPortal
+                  ? 'Continue with RYD PROJECT CUSTOMER'
+                  : 'Continue with LINE'}
             </button>
           </div>
 

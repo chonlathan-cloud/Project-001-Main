@@ -1581,6 +1581,7 @@ export async function lineLogin(payload) {
     method: 'POST',
     body: JSON.stringify({
       line_access_token: payload.lineAccessToken,
+      portal: payload.portal || 'subcontractor',
     }),
   });
 }
@@ -1729,6 +1730,152 @@ export async function rejectSettingAccessRequest(requestId, payload) {
   return apiRequest(`/api/v1/settings/access-requests/${requestId}/reject`, {
     method: 'POST',
     body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function getDailyReportProjects() {
+  const data = await apiRequest('/api/v1/daily-reports/me/projects');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getMyDailyReportSubmissions() {
+  const data = await apiRequest('/api/v1/daily-reports/me/submissions');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createDailyReportSubmission(payload) {
+  return apiRequest('/api/v1/daily-reports/me/submissions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateDailyReportSubmission(submissionId, payload) {
+  return apiRequest(`/api/v1/daily-reports/me/submissions/${submissionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function uploadDailyReportMedia(submissionId, file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiRequest(`/api/v1/daily-reports/me/submissions/${submissionId}/media`, {
+    method: 'POST',
+    headers: {},
+    body: formData,
+    timeoutMs: 120000,
+  });
+}
+
+export async function deleteDailyReportMedia(mediaId) {
+  return apiRequest(`/api/v1/daily-reports/me/media/${mediaId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function submitDailyReportSubmission(submissionId) {
+  return apiRequest(`/api/v1/daily-reports/me/submissions/${submissionId}/submit`, {
+    method: 'POST',
+  });
+}
+
+export async function getDailyReportMediaUrl(mediaId) {
+  return apiRequest(`/api/v1/daily-reports/media/${mediaId}/signed-url`);
+}
+
+export async function getDailyReportQueue(status = '') {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  const data = await apiRequest(`/api/v1/daily-reports/queue${query}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getDailyReportProjectSettings(projectId) {
+  return apiRequest(`/api/v1/daily-reports/projects/${projectId}/settings`);
+}
+
+export async function updateDailyReportProjectSettings(projectId, payload) {
+  return apiRequest(`/api/v1/daily-reports/projects/${projectId}/settings`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getDailyReportLineDestination(projectId) {
+  return apiRequest(`/api/v1/daily-reports/projects/${projectId}/line-destination`);
+}
+
+export async function updateDailyReportLineDestination(projectId, payload) {
+  return apiRequest(`/api/v1/daily-reports/projects/${projectId}/line-destination`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getDailyReportLineDestinationCandidates() {
+  const data = await apiRequest('/api/v1/daily-reports/line/destination-candidates');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getDailyReport(reportId) {
+  return apiRequest(`/api/v1/daily-reports/reports/${reportId}`);
+}
+
+export async function updateDailyReportDraft(reportId, payload) {
+  return apiRequest(`/api/v1/daily-reports/reports/${reportId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function requestDailyReportChanges(reportId, payload) {
+  return apiRequest(`/api/v1/daily-reports/reports/${reportId}/request-changes`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function publishDailyReport(reportId, payload = {}) {
+  return apiRequest(`/api/v1/daily-reports/reports/${reportId}/publish`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    timeoutMs: 60000,
+  });
+}
+
+export async function startDailyReportCorrection(reportId) {
+  return apiRequest(`/api/v1/daily-reports/reports/${reportId}/correction`, {
+    method: 'POST',
+  });
+}
+
+export async function retryDailyReportDelivery(reportId) {
+  return apiRequest(`/api/v1/daily-reports/reports/${reportId}/retry-delivery`, {
+    method: 'POST',
+    timeoutMs: 60000,
+  });
+}
+
+export async function getCustomerDailyReports() {
+  const data = await apiRequest('/api/v1/daily-reports/customer/reports');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getCustomerDailyReport(reportId) {
+  return apiRequest(`/api/v1/daily-reports/customer/reports/${reportId}`);
+}
+
+export async function acknowledgeCustomerDailyReport(reportId, note = '') {
+  return apiRequest(`/api/v1/daily-reports/customer/reports/${reportId}/acknowledgements`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  });
+}
+
+export async function askCustomerDailyReportQuestion(reportId, question) {
+  return apiRequest(`/api/v1/daily-reports/customer/reports/${reportId}/questions`, {
+    method: 'POST',
+    body: JSON.stringify({ question }),
   });
 }
 

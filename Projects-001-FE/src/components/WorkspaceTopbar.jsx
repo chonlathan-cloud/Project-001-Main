@@ -34,6 +34,11 @@ const routeMeta = [
     description: 'Submit and track project payment or receipt requests.',
   },
   {
+    match: (path) => path.startsWith('/daily-reports'),
+    title: 'Daily Reports',
+    description: 'Review site evidence and publish approved project updates to customers.',
+  },
+  {
     match: (path) => path.startsWith('/profile'),
     title: 'User Profile',
     description: 'Account profile, activity summary, and session details.',
@@ -75,6 +80,12 @@ export default function WorkspaceTopbar({ authUser, pathname }) {
         return {
           title: 'โปรไฟล์ของฉัน',
           description: 'ข้อมูลติดต่อ บัญชีธนาคาร และข้อมูลสำหรับใช้ในระบบ',
+        };
+      }
+      if (isSubcontractor && pathname.startsWith('/daily-reports')) {
+        return {
+          title: 'รายงานประจำวัน',
+          description: 'บันทึกงานหน้างาน หลักฐาน ปัญหา และแผนงานสำหรับวันถัดไป',
         };
       }
       return routeMeta.find((item) => item.match(pathname)) || routeMeta[0];

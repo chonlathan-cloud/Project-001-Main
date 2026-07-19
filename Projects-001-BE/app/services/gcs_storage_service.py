@@ -30,6 +30,8 @@ _TEMP_BILLS_PREFIX = _settings.gcs_temp_bills_prefix.strip().strip("/")
 _PERM_BILLS_PREFIX = _settings.gcs_perm_bills_prefix.strip().strip("/")
 _INSPECTION_BUCKET = _settings.inspection_gcs_bucket or _settings.gcs_bucket_name
 _INSPECTION_PREFIX = _settings.inspection_gcs_prefix.strip().strip("/")
+_DAILY_REPORT_BUCKET = _settings.daily_report_gcs_bucket or _settings.gcs_bucket_name
+_DAILY_REPORT_PREFIX = _settings.daily_report_gcs_prefix.strip().strip("/")
 
 _storage_client = None
 
@@ -58,6 +60,10 @@ def get_default_bucket_name() -> str:
 
 def get_inspection_bucket_name() -> str:
     return _require_bucket_name(_INSPECTION_BUCKET, "INSPECTION_GCS_BUCKET")
+
+
+def get_daily_report_bucket_name() -> str:
+    return _require_bucket_name(_DAILY_REPORT_BUCKET, "DAILY_REPORT_GCS_BUCKET")
 
 
 def _sanitize_filename(file_name: str | None) -> str:
@@ -132,6 +138,22 @@ def _build_inspection_object_name(
     if safe_kind == "REPORT_PDF":
         return f"{_INSPECTION_PREFIX}/{project_id}/{round_id}/reports/{file_id}-{safe_name}"
     return f"{_INSPECTION_PREFIX}/{project_id}/{round_id}/files/{file_id}-{safe_name}"
+
+
+def _build_daily_report_object_name(
+    *,
+    project_id: str,
+    report_date: str,
+    submission_id: str,
+    media_id: str,
+    file_name: str | None,
+) -> str:
+    safe_name = _sanitize_filename(file_name or media_id)
+    safe_date = re.sub(r"[^0-9-]+", "", report_date) or "undated"
+    return (
+        f"{_DAILY_REPORT_PREFIX}/{project_id}/{safe_date}/"
+        f"{submission_id}/{media_id}-{safe_name}"
+    )
 
 
 def _upload_bytes_to_bucket_sync(
@@ -225,6 +247,33 @@ async def upload_inspection_file_to_storage(
         kind=kind,
         zone_id=zone_id,
         defect_id=defect_id,
+    )
+    return await asyncio.to_thread(
+        _upload_bytes_to_bucket_sync,
+        bucket_name=bucket_name,
+        object_name=object_name,
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+
+
+async def upload_daily_report_media_to_storage(
+    *,
+    project_id: str,
+    report_date: str,
+    submission_id: str,
+    media_id: str,
+    file_bytes: bytes,
+    file_name: str | None,
+    content_type: str | None,
+) -> str:
+    bucket_name = get_daily_report_bucket_name()
+    object_name = _build_daily_report_object_name(
+        project_id=project_id,
+        report_date=report_date,
+        submission_id=submission_id,
+        media_id=media_id,
+        file_name=file_name,
     )
     return await asyncio.to_thread(
         _upload_bytes_to_bucket_sync,

@@ -6,6 +6,7 @@ import {
   Briefcase,
   ClipboardCheck,
   ClipboardList,
+  FileCheck2,
   HelpCircle,
   LayoutDashboard,
   LogOut,
@@ -270,6 +271,7 @@ const Sidebar = () => {
     if (isAdminUser) {
       const sharedAdminItems = [
         { name: 'Projects', icon: Briefcase, path: '/project' },
+        { name: 'Daily Reports', icon: FileCheck2, path: '/daily-reports' },
         { name: 'Input', icon: ClipboardList, path: '/input' },
         { name: 'Approvals', icon: BadgeCheck, path: '/approval', badge: navBadges.approvals },
         { name: 'Insights', icon: TrendingUp, path: '/insights' },
@@ -290,6 +292,7 @@ const Sidebar = () => {
 
     return [
       { name: 'ส่งคำขอ', icon: ClipboardList, path: '/input' },
+      { name: 'รายงานประจำวัน', icon: FileCheck2, path: '/daily-reports/me' },
       { name: 'งานตรวจแก้', icon: ClipboardCheck, path: '/inspection/tasks', badge: navBadges.inspectionTasks },
       { name: 'โปรไฟล์', icon: UserRound, path: '/profile/me' },
     ];

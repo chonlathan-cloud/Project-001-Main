@@ -54,6 +54,39 @@ class Settings(BaseSettings):
     line_channel_secret: str | None = Field(default=None, alias="LINE_CHANNEL_SECRET")
     line_liff_id: str | None = Field(default=None, alias="LINE_LIFF_ID")
     line_redirect_uri: str | None = Field(default=None, alias="LINE_REDIRECT_URI")
+    line_subcontractor_channel_id: str | None = Field(
+        default=None,
+        alias="LINE_SUBCONTRACTOR_CHANNEL_ID",
+    )
+    line_subcontractor_channel_secret: str | None = Field(
+        default=None,
+        alias="LINE_SUBCONTRACTOR_CHANNEL_SECRET",
+    )
+    line_subcontractor_channel_access_token: str | None = Field(
+        default=None,
+        alias="LINE_SUBCONTRACTOR_CHANNEL_ACCESS_TOKEN",
+    )
+    line_subcontractor_liff_id: str | None = Field(
+        default=None,
+        alias="LINE_SUBCONTRACTOR_LIFF_ID",
+    )
+    line_customer_channel_id: str | None = Field(
+        default=None,
+        alias="LINE_CUSTOMER_CHANNEL_ID",
+    )
+    line_customer_channel_secret: str | None = Field(
+        default=None,
+        alias="LINE_CUSTOMER_CHANNEL_SECRET",
+    )
+    line_customer_channel_access_token: str | None = Field(
+        default=None,
+        alias="LINE_CUSTOMER_CHANNEL_ACCESS_TOKEN",
+    )
+    line_customer_liff_id: str | None = Field(
+        default=None,
+        alias="LINE_CUSTOMER_LIFF_ID",
+    )
+    frontend_base_url: str = Field(default="http://localhost:5173", alias="FRONTEND_BASE_URL")
 
     jwt_secret_key: str = Field(default="change-me", alias="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
@@ -68,6 +101,24 @@ class Settings(BaseSettings):
     inspection_gcs_prefix: str = Field(default="inspection", alias="INSPECTION_GCS_PREFIX")
     inspection_photo_max_bytes: int = Field(default=10 * 1024 * 1024, alias="INSPECTION_PHOTO_MAX_BYTES")
     inspection_plan_max_bytes: int = Field(default=25 * 1024 * 1024, alias="INSPECTION_PLAN_MAX_BYTES")
+    daily_report_gcs_bucket: str | None = Field(default=None, alias="DAILY_REPORT_GCS_BUCKET")
+    daily_report_gcs_prefix: str = Field(default="daily_reports", alias="DAILY_REPORT_GCS_PREFIX")
+    daily_report_photo_max_bytes: int = Field(
+        default=12 * 1024 * 1024,
+        alias="DAILY_REPORT_PHOTO_MAX_BYTES",
+    )
+    daily_report_video_max_bytes: int = Field(
+        default=100 * 1024 * 1024,
+        alias="DAILY_REPORT_VIDEO_MAX_BYTES",
+    )
+    daily_report_audio_max_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        alias="DAILY_REPORT_AUDIO_MAX_BYTES",
+    )
+    daily_report_internal_task_secret: str | None = Field(
+        default=None,
+        alias="DAILY_REPORT_INTERNAL_TASK_SECRET",
+    )
     signed_url_expires_minutes: int = Field(default=15, alias="SIGNED_URL_EXPIRES_MINUTES")
 
     gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
@@ -147,6 +198,11 @@ class Settings(BaseSettings):
     def _normalize_flowaccount_base_url(cls, value: object) -> str:
         cleaned = str(value or "https://openapi.flowaccount.com/test").strip()
         return cleaned.rstrip("/")
+
+    @field_validator("frontend_base_url", mode="before")
+    @classmethod
+    def _normalize_frontend_base_url(cls, value: object) -> str:
+        return str(value or "http://localhost:5173").strip().rstrip("/")
 
     @field_validator(
         "flowaccount_client_id",

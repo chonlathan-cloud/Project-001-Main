@@ -8,6 +8,7 @@ import {
   getStoredSessionToken,
   canAccessOwnerArea,
   isAdminPortalUser,
+  isCustomerUser,
   isPendingAccessUser,
   resolvePostLoginPath,
   subscribeToAuthChanges,
@@ -31,8 +32,16 @@ const LoginPage = lazy(() => import('./LoginPage'))
 const SignUpPage = lazy(() => import('./SignUpPage'))
 const LineCallbackPage = lazy(() => import('./LineCallbackPage'))
 const PendingApprovalPage = lazy(() => import('./PendingApprovalPage'))
+const DailyReportsPage = lazy(() => import('./DailyReportsPage'))
+const ProjectReportsPage = lazy(() => import('./ProjectReportsPage'))
 
-function ProtectedLayout({ adminOnly = false, ownerOnly = false, pendingOnly = false, shell = true }) {
+function ProtectedLayout({
+  adminOnly = false,
+  ownerOnly = false,
+  pendingOnly = false,
+  customerOnly = false,
+  shell = true,
+}) {
   const location = useLocation()
   const [authUser, setAuthUser] = useState(() => getStoredAuthUser())
   const [sessionToken, setSessionToken] = useState(() => getStoredSessionToken())
@@ -71,7 +80,19 @@ function ProtectedLayout({ adminOnly = false, ownerOnly = false, pendingOnly = f
   }, [pendingOnly, sessionToken])
 
   if (!sessionToken) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />
+    const isSubcontractorLineEntry = location.pathname === '/daily-reports/me'
+    const isLineEntry = customerOnly || isSubcontractorLineEntry
+    const loginParams = new URLSearchParams()
+
+    if (isLineEntry) {
+      loginParams.set('portal', customerOnly ? 'customer' : 'subcontractor')
+      loginParams.set('returnTo', location.pathname + location.search)
+      loginParams.set('autoLine', '1')
+    }
+
+    const loginQuery = loginParams.toString()
+    const loginPath = loginQuery ? `/login?${loginQuery}` : '/login'
+    return <Navigate to={loginPath} replace state={{ from: location.pathname }} />
   }
 
   if (pendingOnly && !isPendingAccessUser(authUser)) {
@@ -87,6 +108,10 @@ function ProtectedLayout({ adminOnly = false, ownerOnly = false, pendingOnly = f
   }
 
   if (ownerOnly && !canAccessOwnerArea(authUser)) {
+    return <Navigate to={resolvePostLoginPath(authUser)} replace />
+  }
+
+  if (customerOnly && !isCustomerUser(authUser)) {
     return <Navigate to={resolvePostLoginPath(authUser)} replace />
   }
 
@@ -157,12 +182,18 @@ function AppRoutes() {
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/setting" element={<SettingPage />} />
         <Route path="/support" element={<SupportPage />} />
+        <Route path="/daily-reports" element={<DailyReportsPage />} />
       </Route>
 
       <Route element={<ProtectedLayout />}>
         <Route path="/input" element={<InputPage />} />
         <Route path="/inspection/tasks" element={<InspectionTasksPage />} />
         <Route path="/profile/me" element={<ProfilePage />} />
+        <Route path="/daily-reports/me" element={<DailyReportsPage />} />
+      </Route>
+
+      <Route element={<ProtectedLayout customerOnly shell={false} />}>
+        <Route path="/project-reports" element={<ProjectReportsPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

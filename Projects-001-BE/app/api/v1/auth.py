@@ -29,6 +29,7 @@ from app.services.identity_service import (
     get_access_request,
     get_access_request_by_identity,
     get_authorized_admin_roles,
+    get_customer_by_line_uid,
     get_subcontractor_by_email,
     get_subcontractor_by_line_uid,
     upsert_access_request,
@@ -41,19 +42,42 @@ logger = logging.getLogger(__name__)
 
 class LineLoginRequest(BaseModel):
     line_access_token: str
+    portal: str = "subcontractor"
 
 
-async def _fetch_line_profile(line_access_token: str) -> dict:
+async def _fetch_line_profile(line_access_token: str, portal: str) -> dict:
     async with httpx.AsyncClient(timeout=15.0) as client:
+        verify_response = await client.get(
+            "https://api.line.me/oauth2/v2.1/verify",
+            params={"access_token": line_access_token},
+        )
         response = await client.get(
             "https://api.line.me/v2/profile",
             headers={"Authorization": f"Bearer {line_access_token}"},
         )
 
-    if response.status_code >= 400:
+    if verify_response.status_code >= 400 or response.status_code >= 400:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="LINE access token is invalid or expired.",
+        )
+
+    settings = get_settings()
+    expected_channel_id = (
+        settings.line_customer_channel_id
+        if portal == "customer"
+        else settings.line_subcontractor_channel_id or settings.line_channel_id
+    )
+    token_channel_id = str((verify_response.json() or {}).get("client_id") or "").strip()
+    if expected_channel_id and token_channel_id != expected_channel_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="LINE access token was issued for a different RAYADEE portal.",
+        )
+    if not expected_channel_id and not settings.is_development:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LINE channel verification is not configured for this portal.",
         )
 
     payload = response.json()
@@ -189,13 +213,100 @@ def _subcontractor_session_response(
     )
 
 
+def _customer_session_response(
+    *,
+    customer_id: str,
+    name: str,
+    line_uid: str,
+    email: str | None = None,
+) -> AuthSessionResponse:
+    roles = ["customer"]
+    subject = email or line_uid or customer_id
+    session_context = _session_context()
+    session_token = issue_session_token(
+        subject=subject,
+        role="customer",
+        roles=roles,
+        email=email,
+        display_name=name,
+        customer_id=customer_id,
+        line_uid=line_uid,
+        auth_provider="line",
+    )
+    firebase_custom_token = _create_firebase_custom_token(
+        subject,
+        claims={"role": "customer", "roles": roles, "customer_id": customer_id},
+    )
+    return AuthSessionResponse(
+        status="SUCCESS",
+        session_token=session_token,
+        firebase_custom_token=firebase_custom_token,
+        user=SessionUserPayload(
+            role="customer",
+            roles=roles,
+            email=email,
+            display_name=name,
+            customer_id=customer_id,
+            line_uid=line_uid,
+            auth_provider="line",
+            **session_context,
+            permissions=role_permissions("customer", roles),
+        ),
+    )
+
+
 @router.post("/line-login", response_model=StandardResponse[dict | AuthSessionResponse])
 async def line_login(request: LineLoginRequest):
     try:
-        line_profile = await _fetch_line_profile(request.line_access_token)
+        portal = str(request.portal or "subcontractor").strip().lower()
+        if portal not in {"subcontractor", "customer"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="LINE portal must be subcontractor or customer.",
+            )
+        line_profile = await _fetch_line_profile(request.line_access_token, portal)
         line_uid = str(line_profile.get("userId") or "").strip()
-        display_name = str(line_profile.get("displayName") or "Subcontractor").strip()
+        display_name = str(
+            line_profile.get("displayName")
+            or ("Customer" if portal == "customer" else "Subcontractor")
+        ).strip()
         line_picture_url = str(line_profile.get("pictureUrl") or "").strip() or None
+
+        if portal == "customer":
+            customer = get_customer_by_line_uid(line_uid)
+            if customer is None:
+                existing_request = get_access_request_by_identity(
+                    provider="line",
+                    line_uid=line_uid,
+                    account_type="customer",
+                )
+                if existing_request is not None and existing_request.status != "approved":
+                    return StandardResponse(data=_pending_session_response(existing_request))
+                return StandardResponse(
+                    data={
+                        "status": "REQUIRE_SIGNUP",
+                        "provider": "line",
+                        "portal": "customer",
+                        "line_uid": line_uid,
+                        "display_name": display_name,
+                        "line_picture_url": line_picture_url,
+                        "message": "Please request customer access for an approved project.",
+                    }
+                )
+            if not customer.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This customer account is inactive. Please contact an admin.",
+                )
+            return StandardResponse(
+                data=_customer_session_response(
+                    customer_id=customer.id,
+                    name=customer.name,
+                    line_uid=line_uid,
+                    email=customer.email,
+                )
+            )
+
         profile = get_subcontractor_by_line_uid(line_uid)
 
         if profile is None:
@@ -526,6 +637,7 @@ async def get_current_session_user(user: AuthenticatedUser = Depends(get_current
             email=user.email,
             display_name=user.display_name,
             subcontractor_id=user.subcontractor_id,
+            customer_id=user.customer_id,
             line_uid=user.line_uid,
             auth_provider=user.auth_provider,
             access_request_id=user.access_request_id,

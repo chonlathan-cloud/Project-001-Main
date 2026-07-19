@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { clearPendingLineAuth, resolvePostLoginPath, saveAuthSession, savePendingLineAuth } from './auth';
 import { lineLogin } from './api';
@@ -7,6 +7,7 @@ import { getActiveLineAccessToken } from './liffClient';
 
 const LineCallbackPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -14,12 +15,16 @@ const LineCallbackPage = () => {
 
     const completeLogin = async () => {
       try {
-        const lineAccessToken = await getActiveLineAccessToken();
+        const portal = new URLSearchParams(location.search).get('portal') === 'customer'
+          ? 'customer'
+          : 'subcontractor';
+        const returnTo = new URLSearchParams(location.search).get('returnTo') || '';
+        const lineAccessToken = await getActiveLineAccessToken(portal);
         if (!lineAccessToken) {
           throw new Error('LINE login did not return an access token.');
         }
 
-        const response = await lineLogin({ lineAccessToken });
+        const response = await lineLogin({ lineAccessToken, portal });
         if (!active) return;
 
         if (response?.status === 'REQUIRE_SIGNUP') {
@@ -30,7 +35,7 @@ const LineCallbackPage = () => {
 
         saveAuthSession(response);
         clearPendingLineAuth();
-        navigate(resolvePostLoginPath(response.user), { replace: true });
+        navigate(returnTo || resolvePostLoginPath(response.user), { replace: true });
       } catch (callbackError) {
         if (!active) return;
         setError(callbackError.message || 'Failed to complete LINE login.');
@@ -42,7 +47,7 @@ const LineCallbackPage = () => {
     return () => {
       active = false;
     };
-  }, [navigate]);
+  }, [location.search, navigate]);
 
   return (
     <div style={{

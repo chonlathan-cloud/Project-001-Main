@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#171a18">
+  <title>Rayadee Site Report — Interactive Mockup</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Rayadee Site Report home">
+      <span class="brand-mark">R</span>
+      <span>
+        <strong>Rayadee</strong>
+        <small>Site Report · Interactive Mockup</small>
+      </span>
+    </a>
+    <div class="top-actions">
+      <span class="demo-label"><span class="live-dot"></span> Demo data</span>
+      <button class="ghost-button" id="resetDemo" type="button">เริ่มใหม่</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Project Delivery System</p>
+        <h1>รายงานไซต์ที่ชัดเจน<br>ตั้งแต่หน้างานถึงเจ้าของ</h1>
+        <p class="hero-copy">ทดลอง workflow ทั้งระบบด้วยข้อมูลจำลอง เลือกมุมมองเพื่อทำงานต่อในแต่ละบทบาท</p>
+      </div>
+      <div class="journey" aria-label="workflow status">
+        <div class="journey-step active" data-journey="worker"><span>1</span><b>Site</b><small>ส่งข้อมูล</small></div>
+        <i></i>
+        <div class="journey-step" data-journey="pm"><span>2</span><b>PM</b><small>ตรวจและอนุมัติ</small></div>
+        <i></i>
+        <div class="journey-step" data-journey="client"><span>3</span><b>Client</b><small>รับรายงาน</small></div>
+      </div>
+    </section>
+
+    <nav class="role-tabs" aria-label="เลือกบทบาท">
+      <button class="role-tab active" data-role="worker" type="button">
+        <span class="role-icon">↗</span>
+        <span><b>หน้างาน</b><small>LINE OA</small></span>
+      </button>
+      <button class="role-tab" data-role="pm" type="button">
+        <span class="role-icon">✓</span>
+        <span><b>Project Manager</b><small>Rayadee Hub</small></span>
+        <em id="pmBadge" class="badge hidden">1</em>
+      </button>
+      <button class="role-tab" data-role="client" type="button">
+        <span class="role-icon">◌</span>
+        <span><b>ลูกค้า</b><small>LINE Group</small></span>
+        <em id="clientBadge" class="badge hidden">1</em>
+      </button>
+    </nav>
+
+    <section class="workspace">
+      <aside class="context-panel">
+        <p class="eyebrow">Demo scenario</p>
+        <h2>RD-024</h2>
+        <p class="project-name">Sukhumvit Office</p>
+        <dl>
+          <div><dt>วันที่</dt><dd>15 ก.ค. 2026</dd></div>
+          <div><dt>ผู้ส่ง</dt><dd>Somchai · Site Lead</dd></div>
+          <div><dt>PM</dt><dd>N. Suriya</dd></div>
+          <div><dt>ความก้าวหน้าเดิม</dt><dd>39%</dd></div>
+        </dl>
+        <div class="system-status">
+          <span id="statusDot" class="status-dot"></span>
+          <div><small>สถานะรายงาน</small><strong id="systemStatus">ยังไม่ส่ง</strong></div>
+        </div>
+        <div class="privacy-note">
+          <b>ข้อมูลจำลองเท่านั้น</b>
+          <p>ไฟล์ที่เลือกจะถูกแสดงเฉพาะในเครื่องนี้ ไม่มีการอัปโหลดหรือส่งเข้า LINE</p>
+        </div>
+      </aside>
+
+      <section class="view-stage">
+        <!-- Worker / LINE view -->
+        <div class="role-view active" id="workerView">
+          <div class="stage-heading">
+            <div><p class="eyebrow">Mobile experience</p><h2>Site Worker · LINE</h2></div>
+            <p>เป้าหมาย: ส่งรายงานปกติภายใน 3 นาที</p>
+          </div>
+
+          <div class="phone-shell">
+            <div class="phone-top"><span>9:41</span><b>LINE</b><span>●●●</span></div>
+            <div class="line-header">
+              <button class="back-symbol" type="button" aria-label="ย้อนกลับ">‹</button>
+              <div class="oa-avatar">R</div>
+              <div><b>Rayadee Project Assistant</b><small>Official Account</small></div>
+              <span class="line-menu">≡</span>
+            </div>
+
+            <div class="worker-screen active" data-worker-screen="home">
+              <div class="chat-area">
+                <div class="date-chip">วันนี้</div>
+                <div class="chat-row">
+                  <div class="oa-avatar small">R</div>
+                  <div class="bubble">สวัสดีครับ วันนี้พร้อมบันทึกรายงานไซต์แล้ว ใช้เวลาไม่เกิน 3 นาที</div>
+                </div>
+                <div class="rich-card">
+                  <span class="mini-mark">R</span>
+                  <p>สร้างบันทึกประจำวันที่ตรวจสอบย้อนหลังได้</p>
+                  <button id="startReport" class="primary-button full" type="button">เริ่ม Daily Site Report</button>
+                </div>
+              </div>
+              <div class="rich-menu-grid">
+                <button id="startReportMenu" type="button"><span>＋</span>Daily Report</button>
+                <button type="button"><span>◫</span>My Drafts</button>
+                <button type="button"><span>◌</span>Status</button>
+                <button type="button"><span>?</span>Help</button>
+              </div>
+            </div>
+
+            <div class="worker-screen" data-worker-screen="capture">
+              <div class="liff-header">
+                <button class="icon-button worker-back" data-back="home" type="button">‹</button>
+                <div><b>Daily Site Report</b><small>บันทึกอัตโนมัติ</small></div>
+                <span class="step-pill">1 / 3</span>
+              </div>
+              <div class="liff-scroll">
+                <label class="field-label" for="projectSelect">โครงการ</label>
+                <select id="projectSelect" class="select-field">
+                  <option>RD-024 · Sukhumvit Office</option>
+                  <option>RD-018 · Rayong Residence</option>
+                </select>
+
+                <div class="date-row"><span>วันที่รายงาน</span><b>15 กรกฎาคม 2026</b></div>
+
+                <div class="section-title"><div><b>หลักฐานหน้างาน</b><small>เลือกได้หลายไฟล์พร้อมกัน</small></div><span id="mediaCount">0 ไฟล์</span></div>
+                <label class="upload-zone" for="mediaInput">
+                  <span class="upload-icon">＋</span>
+                  <b>เพิ่มรูปหรือวิดีโอ</b>
+                  <small>ไฟล์จะอยู่ในเครื่องสำหรับ mockup นี้เท่านั้น</small>
+                </label>
+                <input id="mediaInput" type="file" accept="image/*,video/*" multiple hidden>
+                <div class="media-grid" id="mediaGrid"></div>
+
+                <div class="voice-note">
+                  <button id="voiceButton" class="voice-button" type="button"><span>●</span><b>กดเพื่อบันทึกเสียง</b></button>
+                  <small id="voiceStatus">เหมาะสำหรับอธิบายงานโดยไม่ต้องพิมพ์</small>
+                </div>
+
+                <label class="field-label" for="siteNote">บันทึกสั้น ๆ <em>ไม่บังคับ</em></label>
+                <textarea id="siteNote" rows="3" placeholder="เช่น งานฝ้า Level 2 ต่อเนื่อง ไม่มีผลต่อแผนหลัก"></textarea>
+              </div>
+              <div class="sticky-action"><button id="captureContinue" class="primary-button full" type="button">ตรวจรายการต่อ</button></div>
+            </div>
+
+            <div class="worker-screen" data-worker-screen="checklist">
+              <div class="liff-header">
+                <button class="icon-button worker-back" data-back="capture" type="button">‹</button>
+                <div><b>Quick Check</b><small>เลือกเฉพาะสิ่งที่ต้องดูแล</small></div>
+                <span class="step-pill">2 / 3</span>
+              </div>
+              <div class="liff-scroll">
+                <div class="calm-notice"><span>✓</span><p>ถ้าหน้างานปกติ กดต่อได้ทันที ระบบจะไม่ถามข้อมูลที่ไม่จำเป็น</p></div>
+                <div class="check-list">
+                  <label><span><b>Safety</b><small>มีความเสี่ยงด้านความปลอดภัยหรือไม่</small></span><input type="checkbox" data-issue="safety"><i></i></label>
+                  <label><span><b>Quality</b><small>มีงานที่ต้องแก้ไขหรือตรวจเพิ่มหรือไม่</small></span><input type="checkbox" data-issue="quality"><i></i></label>
+                  <label><span><b>Schedule</b><small>มีเหตุที่อาจกระทบกำหนดการหรือไม่</small></span><input type="checkbox" data-issue="schedule"><i></i></label>
+                  <label><span><b>Material</b><small>มีวัสดุขาด ส่งช้า หรือเสียหายหรือไม่</small></span><input type="checkbox" data-issue="material"><i></i></label>
+                  <label><span><b>Client decision</b><small>มีเรื่องที่ต้องการการตัดสินใจหรือไม่</small></span><input type="checkbox" data-issue="client"><i></i></label>
+                </div>
+                <div id="issueDetail" class="issue-detail hidden">
+                  <label class="field-label" for="issueNote">อธิบายประเด็นที่พบ</label>
+                  <textarea id="issueNote" rows="3" placeholder="พูดหรือพิมพ์สิ่งที่พบ ผลกระทบ และสิ่งที่ทำไปแล้ว"></textarea>
+                </div>
+                <label class="field-label" for="tomorrowPlan">แผนพรุ่งนี้</label>
+                <select id="tomorrowPlan" class="select-field">
+                  <option>ติดตั้งฝ้า Zone B และรับวัสดุทดแทน</option>
+                  <option>ทำงานต่อจากแผนวันนี้</option>
+                  <option>ยังไม่ยืนยัน</option>
+                </select>
+                <label class="location-row"><span><b>แนบตำแหน่งหน้างาน</b><small>ไม่บังคับ · ต้องได้รับความยินยอม</small></span><input id="locationToggle" type="checkbox"><i></i></label>
+              </div>
+              <div class="sticky-action"><button id="checkContinue" class="primary-button full" type="button">ตรวจและส่งรายงาน</button></div>
+            </div>
+
+            <div class="worker-screen" data-worker-screen="review">
+              <div class="liff-header">
+                <button class="icon-button worker-back" data-back="checklist" type="button">‹</button>
+                <div><b>ตรวจข้อมูลก่อนส่ง</b><small>ยังแก้ไขได้</small></div>
+                <span class="step-pill">3 / 3</span>
+              </div>
+              <div class="liff-scroll review-mobile">
+                <div class="summary-project"><span>RD-024</span><div><b>Sukhumvit Office</b><small>15 กรกฎาคม 2026</small></div></div>
+                <div class="summary-block"><small>หลักฐาน</small><b id="reviewMedia">3 รูป · 1 วิดีโอ</b></div>
+                <div class="summary-block"><small>บันทึกหน้างาน</small><p id="reviewNote">งานฝ้า Level 2 ต่อเนื่อง ไม่มีผลต่อแผนหลัก</p></div>
+                <div class="summary-block"><small>ประเด็นที่ต้องติดตาม</small><p id="reviewIssues">Quality · วัสดุฝ้าบางส่วนเสียหาย แยกไว้เพื่อเปลี่ยนแล้ว</p></div>
+                <div class="summary-block"><small>แผนพรุ่งนี้</small><p id="reviewTomorrow">ติดตั้งฝ้า Zone B และรับวัสดุทดแทน</p></div>
+                <div class="consent-line"><span>✓</span><p>ฉันยืนยันว่าข้อมูลนี้เป็นสิ่งที่พบในหน้างานวันนี้</p></div>
+              </div>
+              <div class="sticky-action dual"><button class="secondary-button worker-back" data-back="capture" type="button">แก้ไข</button><button id="submitReport" class="primary-button" type="button">ส่งรายงาน</button></div>
+            </div>
+
+            <div class="worker-screen" data-worker-screen="submitted">
+              <div class="success-screen">
+                <div class="success-ring"><span>✓</span></div>
+                <p class="eyebrow">Report received</p>
+                <h3>ส่งข้อมูลเรียบร้อย</h3>
+                <p>ปิด LINE ได้เลย ระบบกำลังจัดเก็บหลักฐานและสร้างร่างให้ Project Manager ตรวจ</p>
+                <div class="processing-card">
+                  <div><span class="done">✓</span><b>รับข้อมูลแล้ว</b><small>16:42</small></div>
+                  <div><span class="done">✓</span><b>จัดเก็บหลักฐาน</b><small>Complete</small></div>
+                  <div id="aiProcessRow"><span class="spinner"></span><b>AI สร้างร่างรายงาน</b><small>Processing</small></div>
+                  <div id="pmProcessRow" class="muted"><span>4</span><b>PM ตรวจและอนุมัติ</b><small>Waiting</small></div>
+                </div>
+                <button id="goToPM" class="secondary-button full hidden" type="button">ทดลองต่อในมุมมอง PM</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PM view -->
+        <div class="role-view" id="pmView">
+          <div class="stage-heading">
+            <div><p class="eyebrow">Rayadee Hub</p><h2>Project Manager Review</h2></div>
+            <p>ตรวจหลักฐาน แก้ข้อความ และอนุมัติก่อนส่งลูกค้า</p>
+          </div>
+          <div class="pm-shell">
+            <aside class="pm-sidebar">
+              <div class="pm-logo">R</div>
+              <button class="active" type="button"><span>▣</span>Review Queue<em id="queueCount">0</em></button>
+              <button type="button"><span>◇</span>Projects</button>
+              <button type="button"><span>▤</span>Reports</button>
+              <button type="button"><span>!</span>Issues</button>
+              <button type="button"><span>⌁</span>Timeline</button>
+              <button type="button"><span>◫</span>Media</button>
+              <div class="pm-user"><span>NS</span><div><b>N. Suriya</b><small>Project Manager</small></div></div>
+            </aside>
+            <section class="pm-content">
+              <div id="pmEmpty" class="empty-state">
+                <span>✓</span><h3>ยังไม่มีรายงานรอตรวจ</h3><p>ส่งรายงานจากมุมมองหน้างานก่อน แล้วรายการจะปรากฏที่นี่</p>
+                <button class="secondary-button switch-role" data-target="worker" type="button">กลับไปมุมมองหน้างาน</button>
+              </div>
+              <div id="pmReview" class="pm-review hidden">
+                <div class="review-toolbar">
+                  <div><span class="status-label">Awaiting review</span><h3>RD-024 · Daily Site Report</h3><p>15 Jul 2026 · submitted by Somchai at 16:42</p></div>
+                  <div class="toolbar-actions"><button id="rejectReport" class="secondary-button" type="button">ขอข้อมูลเพิ่ม</button><button id="approveReport" class="primary-button" type="button">อนุมัติและเผยแพร่</button></div>
+                </div>
+                <div class="ai-warning"><span>AI</span><p><b>ร่างนี้จัดทำจากหลักฐาน 4 รายการ</b><br>พบ 1 ประเด็น Quality · PM ต้องตรวจความถูกต้องก่อนเผยแพร่</p><em>Confidence: Medium</em></div>
+                <div class="review-columns">
+                  <section class="evidence-pane">
+                    <div class="pane-title"><b>หลักฐานหน้างาน</b><span>4 items</span></div>
+                    <div class="evidence-feature"><div class="evidence-visual ceiling"><span>PHOTO 01</span></div><p>โครงคร่าวฝ้า Level 2 · Zone A</p></div>
+                    <div class="evidence-thumbs"><button class="ceiling" type="button">01</button><button class="wiring" type="button">02</button><button class="material" type="button">03</button><button class="voice-tile" type="button">▶</button></div>
+                    <div class="transcript"><small>Voice transcript · 00:18</small><p>“วันนี้ติดตั้งโครงฝ้าโซนเอเสร็จ ตรวจไฟ first-fix แล้ว มีแผ่นฝ้าเสียหายแยกไว้เปลี่ยน พรุ่งนี้ต่อโซนบี”</p></div>
+                    <div class="risk-card"><span>!</span><div><b>Quality issue detected</b><p>Damaged ceiling material requires replacement evidence.</p></div></div>
+                  </section>
+                  <section class="draft-pane">
+                    <div class="pane-title"><b>Client report draft</b><span>Version 1</span></div>
+                    <label>Executive Summary<textarea id="pmSummary" rows="4">งานติดตั้งโครงคร่าวฝ้า Level 2 ดำเนินต่อเนื่อง และตรวจงานระบบไฟฟ้า first-fix ใน Zone A–B แล้ว พบวัสดุฝ้าชำรุดบางส่วนซึ่งแยกออกเพื่อเปลี่ยน โดยยังไม่กระทบกำหนดการหลัก</textarea></label>
+                    <label>Today's Progress<textarea id="pmProgress" rows="3">• ติดตั้งโครงคร่าวฝ้า Level 2 · Zone A
+• ตรวจระบบไฟฟ้า first-fix · Zone A–B</textarea></label>
+                    <div class="progress-control"><label>Current Progress<input id="progressValue" type="number" value="42" min="0" max="100"></label><div><small>Basis</small><b>PM-approved work packages</b><span>Updated 15 Jul 2026</span></div></div>
+                    <label>Issues<textarea id="pmIssues" rows="3">วัสดุฝ้าชำรุด 1 ชุดถูกแยกไว้เพื่อเปลี่ยน PM จะตรวจวัสดุทดแทนวันที่ 16 กรกฎาคม</textarea></label>
+                    <label>Tomorrow Plan<textarea id="pmTomorrow" rows="2">ติดตั้งโครงคร่าวฝ้า Zone B และรับวัสดุทดแทน</textarea></label>
+                    <div class="approval-check"><input id="approvalCheck" type="checkbox"><label for="approvalCheck">ฉันตรวจหลักฐาน ปลายทาง และข้อความสำหรับลูกค้าแล้ว</label></div>
+                  </section>
+                </div>
+              </div>
+              <div id="pmPublished" class="published-state hidden">
+                <div class="success-ring small"><span>✓</span></div><p class="eyebrow">Published</p><h3>ส่งรายงานเข้ากลุ่มลูกค้าแล้ว</h3><p>RD-024 · Sukhumvit Office · 15 July 2026</p>
+                <div class="publish-receipt"><div><small>Approved by</small><b>N. Suriya</b></div><div><small>Published to</small><b>RD-024 Client Group</b></div><div><small>Version</small><b>1 · Locked</b></div></div>
+                <button id="goToClient" class="primary-button" type="button">ดูข้อความที่ลูกค้าได้รับ</button>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- Client view -->
+        <div class="role-view" id="clientView">
+          <div class="stage-heading">
+            <div><p class="eyebrow">Client experience</p><h2>LINE Client Group</h2></div>
+            <p>ลูกค้าเห็นสถานะสำคัญโดยไม่ต้องติดตามถาม</p>
+          </div>
+          <div class="client-stage">
+            <div class="phone-shell client-phone">
+              <div class="phone-top"><span>17:08</span><b>LINE</b><span>●●●</span></div>
+              <div class="line-header group-header"><button class="back-symbol" type="button">‹</button><div><b>RD-024 · Client Group</b><small>6 members</small></div><span class="line-menu">≡</span></div>
+              <div id="clientEmpty" class="client-empty">
+                <div class="chat-row"><div class="oa-avatar small">R</div><div class="bubble">รายงานจะปรากฏที่นี่หลัง Project Manager อนุมัติ</div></div>
+                <button class="secondary-button switch-role" data-target="pm" type="button">ไปมุมมอง PM</button>
+              </div>
+              <div id="clientReport" class="client-chat hidden">
+                <div class="date-chip">วันนี้</div>
+                <div class="sender-name">Rayadee Project Assistant</div>
+                <article class="line-report-card">
+                  <div class="report-cover"><span>RD-024</span><div><small>DAILY SITE REPORT</small><b>Sukhumvit Office</b><p>15 July 2026</p></div></div>
+                  <div class="report-body">
+                    <section><small>TODAY</small><p id="clientSummary">งานติดตั้งโครงคร่าวฝ้า Level 2 ดำเนินต่อเนื่อง และตรวจงานระบบไฟฟ้า first-fix ใน Zone A–B แล้ว</p></section>
+                    <section><small>CURRENT PROGRESS</small><div class="client-progress"><b id="clientProgress">42%</b><i><span id="progressBar"></span></i></div></section>
+                    <section><small>ISSUES</small><p id="clientIssues">วัสดุฝ้าชำรุด 1 ชุดถูกแยกไว้เพื่อเปลี่ยน PM จะตรวจวัสดุทดแทนวันที่ 16 กรกฎาคม</p></section>
+                    <section><small>TOMORROW</small><p id="clientTomorrow">ติดตั้งโครงคร่าวฝ้า Zone B และรับวัสดุทดแทน</p></section>
+                    <div class="photo-strip"><div class="ceiling"></div><div class="wiring"></div><div class="material"></div></div>
+                    <button id="openFullReport" class="link-button" type="button">ดูรายงานและรูปทั้งหมด →</button>
+                  </div>
+                  <footer>Prepared with Rayadee Project Assistant<br><b>Reviewed by N. Suriya · Project Manager</b></footer>
+                  <div class="client-actions"><button id="acknowledge" type="button">✓ รับทราบ</button><button id="askQuestion" type="button">ถามคำถาม</button></div>
+                </article>
+                <div id="clientResponse" class="client-response hidden"></div>
+              </div>
+            </div>
+            <aside class="client-value">
+              <p class="eyebrow">Owner outcome</p>
+              <h3>“ไม่ต้องตามถามว่า<br>วันนี้หน้างานเป็นอย่างไร”</h3>
+              <ul><li><span>✓</span>เห็นงานที่ดำเนินการแล้ว</li><li><span>✓</span>รู้ประเด็นและผู้รับผิดชอบ</li><li><span>✓</span>เข้าใจงานถัดไป</li><li><span>✓</span>ตรวจย้อนหลังได้</li></ul>
+              <div class="trust-note"><small>สิ่งที่ลูกค้าเห็น</small><b>เฉพาะข้อมูลที่ PM ตรวจและอนุมัติแล้ว</b></div>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <dialog id="questionDialog">
+    <form method="dialog">
+      <button class="dialog-close" value="cancel" aria-label="ปิด">×</button>
+      <p class="eyebrow">Linked to report RD-024</p>
+      <h3>ถาม Project Manager</h3>
+      <p>คำถามจะผูกกับรายงานฉบับนี้เพื่อให้ติดตามได้ชัดเจน</p>
+      <textarea id="questionText" rows="4" placeholder="พิมพ์คำถาม เช่น วัสดุทดแทนจะเข้าหน้างานเมื่อไร"></textarea>
+      <div class="dialog-actions"><button class="secondary-button" value="cancel">ยกเลิก</button><button id="sendQuestion" class="primary-button" value="default">ส่งคำถาม</button></div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
+

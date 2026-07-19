@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Building2, FileBadge2, IdCard, Landmark, Phone, ShieldCheck, Smartphone, User } from 'lucide-react';
 
 import {
@@ -63,7 +63,12 @@ const identityButtonStyle = (tone = 'primary') => ({
 
 const SignUpPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const pendingLineAuth = useMemo(() => getStoredPendingLineAuth(), []);
+  const portal = pendingLineAuth?.portal === 'customer'
+    || new URLSearchParams(location.search).get('portal') === 'customer'
+    ? 'customer'
+    : 'subcontractor';
   const [lineInfo, setLineInfo] = useState(pendingLineAuth);
   const [formData, setFormData] = useState({
     name: pendingLineAuth?.company_name || pendingLineAuth?.display_name || pendingLineAuth?.email || '',
@@ -73,7 +78,11 @@ const SignUpPage = () => {
     bankName: '',
     accountNo: '',
     accountName: pendingLineAuth?.display_name || '',
-    requestedAccountType: pendingLineAuth?.provider === 'google' ? '' : 'subcontractor',
+    requestedAccountType: portal === 'customer'
+      ? 'customer'
+      : pendingLineAuth?.provider === 'google'
+        ? ''
+        : 'subcontractor',
     kycImage: null,
   });
   const [loading, setLoading] = useState(false);
@@ -93,7 +102,8 @@ const SignUpPage = () => {
       name: current.name || identity.company_name || identity.display_name || identity.email || '',
       contactName: current.contactName || identity.contact_name || identity.display_name || '',
       accountName: current.accountName || identity.display_name || '',
-      requestedAccountType: current.requestedAccountType || (provider === 'line' ? 'subcontractor' : ''),
+      requestedAccountType: current.requestedAccountType
+        || (identity.portal === 'customer' ? 'customer' : provider === 'line' ? 'subcontractor' : ''),
     }));
   };
 
@@ -127,17 +137,17 @@ const SignUpPage = () => {
     setError('');
 
     try {
-      const liffClient = await beginLineLogin();
+      const liffClient = await beginLineLogin(portal);
       if (!liffClient) {
         return;
       }
 
-      const lineAccessToken = await getActiveLineAccessToken();
+      const lineAccessToken = await getActiveLineAccessToken(portal);
       if (!lineAccessToken) {
         throw new Error('LINE login did not return an access token.');
       }
 
-      const response = await lineLogin({ lineAccessToken });
+      const response = await lineLogin({ lineAccessToken, portal });
       if (response?.status === 'REQUIRE_SIGNUP') {
         applySignupIdentity(response);
         return;
@@ -349,6 +359,7 @@ const SignUpPage = () => {
                 >
                   <option value="">Admin will decide</option>
                   <option value="subcontractor">Subcontractor</option>
+                  <option value="customer">Customer</option>
                   <option value="admin">Admin / Staff</option>
                 </select>
               </div>

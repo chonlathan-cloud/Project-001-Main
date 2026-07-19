@@ -101,6 +101,7 @@ class AdminDirectoryItem(BaseModel):
     bank_account: BankAccountInfo = Field(default_factory=BankAccountInfo)
     role: str = "admin"
     roles: list[str] = Field(default_factory=list)
+    assigned_project_ids: list[str] = Field(default_factory=list)
     is_active: bool = True
     granted_by: str | None = None
     created_at: datetime | None = None
@@ -129,6 +130,7 @@ class UpsertAdminRequest(BaseModel):
     bank_account: BankAccountInfo | None = None
     role: str = "admin"
     roles: list[str] | None = None
+    assigned_project_ids: list[str] = Field(default_factory=list)
     is_active: bool = True
 
     @field_validator("role", mode="before")
@@ -155,6 +157,7 @@ class UpdateAdminRequest(BaseModel):
     bank_account: BankAccountInfo | None = None
     role: str | None = None
     roles: list[str] | None = None
+    assigned_project_ids: list[str] | None = None
     is_active: bool | None = None
 
     @field_validator("role", mode="before")
@@ -178,6 +181,7 @@ class SessionUserPayload(BaseModel):
     email: str | None = None
     display_name: str | None = None
     subcontractor_id: str | None = None
+    customer_id: str | None = None
     line_uid: str | None = None
     auth_provider: str | None = None
     access_request_id: str | None = None
@@ -221,6 +225,7 @@ class AccessRequestItem(BaseModel):
     decided_roles: list[str] = Field(default_factory=list)
     target_admin_id: str | None = None
     target_subcontractor_id: str | None = None
+    target_customer_id: str | None = None
     rejection_reason: str | None = None
     decided_by: str | None = None
     created_at: datetime | None = None
@@ -231,6 +236,7 @@ class AccessRequestItem(BaseModel):
 class ApproveAccessRequestRequest(BaseModel):
     account_type: str = Field(default="subcontractor")
     existing_subcontractor_id: str | None = None
+    project_ids: list[str] = Field(default_factory=list)
     display_name: str | None = None
     contact_name: str | None = None
     phone: str | None = None
@@ -247,8 +253,8 @@ class ApproveAccessRequestRequest(BaseModel):
     @classmethod
     def validate_account_type(cls, value: str | None) -> str:
         cleaned = str(value or "subcontractor").strip().lower()
-        if cleaned not in {"admin", "subcontractor"}:
-            raise ValueError("account_type must be either 'admin' or 'subcontractor'.")
+        if cleaned not in {"admin", "subcontractor", "customer"}:
+            raise ValueError("account_type must be admin, subcontractor, or customer.")
         return cleaned
 
     @field_validator("role", mode="before")

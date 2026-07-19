@@ -75,12 +75,14 @@ const emptyAdminForm = {
   bank_account: { ...emptyBank },
   role: 'admin',
   roles: ['admin'],
+  assigned_project_ids: [],
   is_active: true,
 };
 
 const emptyAccessDecision = {
   account_type: 'subcontractor',
   existing_subcontractor_id: '',
+  project_ids: [],
   display_name: '',
   contact_name: '',
   phone: '',
@@ -188,12 +190,13 @@ const buildAdminForm = (item = {}) => ({
   },
   role: item.role || 'admin',
   roles: Array.isArray(item.roles) && item.roles.length > 0 ? item.roles : [item.role || 'admin'],
+  assigned_project_ids: Array.isArray(item.assigned_project_ids) ? item.assigned_project_ids : [],
   is_active: item.is_active !== false,
 });
 
 const buildAccessDecision = (item = {}) => {
   const requestedType = normalize(item.requested_account_type);
-  const accountType = requestedType === 'admin' ? 'admin' : 'subcontractor';
+  const accountType = ['admin', 'customer'].includes(requestedType) ? requestedType : 'subcontractor';
   const displayName = item.company_name || item.display_name || item.email || item.line_uid || '';
   return {
     ...emptyAccessDecision,
@@ -210,6 +213,7 @@ const buildAccessDecision = (item = {}) => {
     },
     roles: ['admin'],
     role: 'admin',
+    project_ids: [],
   };
 };
 
@@ -448,6 +452,21 @@ function SettingPage() {
     });
   };
 
+  const toggleAdminProject = (projectId) => {
+    if (!canMutateSettings) return;
+    setAdminForm((current) => {
+      const currentIds = Array.isArray(current.assigned_project_ids)
+        ? current.assigned_project_ids
+        : [];
+      return {
+        ...current,
+        assigned_project_ids: currentIds.includes(projectId)
+          ? currentIds.filter((item) => item !== projectId)
+          : [...currentIds, projectId],
+      };
+    });
+  };
+
   const updateAccessDecisionField = (field, value) => {
     if (!canMutateSubcontractors) return;
     setAccessDecision((current) => ({ ...current, [field]: value }));
@@ -462,6 +481,19 @@ function SettingPage() {
         [field]: value,
       },
     }));
+  };
+
+  const toggleAccessDecisionProject = (projectId) => {
+    if (!canMutateSubcontractors) return;
+    setAccessDecision((current) => {
+      const currentIds = Array.isArray(current.project_ids) ? current.project_ids : [];
+      return {
+        ...current,
+        project_ids: currentIds.includes(projectId)
+          ? currentIds.filter((item) => item !== projectId)
+          : [...currentIds, projectId],
+      };
+    });
   };
 
   const toggleAccessDecisionRole = (roleId) => {
@@ -572,6 +604,7 @@ function SettingPage() {
         department: adminForm.department,
         time: adminForm.time,
         bank_account: adminForm.bank_account,
+        assigned_project_ids: adminForm.assigned_project_ids,
       };
       if (selectedAdmin) {
         const updated = await updateSettingAdmin(selectedAdmin.id, isSelfAdmin
@@ -615,6 +648,10 @@ function SettingPage() {
       setError('Owner access is required to approve admin or staff accounts.');
       return;
     }
+    if (accessDecision.account_type === 'customer' && accessDecision.project_ids.length === 0) {
+      setError('Select at least one project for customer access.');
+      return;
+    }
     setSaving(true);
     setMessage('');
     setError('');
@@ -623,6 +660,7 @@ function SettingPage() {
       await approveSettingAccessRequest(selectedAccessRequest.id, {
         account_type: accessDecision.account_type,
         existing_subcontractor_id: accessDecision.existing_subcontractor_id || null,
+        project_ids: accessDecision.project_ids || [],
         display_name: accessDecision.display_name,
         contact_name: accessDecision.contact_name,
         phone: accessDecision.phone,
@@ -853,6 +891,7 @@ function SettingPage() {
                           disabled={!canMutateSubcontractors}
                         >
                           <option value="subcontractor">Subcontractor</option>
+                          <option value="customer">Customer</option>
                           <option value="admin">Admin / Staff</option>
                         </select>
                       </label>
@@ -920,7 +959,7 @@ function SettingPage() {
                           ))}
                         </select>
                       </label>
-                    ) : (
+                    ) : accessDecision.account_type === 'admin' ? (
                       <div className="settings-project-assignment">
                         <div>
                           <span className="settings-kicker">Internal Roles</span>
@@ -939,6 +978,55 @@ function SettingPage() {
                                   disabled={!canMutateSettings || (checked && roles.length === 1)}
                                 />
                                 <span>{roleOption.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {!normalizeRoleList(accessDecision.roles, accessDecision.role).includes('owner') ? (
+                          <>
+                            <div>
+                              <span className="settings-kicker">Daily Report Projects</span>
+                              <strong>{accessDecision.project_ids.length} selected</strong>
+                            </div>
+                            <div className="settings-project-grid">
+                              {projects.map((project) => {
+                                const projectId = project.project_id || project.id;
+                                const checked = accessDecision.project_ids.includes(projectId);
+                                return (
+                                  <label key={projectId} className={checked ? 'selected' : ''}>
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleAccessDecisionProject(projectId)}
+                                      disabled={!canMutateSettings}
+                                    />
+                                    <span>{project.name || project.project_name || projectId}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="settings-project-assignment">
+                        <div>
+                          <span className="settings-kicker">Customer Projects</span>
+                          <strong>{accessDecision.project_ids.length} selected</strong>
+                        </div>
+                        <div className="settings-project-grid">
+                          {projects.map((project) => {
+                            const projectId = project.project_id || project.id;
+                            const checked = accessDecision.project_ids.includes(projectId);
+                            return (
+                              <label key={projectId} className={checked ? 'selected' : ''}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleAccessDecisionProject(projectId)}
+                                  disabled={!canMutateSubcontractors}
+                                />
+                                <span>{project.name || project.project_name || projectId}</span>
                               </label>
                             );
                           })}
@@ -1003,7 +1091,12 @@ function SettingPage() {
                           type="button"
                           className="settings-button primary"
                           onClick={handleApproveAccessRequest}
-                          disabled={saving || !canMutateSubcontractors || (accessDecision.account_type === 'admin' && !canMutateSettings)}
+                          disabled={
+                            saving
+                            || !canMutateSubcontractors
+                            || (accessDecision.account_type === 'admin' && !canMutateSettings)
+                            || (accessDecision.account_type === 'customer' && accessDecision.project_ids.length === 0)
+                          }
                         >
                           {saving ? <LoaderCircle size={16} className="spin" /> : <UserCheck size={16} />}
                           Approve Access
@@ -1175,6 +1268,32 @@ function SettingPage() {
                         </div>
                       </div>
 
+                      {!normalizeRoleList(adminForm.roles, adminForm.role).includes('owner') ? (
+                        <div className="settings-project-assignment">
+                          <div>
+                            <span className="settings-kicker">Daily Report Projects</span>
+                            <strong>{adminForm.assigned_project_ids.length} selected</strong>
+                          </div>
+                          <div className="settings-project-grid">
+                            {projects.map((project) => {
+                              const projectId = project.project_id || project.id;
+                              const checked = adminForm.assigned_project_ids.includes(projectId);
+                              return (
+                                <label key={projectId} className={checked ? 'selected' : ''}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleAdminProject(projectId)}
+                                    disabled={!canMutateSettings || isCurrentProfile}
+                                  />
+                                  <span>{project.name || project.project_name || projectId}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+
                       <div className="settings-form-grid three">
                         <label className="settings-field">
                           <span>Phone</span>
@@ -1325,6 +1444,32 @@ function SettingPage() {
               })}
             </div>
           </div>
+
+          {!normalizeRoleList(adminForm.roles, adminForm.role).includes('owner') ? (
+            <div className="settings-project-assignment">
+              <div>
+                <span className="settings-kicker">Daily Report Projects</span>
+                <strong>{adminForm.assigned_project_ids.length} selected</strong>
+              </div>
+              <div className="settings-project-grid">
+                {projects.map((project) => {
+                  const projectId = project.project_id || project.id;
+                  const checked = adminForm.assigned_project_ids.includes(projectId);
+                  return (
+                    <label key={projectId} className={checked ? 'selected' : ''}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleAdminProject(projectId)}
+                        disabled={!canMutateSettings}
+                      />
+                      <span>{project.name || project.project_name || projectId}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           <div className="settings-form-grid three">
             <label className="settings-field">

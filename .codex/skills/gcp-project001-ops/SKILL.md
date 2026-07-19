@@ -46,6 +46,22 @@ Run commands only when local credentials permit read-only access and the user ta
 python .codex/skills/gcp-project001-ops/scripts/gcp_project001_readonly.py inventory --execute
 ```
 
+## Optional MCP Server
+
+This skill also includes an additive local MCP server at `scripts/gcp_mcp_server.py`.
+It is meant for interactive read-only diagnostics from Codex, not as a replacement
+for the helper script above. Keep MCP-only dependencies in this skill directory,
+not in backend production requirements:
+
+```bash
+python3 -m pip install -r .codex/skills/gcp-project001-ops/requirements.txt
+```
+
+The MCP server should preserve this skill's safety boundary: no Secret Manager
+payload access, no GCS object downloads, no writes, bounded logs and query
+results, redacted sensitive-looking fields, and no inspection of excluded SaaS
+resources.
+
 For exact command patterns by service, read `references/gcp-readonly-workflows.md` before running diagnostics outside the helper script.
 
 ## Diagnostic Workflow

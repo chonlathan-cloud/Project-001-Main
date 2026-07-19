@@ -17,6 +17,7 @@ security = HTTPBearer(auto_error=False)
 ADMIN_ROLE = "admin"
 OWNER_ROLE = "owner"
 SUBCONTRACTOR_ROLE = "subcontractor"
+CUSTOMER_ROLE = "customer"
 INSPECTOR_ROLE = "inspector"
 PENDING_ROLE = "pending"
 ADMIN_OR_OWNER_ROLES = {ADMIN_ROLE, OWNER_ROLE}
@@ -48,6 +49,7 @@ class AuthenticatedUser:
     email: str | None = None
     display_name: str | None = None
     subcontractor_id: str | None = None
+    customer_id: str | None = None
     line_uid: str | None = None
     auth_provider: str | None = None
     access_request_id: str | None = None
@@ -90,6 +92,10 @@ def role_permissions(role: str, roles: list[str] | tuple[str, ...] | None = None
             "inspection:view",
             "inspection:mutate",
             "inspection:verify",
+            "daily_reports:view",
+            "daily_reports:review",
+            "daily_reports:publish",
+            "daily_reports:configure",
         ])
     if ADMIN_ROLE in normalized_roles:
         add([
@@ -100,6 +106,9 @@ def role_permissions(role: str, roles: list[str] | tuple[str, ...] | None = None
             "inspection:view",
             "inspection:mutate",
             "inspection:verify",
+            "daily_reports:view",
+            "daily_reports:review",
+            "daily_reports:publish",
         ])
     if INSPECTOR_ROLE in normalized_roles:
         add([
@@ -115,6 +124,14 @@ def role_permissions(role: str, roles: list[str] | tuple[str, ...] | None = None
             "profile:view",
             "inspection:view_assigned",
             "inspection:submit_evidence",
+            "daily_reports:view_assigned",
+            "daily_reports:submit",
+        ])
+    if CUSTOMER_ROLE in normalized_roles:
+        add([
+            "daily_reports:view_published",
+            "daily_reports:acknowledge",
+            "daily_reports:question",
         ])
     if PENDING_ROLE in normalized_roles:
         add([
@@ -160,6 +177,7 @@ def _admin_access_user(user: AuthenticatedUser) -> AuthenticatedUser:
         email=user.email,
         display_name=user.display_name,
         subcontractor_id=user.subcontractor_id,
+        customer_id=user.customer_id,
         line_uid=user.line_uid,
         auth_provider=user.auth_provider,
         access_request_id=user.access_request_id,
@@ -190,6 +208,7 @@ def get_current_user_allow_pending(
         email=str(payload.get("email") or "").strip() or None,
         display_name=str(payload.get("display_name") or "").strip() or None,
         subcontractor_id=str(payload.get("subcontractor_id") or "").strip() or None,
+        customer_id=str(payload.get("customer_id") or "").strip() or None,
         line_uid=str(payload.get("line_uid") or "").strip() or None,
         auth_provider=str(payload.get("auth_provider") or "").strip() or None,
         access_request_id=str(payload.get("access_request_id") or "").strip() or None,
@@ -219,6 +238,22 @@ def require_subcontractor_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Subcontractor access is required.",
+        )
+    return user
+
+
+def require_customer_user(
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> AuthenticatedUser:
+    if not user.has_role(CUSTOMER_ROLE):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customer access is required.",
+        )
+    if not user.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customer session does not include customer_id.",
         )
     return user
 
