@@ -192,6 +192,27 @@
   color: #53605b;
 }
 
+.dr-field.has-error input,
+.dr-field.has-error select,
+.dr-field.has-error textarea {
+  border-color: #cf625b;
+  background: #fffafa;
+}
+
+.dr-field.has-error input:focus,
+.dr-field.has-error select:focus,
+.dr-field.has-error textarea:focus {
+  border-color: #b6433c;
+  box-shadow: 0 0 0 3px rgba(182, 67, 60, 0.12);
+}
+
+.dr-field-error {
+  color: #a33730;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
 .dr-context-summary {
   display: grid;
   align-content: center;

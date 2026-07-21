@@ -44,5 +44,13 @@ export function DailyReportStatusBadge({ status, locale = 'en' }) {
 
 export function DailyReportNotice({ tone = 'info', children }) {
   if (!children) return null;
-  return <div className={`dr-notice tone-${tone}`}>{children}</div>;
+  return (
+    <div
+      className={`dr-notice tone-${tone}`}
+      role={tone === 'danger' ? 'alert' : 'status'}
+      aria-live={tone === 'danger' ? 'assertive' : 'polite'}
+    >
+      {children}
+    </div>
+  );
 }

@@ -53,6 +53,127 @@ const EMPTY_FORM = {
   notes: '',
 };
 
+const VALID_ISSUE_SEVERITIES = new Set(['low', 'normal', 'high', 'critical']);
+
+const SUBMISSION_FIELD_MESSAGES = {
+  work_summary: 'กรุณากรอกสรุปงานที่ทำวันนี้',
+  manpower_total: 'จำนวนคนงานต้องเป็นจำนวนเต็มตั้งแต่ 0 ถึง 10,000 คน',
+  progress_percent: 'ความคืบหน้าต้องเป็นตัวเลขตั้งแต่ 0 ถึง 100',
+  checklist: 'ข้อมูลการตรวจสอบหน้างานไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง',
+  site_conditions: 'ข้อมูลสภาพหน้างานไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง',
+  issues: 'ข้อมูลปัญหาหน้างานไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง',
+  tomorrow_plan: 'กรุณากรอกแผนงานวันพรุ่งนี้',
+};
+
+function normalizeStringRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, String(item ?? '').trim()]),
+  );
+}
+
+function normalizeBooleanRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, Boolean(item)]),
+  );
+}
+
+function prepareSubmissionPayload(form) {
+  const errors = {};
+  const manpowerTotal = Number(form.manpower_total);
+  const progressPercent = form.progress_percent === '' || form.progress_percent == null
+    ? null
+    : Number(form.progress_percent);
+
+  if (
+    !Number.isFinite(manpowerTotal)
+    || !Number.isInteger(manpowerTotal)
+    || manpowerTotal < 0
+    || manpowerTotal > 10000
+  ) {
+    errors.manpower_total = SUBMISSION_FIELD_MESSAGES.manpower_total;
+  }
+
+  if (
+    progressPercent != null
+    && (!Number.isFinite(progressPercent) || progressPercent < 0 || progressPercent > 100)
+  ) {
+    errors.progress_percent = SUBMISSION_FIELD_MESSAGES.progress_percent;
+  }
+
+  const rawIssues = Array.isArray(form.issues) ? form.issues : [];
+  const issues = rawIssues
+    .map((issue) => {
+      const title = String(issue?.title ?? '').trim();
+      const severity = String(issue?.severity ?? 'normal').trim().toLowerCase();
+      return {
+        title,
+        detail: String(issue?.detail ?? '').trim() || null,
+        severity: VALID_ISSUE_SEVERITIES.has(severity) ? severity : 'normal',
+        needs_customer_decision: Boolean(issue?.needs_customer_decision),
+      };
+    })
+    .filter((issue) => issue.title);
+
+  const workAreas = Array.isArray(form.work_areas)
+    ? form.work_areas.map((item) => String(item).trim()).filter(Boolean)
+    : String(form.work_areas ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+
+  return {
+    errors,
+    payload: {
+      work_summary: String(form.work_summary ?? '').trim(),
+      work_areas: workAreas,
+      manpower_total: errors.manpower_total ? 0 : manpowerTotal,
+      progress_percent: errors.progress_percent ? null : progressPercent,
+      checklist: normalizeBooleanRecord(form.checklist),
+      site_conditions: normalizeStringRecord(form.site_conditions),
+      issues,
+      tomorrow_plan: String(form.tomorrow_plan ?? '').trim(),
+      notes: String(form.notes ?? '').trim() || null,
+    },
+  };
+}
+
+function validationStep(errors) {
+  return errors.issues || errors.checklist || errors.tomorrow_plan ? 2 : 1;
+}
+
+function apiSubmissionValidationErrors(error) {
+  if (error?.status !== 422 || !Array.isArray(error?.payload?.detail)) return {};
+
+  return error.payload.detail.reduce((errors, item) => {
+    const location = Array.isArray(item?.loc) ? item.loc : [];
+    const field = location.find((part) => SUBMISSION_FIELD_MESSAGES[part]);
+    if (field) errors[field] = SUBMISSION_FIELD_MESSAGES[field];
+    return errors;
+  }, {});
+}
+
+function requiredSubmissionErrors(form) {
+  const errors = {};
+  if (!String(form.work_summary ?? '').trim()) {
+    errors.work_summary = SUBMISSION_FIELD_MESSAGES.work_summary;
+  }
+  if (!String(form.tomorrow_plan ?? '').trim()) {
+    errors.tomorrow_plan = SUBMISSION_FIELD_MESSAGES.tomorrow_plan;
+  }
+  return errors;
+}
+
+function apiSubmissionBusinessErrors(error) {
+  if (error?.status !== 400) return {};
+  const detail = String(error?.detail || '').toLowerCase();
+  if (detail.includes('work summary')) {
+    return { work_summary: SUBMISSION_FIELD_MESSAGES.work_summary };
+  }
+  if (detail.includes('tomorrow plan')) {
+    return { tomorrow_plan: SUBMISSION_FIELD_MESSAGES.tomorrow_plan };
+  }
+  return {};
+}
+
 function formFromSubmission(submission) {
   if (!submission) return EMPTY_FORM;
   return {
@@ -66,22 +187,6 @@ function formFromSubmission(submission) {
     issues: Array.isArray(submission.issues) ? submission.issues : [],
     tomorrow_plan: submission.tomorrow_plan || '',
     notes: submission.notes || '',
-  };
-}
-
-function payloadFromForm(form) {
-  return {
-    work_summary: form.work_summary.trim(),
-    work_areas: form.work_areas.split(',').map((item) => item.trim()).filter(Boolean),
-    manpower_total: Number(form.manpower_total || 0),
-    progress_percent: form.progress_percent === '' ? null : Number(form.progress_percent),
-    checklist: form.checklist,
-    site_conditions: form.site_conditions,
-    issues: form.issues
-      .filter((issue) => issue.title.trim())
-      .map((issue) => ({ ...issue, title: issue.title.trim(), detail: issue.detail?.trim() || null })),
-    tomorrow_plan: form.tomorrow_plan.trim(),
-    notes: form.notes.trim() || null,
   };
 }
 
@@ -111,6 +216,7 @@ export default function SubcontractorDailyReportWorkspace() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const isEditable = !activeSubmission || ['DRAFT', 'CHANGES_REQUESTED'].includes(activeSubmission.status);
   const matchingSubmission = useMemo(
@@ -162,6 +268,7 @@ export default function SubcontractorDailyReportWorkspace() {
     setForm(formFromSubmission(matchingSubmission));
     setFiles([]);
     setFileUploadStates({});
+    setFieldErrors({});
     setStep(1);
   }, [matchingSubmission]);
 
@@ -171,8 +278,22 @@ export default function SubcontractorDailyReportWorkspace() {
     });
   }, [filePreviews]);
 
-  const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const clearFieldError = (field) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const updateForm = (field, value) => {
+    clearFieldError(field);
+    setForm((current) => ({ ...current, [field]: value }));
+  };
+
   const updateNested = (section, field, value) => {
+    clearFieldError(section);
     setForm((current) => ({
       ...current,
       [section]: { ...current[section], [field]: value },
@@ -191,20 +312,46 @@ export default function SubcontractorDailyReportWorkspace() {
     return created;
   };
 
-  const saveDraft = async ({ quiet = false, manageBusy = true } = {}) => {
+  const saveDraft = async ({ quiet = false, manageBusy = true, rethrow = false } = {}) => {
+    const prepared = prepareSubmissionPayload(form);
+    if (Object.keys(prepared.errors).length > 0) {
+      const message = Object.values(prepared.errors)[0];
+      setFieldErrors(prepared.errors);
+      setStep(validationStep(prepared.errors));
+      setNotice({ tone: 'danger', message });
+      const validationError = new Error(message);
+      validationError.code = 'DAILY_REPORT_FORM_INVALID';
+      validationError.fieldErrors = prepared.errors;
+      if (rethrow) throw validationError;
+      return null;
+    }
+
     if (manageBusy) setBusy('save');
     setNotice(null);
     try {
       const draft = await ensureDraft();
-      const updated = await updateDailyReportSubmission(draft.id, payloadFromForm(form));
+      const updated = await updateDailyReportSubmission(draft.id, prepared.payload);
       setActiveSubmission(updated);
       setSubmissions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setFieldErrors({});
       if (!quiet) setNotice({ tone: 'success', message: 'บันทึกร่างเรียบร้อยแล้ว' });
       return updated;
     } catch (error) {
       console.error('Unable to save the draft.', error);
-      setNotice({ tone: 'danger', message: error.message === 'กรุณาเลือกโครงการก่อน' ? error.message : 'ไม่สามารถบันทึกร่างได้ กรุณาลองใหม่อีกครั้ง' });
-      throw error;
+      const apiErrors = apiSubmissionValidationErrors(error);
+      const validationMessage = Object.values(apiErrors)[0];
+      if (validationMessage) {
+        setFieldErrors(apiErrors);
+        setStep(validationStep(apiErrors));
+      }
+      setNotice({
+        tone: 'danger',
+        message: error.message === 'กรุณาเลือกโครงการก่อน'
+          ? error.message
+          : validationMessage || 'ไม่สามารถบันทึกร่างได้ กรุณาลองใหม่อีกครั้ง',
+      });
+      if (rethrow) throw error;
+      return null;
     } finally {
       if (manageBusy) setBusy('');
     }
@@ -322,7 +469,15 @@ export default function SubcontractorDailyReportWorkspace() {
     setBusy('submit');
     setNotice(null);
     try {
-      const saved = await saveDraft({ quiet: true, manageBusy: false });
+      const requiredErrors = requiredSubmissionErrors(form);
+      if (Object.keys(requiredErrors).length > 0) {
+        setFieldErrors((current) => ({ ...current, ...requiredErrors }));
+        setStep(validationStep(requiredErrors));
+        setNotice({ tone: 'danger', message: Object.values(requiredErrors)[0] });
+        return;
+      }
+
+      const saved = await saveDraft({ quiet: true, manageBusy: false, rethrow: true });
       const readyToSubmit = pendingFiles.length > 0
         ? await uploadSelectedFiles(saved, pendingFiles)
         : saved;
@@ -339,6 +494,22 @@ export default function SubcontractorDailyReportWorkspace() {
       setNotice({ tone: 'success', message: 'ส่งรายงานให้ผู้ดูแลหรือเจ้าของโครงการตรวจสอบแล้ว' });
     } catch (error) {
       console.error('Unable to submit the report.', error);
+      if (error?.code === 'DAILY_REPORT_FORM_INVALID' || error?.status === 422) {
+        const validationErrors = error.fieldErrors || apiSubmissionValidationErrors(error);
+        const validationMessage = Object.values(validationErrors)[0]
+          || 'ข้อมูลบางส่วนไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง';
+        setFieldErrors(validationErrors);
+        setStep(validationStep(validationErrors));
+        setNotice({ tone: 'danger', message: validationMessage });
+        return;
+      }
+      const businessErrors = apiSubmissionBusinessErrors(error);
+      if (Object.keys(businessErrors).length > 0) {
+        setFieldErrors((current) => ({ ...current, ...businessErrors }));
+        setStep(validationStep(businessErrors));
+        setNotice({ tone: 'danger', message: Object.values(businessErrors)[0] });
+        return;
+      }
       const isMissingPhoto = String(error?.detail || '').includes('At least one site photo');
       const isUploadFailure = String(error?.path || '').endsWith('/media');
       if (isMissingPhoto || isUploadFailure) setStep(1);
@@ -425,7 +596,7 @@ export default function SubcontractorDailyReportWorkspace() {
                   <HardHat />
                   <div><h3>วันนี้ทำอะไรที่หน้างานบ้าง?</h3><p>ระบุงานที่ทำให้ชัดเจน เพื่อให้ตรวจสอบได้ง่าย</p></div>
                 </div>
-                <label className="dr-field full dr-work-summary">
+                <label className={`dr-field full dr-work-summary${fieldErrors.work_summary ? ' has-error' : ''}`}>
                   <span>สรุปงานที่ทำ *</span>
                   <textarea
                     rows="5"
@@ -433,7 +604,14 @@ export default function SubcontractorDailyReportWorkspace() {
                     onChange={(event) => updateForm('work_summary', event.target.value)}
                     disabled={!isEditable}
                     placeholder="เช่น ติดตั้งโครงฝ้าบริเวณทางเดินชั้น 2 และเริ่มประสานงานระบบ…"
+                    aria-invalid={Boolean(fieldErrors.work_summary)}
+                    aria-describedby={fieldErrors.work_summary ? 'daily-report-work-summary-error' : undefined}
                   />
+                  {fieldErrors.work_summary ? (
+                    <small id="daily-report-work-summary-error" className="dr-field-error" role="alert">
+                      {fieldErrors.work_summary}
+                    </small>
+                  ) : null}
                 </label>
                 <div className="dr-form-grid">
                   <label className="dr-field">
@@ -445,26 +623,45 @@ export default function SubcontractorDailyReportWorkspace() {
                       placeholder="เช่น ชั้น 2, โถงต้อนรับ, ปีกอาคารด้านตะวันออก"
                     />
                   </label>
-                  <label className="dr-field">
+                  <label className={`dr-field${fieldErrors.manpower_total ? ' has-error' : ''}`}>
                     <span><Users size={14} /> จำนวนคนงาน</span>
                     <input
                       type="number"
                       min="0"
+                      max="10000"
+                      step="1"
+                      inputMode="numeric"
                       value={form.manpower_total}
                       onChange={(event) => updateForm('manpower_total', event.target.value)}
                       disabled={!isEditable}
+                      aria-invalid={Boolean(fieldErrors.manpower_total)}
+                      aria-describedby={fieldErrors.manpower_total ? 'daily-report-manpower-error' : undefined}
                     />
+                    {fieldErrors.manpower_total ? (
+                      <small id="daily-report-manpower-error" className="dr-field-error" role="alert">
+                        {fieldErrors.manpower_total}
+                      </small>
+                    ) : null}
                   </label>
-                  <label className="dr-field">
+                  <label className={`dr-field${fieldErrors.progress_percent ? ' has-error' : ''}`}>
                     <span>ความคืบหน้าโดยรวม (%)</span>
                     <input
                       type="number"
                       min="0"
                       max="100"
+                      step="0.1"
+                      inputMode="decimal"
                       value={form.progress_percent}
                       onChange={(event) => updateForm('progress_percent', event.target.value)}
                       disabled={!isEditable}
+                      aria-invalid={Boolean(fieldErrors.progress_percent)}
+                      aria-describedby={fieldErrors.progress_percent ? 'daily-report-progress-error' : undefined}
                     />
+                    {fieldErrors.progress_percent ? (
+                      <small id="daily-report-progress-error" className="dr-field-error" role="alert">
+                        {fieldErrors.progress_percent}
+                      </small>
+                    ) : null}
                   </label>
                   <label className="dr-field">
                     <span>สภาพอากาศ</span>
@@ -641,7 +838,7 @@ export default function SubcontractorDailyReportWorkspace() {
                     </div>
                   ))}
                 </div>
-                <label className="dr-field full">
+                <label className={`dr-field full${fieldErrors.tomorrow_plan ? ' has-error' : ''}`}>
                   <span>แผนงานวันพรุ่งนี้ *</span>
                   <textarea
                     rows="4"
@@ -649,7 +846,14 @@ export default function SubcontractorDailyReportWorkspace() {
                     onChange={(event) => updateForm('tomorrow_plan', event.target.value)}
                     disabled={!isEditable}
                     placeholder="เช่น ดำเนินงานติดตั้งโครงฝ้าต่อ และสรุปงานประสานระบบที่ค้างอยู่…"
+                    aria-invalid={Boolean(fieldErrors.tomorrow_plan)}
+                    aria-describedby={fieldErrors.tomorrow_plan ? 'daily-report-tomorrow-plan-error' : undefined}
                   />
+                  {fieldErrors.tomorrow_plan ? (
+                    <small id="daily-report-tomorrow-plan-error" className="dr-field-error" role="alert">
+                      {fieldErrors.tomorrow_plan}
+                    </small>
+                  ) : null}
                 </label>
               </div>
             ) : null}
