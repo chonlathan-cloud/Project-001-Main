@@ -36,6 +36,21 @@ if [[ ! -f "${BACKEND_ENV_FILE}" ]]; then
   exit 1
 fi
 
+# --env-vars-file replaces the revision's complete environment-variable set.
+# Fail before building if scheduler authentication would be removed by deploy.
+REQUIRED_BACKEND_ENV_KEYS=(
+  DAILY_REPORT_SCHEDULER_SERVICE_ACCOUNT
+  DAILY_REPORT_SCHEDULER_AUDIENCE
+)
+
+for required_key in "${REQUIRED_BACKEND_ENV_KEYS[@]}"; do
+  if ! grep -Eq "^[[:space:]]*${required_key}[[:space:]]*:[[:space:]]*[\"']?[^[:space:]\"'#]" "${BACKEND_ENV_FILE}"; then
+    echo "Missing required backend env value: ${required_key} in ${BACKEND_ENV_FILE}"
+    echo "Deployment stopped to preserve Daily Report Scheduler authentication."
+    exit 1
+  fi
+done
+
 IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/${BACKEND_IMAGE_NAME}:latest"
 
 echo "==> Using GCP project: ${GCP_PROJECT_ID}"

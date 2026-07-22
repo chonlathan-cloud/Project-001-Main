@@ -16,7 +16,11 @@ from app.api.deps.auth import AuthenticatedUser, get_current_user_allow_pending,
 from app.core.config import get_settings
 from app.core.google_clients import get_firebase_auth
 from app.core.observability import log_event
-from app.core.security import issue_session_token
+from app.core.security import (
+    issue_access_request_token,
+    issue_session_token,
+    verify_access_request_token,
+)
 from app.schemas.profile_schema import (
     AdminLoginRequest,
     AuthSessionResponse,
@@ -292,6 +296,11 @@ async def line_login(request: LineLoginRequest):
                         "line_uid": line_uid,
                         "display_name": display_name,
                         "line_picture_url": line_picture_url,
+                        "registration_token": issue_access_request_token(
+                            provider="line",
+                            line_uid=line_uid,
+                            portal=portal,
+                        ),
                         "message": "Please request customer access for an approved project.",
                     }
                 )
@@ -322,6 +331,11 @@ async def line_login(request: LineLoginRequest):
                     "line_uid": line_uid,
                     "display_name": display_name,
                     "line_picture_url": line_picture_url,
+                    "registration_token": issue_access_request_token(
+                        provider="line",
+                        line_uid=line_uid,
+                        portal=portal,
+                    ),
                     "message": "User not found. Please complete registration.",
                 }
             )
@@ -362,91 +376,18 @@ async def line_login(request: LineLoginRequest):
         ) from exc
 
 
-@router.post("/sign-up", response_model=StandardResponse[AuthSessionResponse])
-async def sign_up(
-    line_uid: str = Form(..., description="LINE UID from the login step"),
-    line_picture_url: str | None = Form(default=None, description="LINE avatar URL"),
-    name: str = Form(..., description="Company or subcontractor name"),
-    contact_name: str | None = Form(default=None, description="Default requester/contact name"),
-    phone: str | None = Form(default=None, description="Default contact phone number"),
-    tax_id: str = Form(..., description="Tax Identification Number"),
-    bank_name: str | None = Form(default=None, description="Default bank name"),
-    account_no: str | None = Form(default=None, description="Default bank account number"),
-    account_name: str | None = Form(default=None, description="Default bank account name"),
-    kyc_image: UploadFile | None = File(default=None),
-):
-    try:
-        existing_profile = get_subcontractor_by_line_uid(line_uid.strip())
-        if existing_profile is not None:
-            if not existing_profile.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="This subcontractor account is inactive. Please contact an admin.",
-                )
-            return StandardResponse(
-                data=_subcontractor_session_response(
-                    line_uid=existing_profile.line_uid or line_uid.strip(),
-                    email=existing_profile.email,
-                    subcontractor_id=existing_profile.id,
-                    name=existing_profile.name,
-                )
-            )
-
-        request_id = f"line-{hashlib.sha1(line_uid.strip().encode('utf-8')).hexdigest()[:16]}"
-        gcs_path = None
-        if kyc_image is not None:
-            file_bytes = await kyc_image.read()
-            gcs_path = await upload_kyc_image_to_storage(
-                file_bytes=file_bytes,
-                file_name=kyc_image.filename,
-                content_type=kyc_image.content_type,
-                entity_key=request_id,
-            )
-
-        request = upsert_access_request(
-            provider="line",
-            line_uid=line_uid.strip(),
-            picture_url=(line_picture_url or "").strip() or None,
-            display_name=name.strip(),
-            requested_account_type="subcontractor",
-            company_name=name.strip(),
-            contact_name=(contact_name or "").strip() or None,
-            phone=(phone or "").strip() or None,
-            tax_id=tax_id.strip(),
-            kyc_gcs_path=gcs_path,
-            bank_account={
-                "bank_name": (bank_name or "").strip() or None,
-                "account_no": (account_no or "").strip() or None,
-                "account_name": (account_name or "").strip() or None,
-            },
-        )
-
-        return StandardResponse(data=_pending_session_response(request))
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        log_event(
-            logger,
-            logging.ERROR,
-            "line_signup_failed",
-            error_category=type(exc).__name__,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Sign-up could not be completed.",
-        ) from exc
-
-
 @router.post("/access-request", response_model=StandardResponse[AuthSessionResponse])
 async def submit_access_request(
     provider: str = Form(..., description="Identity provider: google or line"),
+    registration_token: str = Form(..., description="Short-lived identity proof from login"),
     email: str | None = Form(default=None, description="Google email when provider is google"),
     line_uid: str | None = Form(default=None, description="LINE UID when provider is line"),
     picture_url: str | None = Form(default=None, description="Provider avatar URL"),
     display_name: str | None = Form(default=None, description="Provider display name"),
     requested_account_type: str | None = Form(default=None, description="Optional requested account type"),
     company_name: str | None = Form(default=None, description="Company or subcontractor name"),
+    first_name: str | None = Form(default=None, description="Customer first name"),
+    nickname: str | None = Form(default=None, description="Customer nickname"),
     contact_name: str | None = Form(default=None, description="Contact person"),
     phone: str | None = Form(default=None, description="Contact phone"),
     tax_id: str | None = Form(default=None, description="Tax Identification Number"),
@@ -459,6 +400,9 @@ async def submit_access_request(
         normalized_provider = str(provider or "").strip().lower()
         normalized_email = str(email or "").strip().lower() or None
         normalized_line_uid = str(line_uid or "").strip() or None
+        normalized_account_type = str(requested_account_type or "").strip().lower() or None
+        normalized_first_name = str(first_name or "").strip() or None
+        normalized_nickname = str(nickname or "").strip() or None
         if normalized_provider not in {"google", "line"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -473,6 +417,42 @@ async def submit_access_request(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="LINE access requests require a LINE UID.",
+            )
+        if normalized_account_type == "customer":
+            if not normalized_first_name or len(normalized_first_name) < 2:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="กรุณากรอกชื่อจริงอย่างน้อย 2 ตัวอักษร",
+                )
+            if len(normalized_first_name) > 80:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="ชื่อจริงต้องไม่เกิน 80 ตัวอักษร",
+                )
+            if not normalized_nickname:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="กรุณากรอกชื่อเล่น",
+                )
+            if len(normalized_nickname) > 40:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="ชื่อเล่นต้องไม่เกิน 40 ตัวอักษร",
+                )
+
+        verified_identity = verify_access_request_token(registration_token)
+        verified_provider = str(verified_identity.get("provider") or "").strip().lower()
+        verified_email = str(verified_identity.get("email") or "").strip().lower() or None
+        verified_line_uid = str(verified_identity.get("line_uid") or "").strip() or None
+        identity_matches = verified_provider == normalized_provider
+        if normalized_provider == "google":
+            identity_matches = identity_matches and verified_email == normalized_email
+        if normalized_provider == "line":
+            identity_matches = identity_matches and verified_line_uid == normalized_line_uid
+        if not identity_matches:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Access request identity could not be verified. Please sign in again.",
             )
 
         request_key = normalized_email or normalized_line_uid or normalized_provider
@@ -493,9 +473,17 @@ async def submit_access_request(
             line_uid=normalized_line_uid,
             picture_url=(picture_url or "").strip() or None,
             display_name=(display_name or company_name or contact_name or "").strip() or None,
-            requested_account_type=(requested_account_type or "").strip() or None,
-            company_name=(company_name or display_name or "").strip() or None,
-            contact_name=(contact_name or display_name or "").strip() or None,
+            requested_account_type=normalized_account_type,
+            company_name=(company_name or display_name or "").strip() or None
+            if normalized_account_type != "customer"
+            else None,
+            first_name=normalized_first_name,
+            nickname=normalized_nickname,
+            contact_name=(
+                normalized_first_name
+                if normalized_account_type == "customer"
+                else (contact_name or display_name or "").strip() or None
+            ),
             phone=(phone or "").strip() or None,
             tax_id=(tax_id or "").strip() or None,
             kyc_gcs_path=gcs_path,
@@ -584,6 +572,8 @@ async def admin_login(request: AdminLoginRequest):
                         display_name=display_name,
                         picture_url=picture_url or existing_request.picture_url,
                         company_name=existing_request.company_name,
+                        first_name=existing_request.first_name,
+                        nickname=existing_request.nickname,
                         contact_name=existing_request.contact_name,
                         phone=existing_request.phone,
                         tax_id=existing_request.tax_id,
@@ -600,6 +590,11 @@ async def admin_login(request: AdminLoginRequest):
                     "email": email,
                     "display_name": display_name,
                     "picture_url": picture_url,
+                    "registration_token": issue_access_request_token(
+                        provider="google",
+                        email=email,
+                        portal="staff",
+                    ),
                     "message": "Please complete an access request for admin review.",
                 }
             )

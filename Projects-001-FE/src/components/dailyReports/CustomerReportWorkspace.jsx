@@ -30,20 +30,44 @@ import {
   DailyReportStatusBadge,
 } from './dailyReportUi';
 import { formatReportDate } from './dailyReportUtils';
+import CustomerPhotoLightbox from './CustomerPhotoLightbox';
 
 export default function CustomerReportWorkspace() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const authUser = useMemo(() => getStoredAuthUser(), []);
   const didAutoSelectRef = useRef(false);
+  const photoButtonRefs = useRef(new Map());
   const [reports, setReports] = useState([]);
   const [report, setReport] = useState(null);
   const [mediaUrls, setMediaUrls] = useState({});
+  const [loadedPhotoIds, setLoadedPhotoIds] = useState(() => new Set());
+  const [activePhotoIndex, setActivePhotoIndex] = useState(null);
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState(null);
   const selectedId = searchParams.get('report') || '';
+  const photos = useMemo(
+    () => (report?.media || [])
+      .map((media) => {
+        const access = mediaUrls[media.id];
+        const url = typeof access === 'string' ? access : access?.url;
+        const thumbnailUrl = typeof access === 'string'
+          ? access
+          : (access?.thumbnail_url || access?.thumbnailUrl || url);
+        return {
+          id: media.id,
+          url,
+          thumbnailUrl,
+          fileName: media.file_name || '',
+          sizeBytes: media.size_bytes || 0,
+          alt: media.file_name || 'รูปภาพหน้างาน',
+        };
+      })
+      .filter((photo) => Boolean(photo.url)),
+    [mediaUrls, report],
+  );
 
   useEffect(() => {
     let active = true;
@@ -68,6 +92,9 @@ export default function CustomerReportWorkspace() {
   }, [selectedId, setSearchParams]);
 
   useEffect(() => {
+    setActivePhotoIndex(null);
+    setMediaUrls({});
+    setLoadedPhotoIds(new Set());
     if (!selectedId) {
       setReport(null);
       return;
@@ -83,7 +110,7 @@ export default function CustomerReportWorkspace() {
           photoMedia.slice(0, 8).map(async (media) => {
             try {
               const access = await getDailyReportMediaUrl(media.id);
-              return [media.id, access.url];
+              return [media.id, access];
             } catch {
               return [media.id, ''];
             }
@@ -100,6 +127,27 @@ export default function CustomerReportWorkspace() {
       });
     return () => { active = false; };
   }, [selectedId]);
+
+  useEffect(() => {
+    if (activePhotoIndex !== null && activePhotoIndex >= photos.length) {
+      setActivePhotoIndex(null);
+    }
+  }, [activePhotoIndex, photos.length]);
+
+  const closePhotoViewer = () => {
+    const photoId = photos[activePhotoIndex]?.id;
+    setActivePhotoIndex(null);
+    window.requestAnimationFrame(() => photoButtonRefs.current.get(photoId)?.focus());
+  };
+
+  const markPhotoLoaded = (photoId) => {
+    setLoadedPhotoIds((current) => {
+      if (current.has(photoId)) return current;
+      const next = new Set(current);
+      next.add(photoId);
+      return next;
+    });
+  };
 
   const acknowledge = async () => {
     setBusy('ack');
@@ -224,14 +272,43 @@ export default function CustomerReportWorkspace() {
                 <div className="dr-customer-note"><strong>หมายเหตุจากทีมงานโครงการ</strong><span>{report.customer_note}</span></div>
               ) : null}
 
-              {Object.values(mediaUrls).some(Boolean) ? (
+              {photos.length > 0 ? (
                 <section className="dr-customer-photos">
                   <div className="dr-inline-heading"><h2><Camera /> รูปภาพหน้างาน</h2><span>รูปประกอบรายงานที่อนุมัติแล้ว</span></div>
                   <div>
-                    {(report.media || []).filter((media) => mediaUrls[media.id]).map((media) => (
-                      <a href={mediaUrls[media.id]} target="_blank" rel="noreferrer" key={media.id}>
-                        <img src={mediaUrls[media.id]} alt={media.file_name || 'รูปภาพหน้างาน'} />
-                      </a>
+                    {photos.map((photo, index) => (
+                      <button
+                        type="button"
+                        key={photo.id}
+                        className={loadedPhotoIds.has(photo.id) ? 'is-loaded' : 'is-loading'}
+                        ref={(node) => {
+                          if (node) photoButtonRefs.current.set(photo.id, node);
+                          else photoButtonRefs.current.delete(photo.id);
+                        }}
+                        onClick={() => setActivePhotoIndex(index)}
+                        aria-label={`ดูรูปที่ ${index + 1} จาก ${photos.length}: ${photo.alt}`}
+                        aria-haspopup="dialog"
+                        aria-busy={!loadedPhotoIds.has(photo.id)}
+                      >
+                        <img
+                          src={photo.thumbnailUrl || photo.url}
+                          alt={photo.alt}
+                          loading="lazy"
+                          decoding="async"
+                          fetchPriority="low"
+                          onLoad={() => markPhotoLoaded(photo.id)}
+                          onError={(event) => {
+                            const image = event.currentTarget;
+                            if (image.dataset.fallback !== 'original' && photo.thumbnailUrl !== photo.url) {
+                              image.dataset.fallback = 'original';
+                              image.src = photo.url;
+                              return;
+                            }
+                            markPhotoLoaded(photo.id);
+                          }}
+                        />
+                        <span aria-hidden="true">{index + 1}</span>
+                      </button>
                     ))}
                   </div>
                 </section>
@@ -288,6 +365,15 @@ export default function CustomerReportWorkspace() {
           </section>
         ) : null}
       </main>
+
+      {activePhotoIndex !== null ? (
+        <CustomerPhotoLightbox
+          photos={photos}
+          activeIndex={activePhotoIndex}
+          onIndexChange={setActivePhotoIndex}
+          onClose={closePhotoViewer}
+        />
+      ) : null}
     </div>
   );
 }

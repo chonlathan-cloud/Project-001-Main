@@ -22,6 +22,7 @@ INSPECTOR_ROLE = "inspector"
 PENDING_ROLE = "pending"
 ADMIN_OR_OWNER_ROLES = {ADMIN_ROLE, OWNER_ROLE}
 INSPECTION_STAFF_ROLES = {ADMIN_ROLE, OWNER_ROLE, INSPECTOR_ROLE}
+INTERNAL_STAFF_ROLES = {ADMIN_ROLE, OWNER_ROLE, INSPECTOR_ROLE}
 
 
 def normalize_roles(value: object, fallback: str | None = None) -> tuple[str, ...]:
@@ -113,6 +114,7 @@ def role_permissions(role: str, roles: list[str] | tuple[str, ...] | None = None
     if INSPECTOR_ROLE in normalized_roles:
         add([
             "projects:view",
+            "settings:view",
             "inspection:view",
             "inspection:mutate",
             "inspection:verify",
@@ -145,6 +147,11 @@ def _debug_admin_role(value: str | None) -> str:
     return cleaned if cleaned in ADMIN_OR_OWNER_ROLES else OWNER_ROLE
 
 
+def _debug_internal_role(value: str | None) -> str:
+    cleaned = str(value or "").strip().lower()
+    return cleaned if cleaned in INTERNAL_STAFF_ROLES else OWNER_ROLE
+
+
 def _admin_access_user(user: AuthenticatedUser) -> AuthenticatedUser:
     if not user.has_any_role(ADMIN_OR_OWNER_ROLES):
         raise HTTPException(
@@ -169,6 +176,56 @@ def _admin_access_user(user: AuthenticatedUser) -> AuthenticatedUser:
             detail="Admin access is required.",
         )
     role = OWNER_ROLE if OWNER_ROLE in authorized_roles else ADMIN_ROLE
+
+    return AuthenticatedUser(
+        subject=user.subject,
+        role=role,
+        roles=tuple(authorized_roles),
+        email=user.email,
+        display_name=user.display_name,
+        subcontractor_id=user.subcontractor_id,
+        customer_id=user.customer_id,
+        line_uid=user.line_uid,
+        auth_provider=user.auth_provider,
+        access_request_id=user.access_request_id,
+        access_status=user.access_status,
+        rejection_reason=user.rejection_reason,
+        tenant_id=user.tenant_id,
+        app_env=user.app_env,
+        is_development_override=user.is_development_override,
+    )
+
+
+def _internal_staff_access_user(user: AuthenticatedUser) -> AuthenticatedUser:
+    if not user.has_any_role(INTERNAL_STAFF_ROLES):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Internal staff access is required.",
+        )
+    if not user.email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Internal staff session is missing an email address.",
+        )
+
+    authorized_roles = get_authorized_admin_roles(user.email)
+    if not authorized_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Internal staff access is no longer active for this account.",
+        )
+    if not set(authorized_roles).intersection(INTERNAL_STAFF_ROLES):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Internal staff access is required.",
+        )
+    role = (
+        OWNER_ROLE
+        if OWNER_ROLE in authorized_roles
+        else ADMIN_ROLE
+        if ADMIN_ROLE in authorized_roles
+        else INSPECTOR_ROLE
+    )
 
     return AuthenticatedUser(
         subject=user.subject,
@@ -281,6 +338,31 @@ def require_admin_user(
 
     user = get_current_user(credentials)
     return _admin_access_user(user)
+
+
+def require_internal_staff_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    x_debug_admin_email: str | None = Header(default=None, alias="X-Debug-Admin-Email"),
+    x_debug_admin_role: str | None = Header(default=None, alias="X-Debug-Admin-Role"),
+) -> AuthenticatedUser:
+    settings = get_settings()
+
+    if credentials is None and settings.is_development:
+        email = (x_debug_admin_email or f"dev-admin@{settings.admin_email_domain or 'localhost'}").strip()
+        role = _debug_internal_role(x_debug_admin_role)
+        return AuthenticatedUser(
+            subject=email,
+            role=role,
+            roles=(role,),
+            email=email,
+            display_name="Development Staff",
+            tenant_id=settings.identity_platform_tenant_id,
+            app_env=settings.app_env,
+            is_development_override=True,
+        )
+
+    user = get_current_user(credentials)
+    return _internal_staff_access_user(user)
 
 
 def require_owner_user(

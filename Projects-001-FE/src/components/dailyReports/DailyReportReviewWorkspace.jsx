@@ -37,6 +37,7 @@ import {
   updateDailyReportDraft,
 } from '../../api';
 import { getStoredAuthUser, isOwnerUser } from '../../auth';
+import { requestSidebarBadgeRefresh } from '../sidebarBadgeEvents';
 import {
   DailyReportNotice,
   DailyReportStatusBadge,
@@ -52,6 +53,27 @@ const WORKING_DAY_OPTIONS = [
   { value: 6, label: 'ส.' },
   { value: 7, label: 'อา.' },
 ];
+
+const LINE_TARGET_TYPE_LABELS = {
+  group: 'กลุ่ม LINE',
+  room: 'ห้องสนทนา LINE',
+  user: 'ผู้ใช้ LINE',
+};
+
+function compactLineTargetId(value) {
+  const targetId = String(value || '').trim();
+  if (targetId.length <= 14) return targetId;
+  return `${targetId.slice(0, 6)}…${targetId.slice(-4)}`;
+}
+
+function lineDestinationCandidateLabel(candidate) {
+  const displayName = String(candidate?.display_name || '').trim();
+  const typeLabel = LINE_TARGET_TYPE_LABELS[candidate?.target_type] || 'ปลายทาง LINE';
+  const compactId = compactLineTargetId(candidate?.line_target_id);
+  return displayName
+    ? `${displayName} · ${typeLabel} · ${compactId}`
+    : `${typeLabel} (ยังไม่พบชื่อ) · ${compactId}`;
+}
 
 function draftFromReport(report) {
   return {
@@ -165,6 +187,7 @@ export default function DailyReportReviewWorkspace() {
       }
       await markDailyReportNotificationRead(item.id);
       setNotifications((current) => current.filter((notification) => notification.id !== item.id));
+      requestSidebarBadgeRefresh();
     } catch (error) {
       setNotice({
         tone: 'danger',
@@ -591,7 +614,7 @@ export default function DailyReportReviewWorkspace() {
               />
             </label>
             <label className="dr-field">
-              <span>Discovered LINE destination</span>
+              <span>กลุ่ม LINE ที่ค้นพบ</span>
               <select
                 value=""
                 onChange={(event) => {
@@ -602,16 +625,17 @@ export default function DailyReportReviewWorkspace() {
                     setLineDestination((current) => ({
                       ...current,
                       line_target_id: candidate.line_target_id,
+                      display_name: candidate.display_name || null,
                       target_type: candidate.target_type,
                     }));
                   }
                 }}
                 disabled={lineDestinationCandidates.length === 0}
               >
-                <option value="">Select a group discovered by the LINE webhook</option>
+                <option value="">เลือกกลุ่ม LINE ที่ระบบค้นพบ</option>
                 {lineDestinationCandidates.map((item) => (
                   <option key={item.line_target_id} value={item.line_target_id}>
-                    {item.target_type} · {item.line_target_id}
+                    {lineDestinationCandidateLabel(item)}
                   </option>
                 ))}
               </select>

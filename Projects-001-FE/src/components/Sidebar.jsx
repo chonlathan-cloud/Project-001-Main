@@ -32,6 +32,7 @@ import {
 import {
   getAdminInputRequests,
   getCurrentProfile,
+  getDailyReportNotifications,
   getInputProjectOptions,
   getInspectionDefects,
   getInspectionRounds,
@@ -41,6 +42,7 @@ import { signOutFirebaseClient } from '../firebaseClient';
 import { logoutLineClient } from '../liffClient';
 import logoImage from '../assets/Logo.png';
 import { isInspectionDefectOverdue } from './inspection/inspectionUtils';
+import { SIDEBAR_BADGES_REFRESH_EVENT } from './sidebarBadgeEvents';
 import SidebarToggleButton from './SidebarToggleButton';
 
 const MAX_BADGE_COUNT = 99;
@@ -289,9 +291,10 @@ const Sidebar = ({ collapsed = false, onToggleCollapsed }) => {
       }
 
       if (isAdminUser) {
-        const [approvalRequests, accessRequests] = await Promise.all([
+        const [approvalRequests, accessRequests, dailyReportNotifications] = await Promise.all([
           getAdminInputRequests({ status: 'PENDING_ADMIN' }).catch(() => []),
           canMutateAdminData(authUser) ? getSettingAccessRequests('pending').catch(() => []) : Promise.resolve([]),
+          getDailyReportNotifications({ unreadOnly: true }).catch(() => []),
         ]);
         if (!isActive) return;
 
@@ -300,6 +303,7 @@ const Sidebar = ({ collapsed = false, onToggleCollapsed }) => {
             approvalRequests.length,
             approvalRequests.some(requestHasCriticalAlert) ? 'danger' : 'warning',
           ),
+          dailyReports: buildBadge(dailyReportNotifications.length, 'danger'),
           settings: buildBadge(accessRequests.length, 'warning'),
         });
         return;
@@ -316,17 +320,19 @@ const Sidebar = ({ collapsed = false, onToggleCollapsed }) => {
     }
 
     loadNavBadges();
+    window.addEventListener(SIDEBAR_BADGES_REFRESH_EVENT, loadNavBadges);
 
     return () => {
       isActive = false;
+      window.removeEventListener(SIDEBAR_BADGES_REFRESH_EVENT, loadNavBadges);
     };
-  }, [authUser, isAdminUser]);
+  }, [authUser, isAdminUser, location.pathname]);
 
   const navItems = useMemo(() => {
     if (isAdminUser) {
       const sharedAdminItems = [
         { name: 'Projects', icon: Briefcase, path: '/project' },
-        { name: 'Daily Reports', icon: FileCheck2, path: '/daily-reports' },
+        { name: 'Daily Reports', icon: FileCheck2, path: '/daily-reports', badge: navBadges.dailyReports },
         { name: 'Input', icon: ClipboardList, path: '/input' },
         { name: 'Approvals', icon: BadgeCheck, path: '/approval', badge: navBadges.approvals },
         { name: 'Insights', icon: TrendingUp, path: '/insights' },

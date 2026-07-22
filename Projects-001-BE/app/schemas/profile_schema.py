@@ -63,6 +63,32 @@ class SubcontractorProfileItem(BaseModel):
     updated_at: datetime | None = None
 
 
+class CustomerProfileItem(BaseModel):
+    id: str
+    email: str | None = None
+    line_uid: str | None = None
+    line_picture_url: str | None = None
+    name: str
+    first_name: str | None = None
+    nickname: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    assigned_project_ids: list[str] = Field(default_factory=list)
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class UpdateCustomerProfileRequest(BaseModel):
+    name: str | None = None
+    first_name: str | None = None
+    nickname: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    assigned_project_ids: list[str] | None = None
+    is_active: bool | None = None
+
+
 class UpdateSubcontractorProfileRequest(BaseModel):
     name: str | None = None
     contact_name: str | None = None
@@ -215,6 +241,8 @@ class AccessRequestItem(BaseModel):
     status: str = "pending"
     requested_account_type: str | None = None
     company_name: str | None = None
+    first_name: str | None = None
+    nickname: str | None = None
     contact_name: str | None = None
     phone: str | None = None
     tax_id: str | None = None

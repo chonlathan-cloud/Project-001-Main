@@ -1429,6 +1429,7 @@ def get_line_destination_config(project_id: str) -> dict[str, Any]:
         return {
             "project_id": project_id,
             "line_target_id": None,
+            "display_name": None,
             "target_type": "group",
             "status": "INACTIVE",
             "updated_at": None,
@@ -1449,11 +1450,14 @@ def update_line_destination(
     is_active: bool,
     actor_id: str,
 ) -> dict[str, Any]:
+    normalized_target_id = _optional_text(line_target_id)
+    candidate = get_line_destination_candidate(normalized_target_id) if normalized_target_id else None
     payload = {
         "project_id": project_id,
-        "line_target_id": _optional_text(line_target_id),
+        "line_target_id": normalized_target_id,
+        "display_name": _optional_text((candidate or {}).get("display_name")),
         "target_type": _clean_text(target_type).lower() or "group",
-        "status": "ACTIVE" if is_active and _optional_text(line_target_id) else "INACTIVE",
+        "status": "ACTIVE" if is_active and normalized_target_id else "INACTIVE",
         "updated_at": _now_utc(),
         "updated_by": actor_id,
     }
@@ -1466,6 +1470,40 @@ def update_line_destination(
         detail={"target_type": payload["target_type"], "status": payload["status"]},
     )
     return payload
+
+
+def get_line_destination_candidate(line_target_id: str) -> dict[str, Any] | None:
+    snapshot = (
+        _client()
+        .collection(DESTINATION_CANDIDATES_COLLECTION)
+        .document(line_target_id)
+        .get()
+    )
+    return _public(snapshot) if snapshot.exists else None
+
+
+def update_line_destination_candidate_display_name(
+    *,
+    line_target_id: str,
+    display_name: str | None,
+    display_name_status: str,
+) -> dict[str, Any]:
+    now = _now_utc()
+    ref = _client().collection(DESTINATION_CANDIDATES_COLLECTION).document(line_target_id)
+    snapshot = ref.get()
+    payload = {
+        "display_name_status": _clean_text(display_name_status).upper() or "UNAVAILABLE",
+        "display_name_checked_at": now,
+        "updated_at": now,
+    }
+    normalized_display_name = _optional_text(display_name)
+    if normalized_display_name:
+        payload["display_name"] = normalized_display_name
+        payload["display_name_updated_at"] = now
+    ref.set(payload, merge=True)
+    stored = snapshot.to_dict() or {"id": line_target_id, "line_target_id": line_target_id}
+    stored.update(payload)
+    return stored
 
 
 def record_line_destination_candidate(
@@ -1489,7 +1527,9 @@ def record_line_destination_candidate(
     if not snapshot.exists:
         payload["created_at"] = now
     ref.set(payload, merge=True)
-    return payload
+    stored = snapshot.to_dict() or {}
+    stored.update(payload)
+    return stored
 
 
 def list_line_destination_candidates() -> list[dict[str, Any]]:

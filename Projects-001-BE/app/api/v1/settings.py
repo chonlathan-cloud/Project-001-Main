@@ -12,7 +12,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps.auth import AuthenticatedUser, require_admin_user, require_owner_user
+from app.api.deps.auth import (
+    AuthenticatedUser,
+    require_admin_user,
+    require_internal_staff_user,
+    require_owner_user,
+)
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.boq import Project
@@ -20,9 +25,11 @@ from app.schemas.profile_schema import (
     AccessRequestItem,
     ApproveAccessRequestRequest,
     AdminDirectoryItem,
+    CustomerProfileItem,
     RejectAccessRequestRequest,
     SubcontractorProfileItem,
     UpdateAdminRequest,
+    UpdateCustomerProfileRequest,
     UpdateSubcontractorProfileRequest,
     UpsertAdminRequest,
 )
@@ -41,18 +48,22 @@ from app.services.identity_service import (
     customer_doc_id_for_identity,
     get_access_request,
     get_admin,
+    get_customer,
     get_subcontractor_by_email,
     get_subcontractor_by_line_uid,
     list_admins as list_admin_directory_entries,
     list_access_requests as list_access_request_entries,
+    list_customers as list_customer_profiles,
     list_subcontractors as list_subcontractor_profiles,
     get_subcontractor,
     get_kyc_storage_key,
     reject_access_request,
+    reset_customer_line_binding,
     reset_subcontractor_line_binding,
     subcontractor_doc_id_for_identity,
     update_admin,
     update_access_request,
+    update_customer_profile,
     update_subcontractor_profile,
     upsert_admin,
 )
@@ -90,6 +101,37 @@ def _admin_item(entry) -> AdminDirectoryItem:
     return AdminDirectoryItem(**payload)
 
 
+def _customer_item(
+    entry,
+    *,
+    visible_project_ids: set[str] | None = None,
+) -> CustomerProfileItem:
+    payload = asdict(entry)
+    assigned_project_ids = daily_report_service.list_membership_project_ids(
+        principal_type="customer",
+        principal_id=entry.id,
+    )
+    payload["assigned_project_ids"] = (
+        assigned_project_ids
+        if visible_project_ids is None
+        else sorted(set(assigned_project_ids).intersection(visible_project_ids))
+    )
+    return CustomerProfileItem(**payload)
+
+
+def _customer_project_scope(user: AuthenticatedUser) -> set[str] | None:
+    if user.has_role("owner") or user.has_role("admin"):
+        return None
+    if not user.email:
+        return set()
+    return set(
+        daily_report_service.list_membership_project_ids(
+            principal_type="admin",
+            principal_id=user.email,
+        )
+    )
+
+
 def _sync_admin_project_memberships(
     *,
     email: str,
@@ -108,6 +150,29 @@ def _sync_admin_project_memberships(
             project_id=project_id,
             principal_type="admin",
             principal_id=email,
+            is_active=project_id in desired_ids,
+            actor_id=actor_id,
+        )
+
+
+def _sync_customer_project_memberships(
+    *,
+    customer_id: str,
+    project_ids: list[str],
+    actor_id: str,
+) -> None:
+    current_ids = set(
+        daily_report_service.list_membership_project_ids(
+            principal_type="customer",
+            principal_id=customer_id,
+        )
+    )
+    desired_ids = {str(project_id).strip() for project_id in project_ids if str(project_id).strip()}
+    for project_id in current_ids | desired_ids:
+        daily_report_service.upsert_project_membership(
+            project_id=project_id,
+            principal_type="customer",
+            principal_id=customer_id,
             is_active=project_id in desired_ids,
             actor_id=actor_id,
         )
@@ -240,6 +305,68 @@ async def get_subcontractor_detail(
 ):
     profile = get_subcontractor(sub_id)
     return StandardResponse(data=await _profile_item(profile))
+
+
+@router.get("/customers", response_model=StandardResponse[list[CustomerProfileItem]])
+async def list_customers(user: AuthenticatedUser = Depends(require_internal_staff_user)):
+    visible_project_ids = _customer_project_scope(user)
+    items = [
+        _customer_item(customer, visible_project_ids=visible_project_ids)
+        for customer in list_customer_profiles()
+    ]
+    if visible_project_ids is not None:
+        items = [item for item in items if item.assigned_project_ids]
+    return StandardResponse(data=items)
+
+
+@router.get("/customers/{customer_id}", response_model=StandardResponse[CustomerProfileItem])
+async def get_customer_detail(
+    customer_id: str,
+    user: AuthenticatedUser = Depends(require_internal_staff_user),
+):
+    visible_project_ids = _customer_project_scope(user)
+    item = _customer_item(
+        get_customer(customer_id),
+        visible_project_ids=visible_project_ids,
+    )
+    if visible_project_ids is not None and not item.assigned_project_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This customer is outside your assigned projects.",
+        )
+    return StandardResponse(data=item)
+
+
+@router.put("/customers/{customer_id}", response_model=StandardResponse[CustomerProfileItem])
+async def update_customer(
+    customer_id: str,
+    request: UpdateCustomerProfileRequest,
+    user: AuthenticatedUser = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    updates = request.model_dump(exclude_none=True)
+    assigned_project_ids = updates.pop("assigned_project_ids", None)
+    if assigned_project_ids is not None:
+        await _validate_project_ids(db, assigned_project_ids)
+
+    customer = update_customer_profile(customer_id, updates=updates)
+    if assigned_project_ids is not None:
+        _sync_customer_project_memberships(
+            customer_id=customer.id,
+            project_ids=assigned_project_ids,
+            actor_id=user.email or user.subject,
+        )
+    return StandardResponse(data=_customer_item(customer))
+
+
+@router.post("/customers/{customer_id}/reset-line", response_model=StandardResponse[CustomerProfileItem])
+async def reset_customer_line(
+    customer_id: str,
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    return StandardResponse(
+        data=_customer_item(reset_customer_line_binding(customer_id))
+    )
 
 
 @router.put("/subcontractors/{sub_id}", response_model=StandardResponse[SubcontractorProfileItem])
@@ -440,9 +567,10 @@ async def approve_pending_access_request(
         await _validate_project_ids(db, request.project_ids)
         customer_name = (
             request.display_name
-            or access_request.company_name
-            or access_request.display_name
+            or access_request.nickname
+            or access_request.first_name
             or access_request.contact_name
+            or access_request.display_name
             or "Customer"
         )
         customer = create_customer_profile(
@@ -454,7 +582,13 @@ async def approve_pending_access_request(
             line_uid=access_request.line_uid,
             line_picture_url=access_request.picture_url,
             name=customer_name,
-            contact_name=request.contact_name or access_request.contact_name,
+            first_name=access_request.first_name or access_request.contact_name,
+            nickname=access_request.nickname,
+            contact_name=(
+                request.contact_name
+                or access_request.first_name
+                or access_request.contact_name
+            ),
             phone=request.phone or access_request.phone,
         )
         actor_id = user.email or user.subject

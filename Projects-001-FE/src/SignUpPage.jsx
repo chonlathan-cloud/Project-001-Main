@@ -13,53 +13,20 @@ import { adminLogin, lineLogin, submitAccessRequest } from './api';
 import { signInAdminWithGooglePopup } from './firebaseClient';
 import { beginLineLogin, getActiveLineAccessToken } from './liffClient';
 import logoImage from './assets/Logo.png';
+import CustomerAccessRequestForm from './components/signup/CustomerAccessRequestForm';
+import SignupFormField from './components/signup/SignupFormField';
 
-const fieldBoxStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  backgroundColor: '#fff',
-  borderRadius: '8px',
-  padding: '11px 14px',
-  border: '1px solid var(--border-color)',
-};
-
-const inputStyle = {
-  border: 'none',
-  background: 'transparent',
-  width: '100%',
-  outline: 'none',
-  fontSize: '14px',
-  color: 'var(--text-main)',
-};
-
-const sectionTitleStyle = {
-  gridColumn: '1 / -1',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  paddingBottom: '10px',
-  borderBottom: '1px solid var(--border-color)',
-  fontSize: '18px',
-  fontWeight: '700',
-  color: 'var(--text-main)',
-};
-
-const identityButtonStyle = (tone = 'primary') => ({
-  width: '100%',
-  minHeight: '52px',
-  backgroundColor: tone === 'line' ? '#06c755' : 'var(--primary)',
-  color: '#fff',
-  border: 'none',
-  borderRadius: '8px',
-  padding: '14px 16px',
-  fontSize: '15px',
-  fontWeight: '700',
-  cursor: 'pointer',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: '10px',
-});
+function getThaiSignupError(error, fallbackMessage) {
+  const message = String(error?.message || '').trim();
+  if (/[฀-๿]/.test(message)) return message;
+  if (/popup.*(closed|cancel)|cancel.*popup/i.test(message)) {
+    return 'ยกเลิกการยืนยันตัวตนแล้ว กรุณาลองใหม่เมื่อพร้อม';
+  }
+  if (/network|failed to fetch|connection/i.test(message)) {
+    return 'ไม่สามารถเชื่อมต่อระบบได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง';
+  }
+  return fallbackMessage;
+}
 
 const SignUpPage = () => {
   const navigate = useNavigate();
@@ -69,10 +36,20 @@ const SignUpPage = () => {
     || new URLSearchParams(location.search).get('portal') === 'customer'
     ? 'customer'
     : 'subcontractor';
+  const isCustomerPortal = portal === 'customer';
   const [lineInfo, setLineInfo] = useState(pendingLineAuth);
   const [formData, setFormData] = useState({
-    name: pendingLineAuth?.company_name || pendingLineAuth?.display_name || pendingLineAuth?.email || '',
-    contactName: pendingLineAuth?.contact_name || pendingLineAuth?.display_name || '',
+    name: isCustomerPortal
+      ? ''
+      : pendingLineAuth?.company_name || pendingLineAuth?.display_name || pendingLineAuth?.email || '',
+    firstName: isCustomerPortal
+      ? pendingLineAuth?.first_name || pendingLineAuth?.contact_name || ''
+      : '',
+    nickname: isCustomerPortal
+      ? pendingLineAuth?.nickname || pendingLineAuth?.display_name || ''
+      : '',
+    contactName: pendingLineAuth?.contact_name
+      || (isCustomerPortal ? '' : pendingLineAuth?.display_name || ''),
     phone: '',
     taxId: '',
     bankName: '',
@@ -88,19 +65,30 @@ const SignUpPage = () => {
   const [loading, setLoading] = useState(false);
   const [identityLoadingAction, setIdentityLoadingAction] = useState('');
   const [error, setError] = useState('');
-  const hasVerifiedIdentity = Boolean(lineInfo?.line_uid || lineInfo?.email);
+  const hasVerifiedIdentity = isCustomerPortal
+    ? Boolean(lineInfo?.line_uid)
+    : Boolean(lineInfo?.line_uid || lineInfo?.email);
   const providerLabel = lineInfo?.provider === 'google' ? 'Google' : 'LINE';
   const identityLabel = lineInfo?.email || lineInfo?.display_name || lineInfo?.line_uid || '';
 
   const applySignupIdentity = (response) => {
     const identity = response || {};
     const provider = String(identity.provider || '').trim().toLowerCase();
+    const isCustomerIdentity = isCustomerPortal || identity.portal === 'customer';
     savePendingLineAuth(identity);
     setLineInfo(identity);
     setFormData((current) => ({
       ...current,
-      name: current.name || identity.company_name || identity.display_name || identity.email || '',
-      contactName: current.contactName || identity.contact_name || identity.display_name || '',
+      name: current.name
+        || identity.company_name
+        || (isCustomerIdentity ? '' : identity.display_name || identity.email || ''),
+      firstName: current.firstName
+        || (isCustomerIdentity ? identity.first_name || identity.contact_name || '' : ''),
+      nickname: current.nickname
+        || (isCustomerIdentity ? identity.nickname || identity.display_name || '' : ''),
+      contactName: current.contactName
+        || identity.contact_name
+        || (isCustomerIdentity ? '' : identity.display_name || ''),
       accountName: current.accountName || identity.display_name || '',
       requestedAccountType: current.requestedAccountType
         || (identity.portal === 'customer' ? 'customer' : provider === 'line' ? 'subcontractor' : ''),
@@ -126,7 +114,10 @@ const SignUpPage = () => {
       }
       completeAuthenticatedResponse(response);
     } catch (identityError) {
-      setError(identityError.message || 'Failed to verify Google identity.');
+      setError(getThaiSignupError(
+        identityError,
+        'ไม่สามารถยืนยันตัวตนด้วย Google ได้ กรุณาลองอีกครั้ง',
+      ));
     } finally {
       setIdentityLoadingAction('');
     }
@@ -144,7 +135,7 @@ const SignUpPage = () => {
 
       const lineAccessToken = await getActiveLineAccessToken(portal);
       if (!lineAccessToken) {
-        throw new Error('LINE login did not return an access token.');
+        throw new Error('ไม่พบข้อมูลยืนยันตัวตนจาก LINE กรุณาเข้าสู่ระบบด้วย LINE ใหม่อีกครั้ง');
       }
 
       const response = await lineLogin({ lineAccessToken, portal });
@@ -154,7 +145,10 @@ const SignUpPage = () => {
       }
       completeAuthenticatedResponse(response);
     } catch (identityError) {
-      setError(identityError.message || 'Failed to verify LINE identity.');
+      setError(getThaiSignupError(
+        identityError,
+        'ไม่สามารถยืนยันตัวตนด้วย LINE ได้ กรุณาลองอีกครั้ง',
+      ));
     } finally {
       setIdentityLoadingAction('');
     }
@@ -175,21 +169,35 @@ const SignUpPage = () => {
     try {
       const provider = String(lineInfo?.provider || (lineInfo?.line_uid ? 'line' : 'google')).trim().toLowerCase();
       if (provider === 'line' && !lineInfo?.line_uid) {
-        throw new Error('Missing LINE identity. Start this flow from LINE login first.');
+        throw new Error('ไม่พบข้อมูลยืนยันตัวตนจาก LINE กรุณาเริ่มลงทะเบียนผ่าน LINE ใหม่อีกครั้ง');
       }
       if (provider === 'google' && !lineInfo?.email) {
-        throw new Error('Missing Gmail identity. Start this flow from Google login first.');
+        throw new Error('ไม่พบข้อมูลบัญชี Google กรุณาเริ่มลงทะเบียนผ่าน Google ใหม่อีกครั้ง');
+      }
+      if (!lineInfo?.registration_token) {
+        throw new Error('การยืนยันตัวตนหมดอายุหรือไม่สมบูรณ์ กรุณายืนยันตัวตนใหม่อีกครั้ง');
+      }
+      const customerFirstName = formData.firstName.trim();
+      const customerNickname = formData.nickname.trim();
+      if (isCustomerPortal && customerFirstName.length < 2) {
+        throw new Error('กรุณากรอกชื่อจริงอย่างน้อย 2 ตัวอักษร');
+      }
+      if (isCustomerPortal && !customerNickname) {
+        throw new Error('กรุณากรอกชื่อเล่น');
       }
 
       const response = await submitAccessRequest({
         provider,
+        registrationToken: lineInfo.registration_token,
         email: lineInfo.email,
         lineUid: lineInfo.line_uid,
         pictureUrl: lineInfo.picture_url || lineInfo.line_picture_url,
         displayName: lineInfo.display_name,
         requestedAccountType: formData.requestedAccountType,
         companyName: formData.name,
-        contactName: formData.contactName,
+        firstName: isCustomerPortal ? customerFirstName : '',
+        nickname: isCustomerPortal ? customerNickname : '',
+        contactName: isCustomerPortal ? customerFirstName : formData.contactName,
         phone: formData.phone,
         taxId: formData.taxId,
         bankName: formData.bankName,
@@ -202,360 +210,260 @@ const SignUpPage = () => {
       clearPendingLineAuth();
       navigate(resolvePostLoginPath(response.user), { replace: true });
     } catch (submitError) {
-      setError(submitError.message || 'Failed to complete registration.');
+      setError(getThaiSignupError(
+        submitError,
+        'ไม่สามารถส่งคำขอลงทะเบียนได้ กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง',
+      ));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '100vh',
-      backgroundColor: 'var(--bg-primary)',
-      width: '100%',
-      padding: '40px 20px',
-    }}>
-      <div style={{
-        backgroundColor: 'var(--card-bg)',
-        borderRadius: '12px',
-        width: '100%',
-        maxWidth: '800px',
-        border: '1px solid var(--border-color)',
-        boxShadow: 'none',
-        overflow: 'hidden',
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          padding: '28px 0',
-          borderBottom: '1px solid var(--border-color)',
-        }}>
-          <img src={logoImage} alt="DOUBLEBO" style={{ height: '82px', objectFit: 'contain' }} />
+    <main className={`signup-page${isCustomerPortal ? ' customer-signup-page' : ''}`} lang="th">
+      <section className={`signup-card${isCustomerPortal ? ' customer-signup-shell' : ''}`} aria-labelledby="signup-title">
+        <div className="signup-brand">
+          <img className="signup-brand-logo" src={logoImage} alt="DOUBLEBO" />
         </div>
 
-        <div style={{ padding: '32px' }}>
-          <div style={{ marginBottom: '22px' }}>
-            <h1 style={{ fontSize: '32px', marginBottom: '8px', color: 'var(--text-main)' }}>Request System Access</h1>
-            <p style={{ color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
-              Provide your contact details for admin review. Access starts only after approval.
+        <div className="signup-content">
+          <header className="signup-intro">
+            <span className="signup-eyebrow">{isCustomerPortal ? 'สำหรับลูกค้า' : 'สร้างบัญชีผู้ใช้งาน'}</span>
+            <h1 id="signup-title">
+              {isCustomerPortal ? 'เริ่มต้นใช้งาน RAYADEE' : 'ลงทะเบียนเพื่อเข้าใช้งานระบบ'}
+            </h1>
+            <p>
+              {isCustomerPortal
+                ? 'ยืนยันข้อมูลเล็กน้อย เพื่อให้ผู้ดูแลเชื่อมบัญชีของคุณกับโครงการ'
+                : 'กรอกข้อมูลติดต่อเพื่อส่งให้ผู้ดูแลตรวจสอบ คุณจะเข้าใช้งานระบบได้หลังจากได้รับอนุมัติ'}
             </p>
-          </div>
+          </header>
 
-          {hasVerifiedIdentity ? (
-            <div style={{
-              marginBottom: '18px',
-              padding: '12px 14px',
-              borderRadius: '12px',
-              backgroundColor: 'var(--bg-primary)',
-              border: '1px solid var(--border-color)',
-              color: 'var(--text-main)',
-              fontSize: '13px',
-            }}>
-              Identity verified with <strong>{providerLabel}</strong>: <strong>{identityLabel}</strong>
+          {hasVerifiedIdentity && !isCustomerPortal ? (
+            <div className="signup-identity-summary" aria-live="polite">
+              <ShieldCheck aria-hidden="true" size={18} />
+              <span>
+                ยืนยันตัวตนด้วย <strong>{providerLabel}</strong> แล้ว: <strong>{identityLabel}</strong>
+              </span>
             </div>
           ) : null}
 
           {error ? (
-            <div style={{
-              marginBottom: '18px',
-              padding: '12px 14px',
-              borderRadius: '12px',
-              backgroundColor: '#fff5f4',
-              color: '#b42318',
-              border: '1px solid #f7b4ad',
-              fontSize: '14px',
-            }}>
+            <div className="signup-error" role="alert">
               {error}
             </div>
           ) : null}
 
           {!hasVerifiedIdentity ? (
-            <div style={{
-              padding: '22px',
-              borderRadius: '12px',
-              border: '1px solid var(--border-color)',
-              backgroundColor: 'var(--bg-primary)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', marginBottom: '18px' }}>
-                <div style={{
-                  width: '44px',
-                  height: '44px',
-                  borderRadius: '8px',
-                  backgroundColor: '#eef5f2',
-                  color: 'var(--primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flex: '0 0 auto',
-                }}>
-                  <ShieldCheck size={22} />
+            <section
+              className={`signup-identity-panel${isCustomerPortal ? ' customer-line-panel' : ''}`}
+              aria-labelledby="signup-identity-title"
+            >
+              <div className="signup-identity-heading">
+                <div className="signup-identity-icon">
+                  <ShieldCheck aria-hidden="true" size={22} />
                 </div>
                 <div>
-                  <h2 style={{ fontSize: '20px', margin: '0 0 6px', color: 'var(--text-main)' }}>Verify Identity</h2>
-                  <p style={{ margin: 0, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                    Choose Google or LINE first. After that, submit your details for admin approval.
+                  <h2 id="signup-identity-title">
+                    {isCustomerPortal ? 'ยืนยันตัวตนผ่าน LINE' : 'ยืนยันตัวตน'}
+                  </h2>
+                  <p>
+                    {isCustomerPortal
+                      ? 'ระบบจะใช้ชื่อและรูปโปรไฟล์จาก LINE เพื่อสร้างคำขอเข้าใช้งานอย่างปลอดภัย'
+                      : 'เลือกยืนยันตัวตนด้วย Google หรือ LINE ก่อนกรอกข้อมูลและส่งคำขอให้ผู้ดูแลอนุมัติ'}
                   </p>
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '14px' }} className="identity-choice-grid">
-                <button
-                  type="button"
-                  onClick={handleGoogleIdentity}
-                  disabled={identityLoadingAction !== ''}
-                  style={{
-                    ...identityButtonStyle('primary'),
-                    opacity: identityLoadingAction ? 0.72 : 1,
-                    cursor: identityLoadingAction ? 'wait' : 'pointer',
-                  }}
-                >
-                  <ShieldCheck size={18} />
-                  {identityLoadingAction === 'google' ? 'Verifying Google...' : 'Register with Google'}
-                </button>
+              <div className="signup-identity-actions identity-choice-grid">
+                {!isCustomerPortal ? (
+                  <button
+                    className="signup-identity-button"
+                    type="button"
+                    onClick={handleGoogleIdentity}
+                    disabled={identityLoadingAction !== ''}
+                    aria-busy={identityLoadingAction === 'google'}
+                  >
+                    <ShieldCheck aria-hidden="true" size={18} />
+                    {identityLoadingAction === 'google' ? 'กำลังยืนยันด้วย Google...' : 'ลงทะเบียนด้วย Google'}
+                  </button>
+                ) : null}
 
                 <button
+                  className="signup-identity-button is-line"
                   type="button"
                   onClick={handleLineIdentity}
                   disabled={identityLoadingAction !== ''}
-                  style={{
-                    ...identityButtonStyle('line'),
-                    opacity: identityLoadingAction ? 0.72 : 1,
-                    cursor: identityLoadingAction ? 'wait' : 'pointer',
-                  }}
+                  aria-busy={identityLoadingAction === 'line'}
                 >
-                  <Smartphone size={18} />
-                  {identityLoadingAction === 'line' ? 'Connecting LINE...' : 'Register with LINE'}
+                  <Smartphone aria-hidden="true" size={18} />
+                  {identityLoadingAction === 'line'
+                    ? 'กำลังเชื่อมต่อ LINE...'
+                    : isCustomerPortal ? 'ดำเนินการต่อด้วย LINE' : 'ลงทะเบียนด้วย LINE'}
                 </button>
               </div>
-            </div>
-          ) : (
-            <form
+            </section>
+          ) : isCustomerPortal ? (
+            <CustomerAccessRequestForm
+              formData={formData}
+              lineInfo={lineInfo}
+              loading={loading}
+              onChange={handleChange}
               onSubmit={handleSignUp}
-              className="subcon-signup-form"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                gap: '18px 20px',
-              }}
-            >
-            <div style={sectionTitleStyle}>
-              <Building2 size={20} color="var(--primary)" />
-              Business Information
-            </div>
+            />
+          ) : (
+            <form onSubmit={handleSignUp} className="signup-form subcon-signup-form">
+              <div className="signup-section-title">
+                <Building2 aria-hidden="true" size={20} />
+                <h2>ข้อมูลผู้สมัคร</h2>
+              </div>
 
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
-                Requested Access Type
-              </label>
-              <div style={fieldBoxStyle}>
-                <Building2 size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+              <SignupFormField id="signup-access-type" label="ประเภทการเข้าใช้งานที่ต้องการ" icon={Building2}>
                 <select
+                  id="signup-access-type"
                   value={formData.requestedAccountType}
                   onChange={(event) => handleChange('requestedAccountType', event.target.value)}
-                  style={inputStyle}
                 >
-                  <option value="">Admin will decide</option>
-                  <option value="subcontractor">Subcontractor</option>
-                  <option value="customer">Customer</option>
-                  <option value="admin">Admin / Staff</option>
+                  <option value="">ให้ผู้ดูแลระบบเป็นผู้กำหนด</option>
+                  <option value="subcontractor">ผู้รับเหมา</option>
+                  <option value="customer">ลูกค้า</option>
+                  <option value="admin">ผู้ดูแลระบบ / พนักงาน</option>
                 </select>
-              </div>
-            </div>
+              </SignupFormField>
 
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
-                Company / Display Name
-              </label>
-              <div style={fieldBoxStyle}>
-                <User size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+              <SignupFormField id="signup-company-name" label="ชื่อบริษัท / ชื่อที่ใช้แสดง" icon={User}>
                 <input
+                  id="signup-company-name"
                   type="text"
                   value={formData.name}
                   onChange={(event) => handleChange('name', event.target.value)}
-                  placeholder="ABC Construction Co., Ltd."
-                  style={inputStyle}
+                  placeholder="บริษัท ตัวอย่างก่อสร้าง จำกัด"
+                  autoComplete="organization"
                   required
                 />
-              </div>
-            </div>
+              </SignupFormField>
 
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
-                Default Contact Name
-              </label>
-              <div style={fieldBoxStyle}>
-                <User size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+              <SignupFormField id="signup-contact-name" label="ชื่อผู้ติดต่อหลัก" icon={User}>
                 <input
+                  id="signup-contact-name"
                   type="text"
                   value={formData.contactName}
                   onChange={(event) => handleChange('contactName', event.target.value)}
-                  placeholder="Pao"
-                  style={inputStyle}
+                  placeholder="สมชาย ใจดี"
+                  autoComplete="name"
                   required
                 />
-              </div>
-            </div>
+              </SignupFormField>
 
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
-                Default Phone Number
-              </label>
-              <div style={fieldBoxStyle}>
-                <Phone size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+              <SignupFormField id="signup-phone" label="เบอร์โทรศัพท์" icon={Phone}>
                 <input
+                  id="signup-phone"
                   type="tel"
                   value={formData.phone}
                   onChange={(event) => handleChange('phone', event.target.value)}
                   placeholder="0812345678"
-                  style={inputStyle}
+                  autoComplete="tel"
+                  inputMode="tel"
                 />
-              </div>
-            </div>
+              </SignupFormField>
 
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
-                Tax Identification Number
-              </label>
-              <div style={fieldBoxStyle}>
-                <IdCard size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+              <SignupFormField id="signup-tax-id" label="เลขประจำตัวผู้เสียภาษี" icon={IdCard}>
                 <input
+                  id="signup-tax-id"
                   type="text"
                   value={formData.taxId}
                   onChange={(event) => handleChange('taxId', event.target.value)}
                   placeholder="1234567890123"
-                  style={inputStyle}
+                  inputMode="numeric"
                 />
+              </SignupFormField>
+
+              <div className="signup-section-title">
+                <Landmark aria-hidden="true" size={20} />
+                <h2>ข้อมูลบัญชีธนาคาร</h2>
               </div>
-            </div>
 
-            <div style={sectionTitleStyle}>
-              <Landmark size={20} color="var(--primary)" />
-              Financial Details
-            </div>
-
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
-                Default Bank Name
-              </label>
-              <div style={fieldBoxStyle}>
-                <Landmark size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+              <SignupFormField id="signup-bank-name" label="ชื่อธนาคาร" icon={Landmark}>
                 <input
+                  id="signup-bank-name"
                   type="text"
                   value={formData.bankName}
                   onChange={(event) => handleChange('bankName', event.target.value)}
-                  placeholder="Bangkok Bank"
-                  style={inputStyle}
+                  placeholder="ธนาคารกรุงเทพ"
+                  autoComplete="off"
                 />
-              </div>
-            </div>
+              </SignupFormField>
 
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
-                Default Account Number
-              </label>
-              <div style={fieldBoxStyle}>
-                <Landmark size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+              <SignupFormField id="signup-account-number" label="เลขที่บัญชี" icon={Landmark}>
                 <input
+                  id="signup-account-number"
                   type="text"
                   value={formData.accountNo}
                   onChange={(event) => handleChange('accountNo', event.target.value)}
                   placeholder="123-4-56789-0"
-                  style={inputStyle}
+                  inputMode="numeric"
                 />
-              </div>
-            </div>
+              </SignupFormField>
 
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
-                Default Account Name
-              </label>
-              <div style={fieldBoxStyle}>
-                <User size={18} color="var(--text-main)" style={{ marginRight: '12px' }} />
+              <SignupFormField id="signup-account-name" label="ชื่อบัญชี" icon={User}>
                 <input
+                  id="signup-account-name"
                   type="text"
                   value={formData.accountName}
                   onChange={(event) => handleChange('accountName', event.target.value)}
-                  placeholder="Pao"
-                  style={inputStyle}
+                  placeholder="นายสมชาย ใจดี"
+                  autoComplete="off"
                 />
+              </SignupFormField>
+
+              <div className="signup-section-title">
+                <FileBadge2 aria-hidden="true" size={20} />
+                <h2>การยืนยันตัวตน</h2>
               </div>
-            </div>
 
-            <div style={sectionTitleStyle}>
-              <FileBadge2 size={20} color="var(--primary)" />
-              KYC Verification
-            </div>
-
-            <div style={{ marginBottom: '22px', gridColumn: '1 / -1' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '8px', color: 'var(--text-main)' }}>
-                KYC ID Card Image
-              </label>
-              <div style={{
-                borderRadius: '12px',
-                border: '2px dashed #c1c8c4',
-                backgroundColor: 'var(--bg-primary)',
-                padding: '24px',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', color: 'var(--text-muted)' }}>
-                  <FileBadge2 size={18} />
-                  Upload a photo for private storage and signed-URL review
-                </div>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => handleChange('kycImage', event.target.files?.[0] || null)}
-                />
-                {formData.kycImage ? (
-                  <div style={{ marginTop: '10px', fontSize: '13px', color: 'var(--text-main)' }}>
-                    Selected file: {formData.kycImage.name}
+              <div className="signup-kyc-field">
+                <label className="signup-field-label" htmlFor="signup-kyc-image">รูปบัตรประชาชนสำหรับยืนยันตัวตน (KYC)</label>
+                <div className="signup-kyc-dropzone">
+                  <div className="signup-kyc-description">
+                    <FileBadge2 aria-hidden="true" size={19} />
+                    <span>อัปโหลดรูปบัตรประชาชน ระบบจะจัดเก็บไฟล์แบบส่วนตัวเพื่อให้ผู้ดูแลตรวจสอบเท่านั้น</span>
                   </div>
-                ) : null}
+                  <div className="signup-file-picker">
+                    <input
+                      id="signup-kyc-image"
+                      className="signup-file-input"
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => handleChange('kycImage', event.target.files?.[0] || null)}
+                    />
+                    <label className="signup-file-button" htmlFor="signup-kyc-image">
+                      เลือกรูปบัตรประชาชน
+                    </label>
+                  </div>
+                  {formData.kycImage ? (
+                    <div className="signup-selected-file" aria-live="polite">
+                      ไฟล์ที่เลือก: <strong>{formData.kycImage.name}</strong>
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                gridColumn: '1 / -1',
-                justifySelf: 'end',
-                minWidth: '280px',
-                backgroundColor: 'var(--primary)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '14px',
-                fontSize: '16px',
-                fontWeight: '700',
-                cursor: loading ? 'wait' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                opacity: loading ? 0.7 : 1,
-              }}
-            >
-              {loading ? 'Submitting Request...' : 'Submit for Approval'}
-              <ArrowRight size={18} />
-            </button>
+              <button className="signup-submit-button" type="submit" disabled={loading} aria-busy={loading}>
+                <span>{loading ? 'กำลังส่งคำขอ...' : 'ส่งคำขอเพื่อรออนุมัติ'}</span>
+                <ArrowRight aria-hidden="true" size={18} />
+              </button>
             </form>
           )}
 
-          <div style={{ textAlign: 'center', marginTop: '24px', fontSize: '14px' }}>
-            <Link
-              to="/login"
-              style={{ color: 'var(--primary)', textDecoration: 'none', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-              onClick={() => clearPendingLineAuth()}
-            >
-              <ArrowLeft size={16} /> Back to Login
+          <div className="signup-login-link">
+            <Link to={isCustomerPortal ? '/login?portal=customer' : '/login'} onClick={() => clearPendingLineAuth()}>
+              <ArrowLeft aria-hidden="true" size={16} />
+              กลับไปหน้าเข้าสู่ระบบ
             </Link>
           </div>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 };
 

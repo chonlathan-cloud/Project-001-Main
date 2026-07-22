@@ -58,6 +58,7 @@ from app.services.daily_report_line_service import (
     deliver_published_report,
     handle_customer_webhook,
     notify_subcontractor_submission,
+    refresh_line_destination_candidate_names,
     verify_customer_webhook_signature,
 )
 from app.services.daily_report_notification_service import (
@@ -65,9 +66,12 @@ from app.services.daily_report_notification_service import (
     run_due_action_scan,
 )
 from app.services.gcs_storage_service import (
-    delete_storage_key,
+    delete_daily_report_media_storage,
     generate_signed_url_for_storage_key,
     upload_daily_report_media_to_storage,
+)
+from app.services.daily_report_thumbnail_service import (
+    daily_report_thumbnail_storage_key,
 )
 from app.services.identity_service import get_subcontractor, list_subcontractors
 
@@ -438,7 +442,10 @@ async def customer_line_webhook(
 async def list_daily_report_line_destination_candidates(
     _user: AuthenticatedUser = Depends(require_owner_user),
 ):
-    return StandardResponse(data=daily_report_service.list_line_destination_candidates())
+    candidates = daily_report_service.list_line_destination_candidates()
+    return StandardResponse(
+        data=await refresh_line_destination_candidate_names(candidates)
+    )
 
 
 @router.get("/me/projects", response_model=StandardResponse[list[DailyReportProjectItem]])
@@ -713,7 +720,7 @@ async def upload_submission_media(
             storage_key=storage_key,
         )
     except Exception as exc:
-        await delete_storage_key(storage_key)
+        await delete_daily_report_media_storage(storage_key)
         log_event(
             logger,
             logging.ERROR,
@@ -755,7 +762,7 @@ async def delete_submission_media(
         owner_id=_require_subcontractor(user),
     )
     if media.get("storage_key"):
-        await delete_storage_key(media["storage_key"])
+        await delete_daily_report_media_storage(media["storage_key"])
     return StandardResponse(data={"id": media_id, "deleted": True})
 
 
@@ -784,13 +791,29 @@ async def get_daily_report_media_url(
     else:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Daily Report media access is required.")
     settings = get_settings()
+    original_url_task = generate_signed_url_for_storage_key(
+        storage_key=media["storage_key"],
+        expires_in_minutes=settings.signed_url_expires_minutes,
+    )
+    thumbnail_url_task = None
+    if str(media.get("content_type") or "").startswith("image/"):
+        thumbnail_url_task = generate_signed_url_for_storage_key(
+            storage_key=daily_report_thumbnail_storage_key(media["storage_key"]),
+            expires_in_minutes=settings.signed_url_expires_minutes,
+        )
+    if thumbnail_url_task is None:
+        original_url = await original_url_task
+        thumbnail_url = None
+    else:
+        original_url, thumbnail_url = await asyncio.gather(
+            original_url_task,
+            thumbnail_url_task,
+        )
     return StandardResponse(
         data=DailyReportMediaAccessResponse(
             media_id=media_id,
-            url=await generate_signed_url_for_storage_key(
-                storage_key=media["storage_key"],
-                expires_in_minutes=settings.signed_url_expires_minutes,
-            ),
+            url=original_url,
+            thumbnail_url=thumbnail_url,
             expires_in_minutes=settings.signed_url_expires_minutes,
         )
     )

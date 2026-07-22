@@ -192,6 +192,7 @@ class DailyReportMediaItem(BaseModel):
 class DailyReportMediaAccessResponse(BaseModel):
     media_id: str
     url: str
+    thumbnail_url: str | None = None
     expires_in_minutes: int
 
 
@@ -300,6 +301,7 @@ class DailyReportMembershipUpsert(BaseModel):
 class DailyReportLineDestinationItem(BaseModel):
     project_id: str
     line_target_id: str | None = None
+    display_name: str | None = None
     target_type: str = "group"
     status: str = "INACTIVE"
     updated_at: datetime | None = None

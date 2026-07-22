@@ -4,10 +4,13 @@ import asyncio
 import logging
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from app.api.v1.auth import router as auth_router
+from app.api.v1.auth import submit_access_request
 from app.api.v1.daily_reports import (
     _inspect_upload_with_limit,
     _media_type_and_limit,
@@ -16,6 +19,7 @@ from app.api.v1.daily_reports import (
 from app.core.rate_limit import FixedWindowRateLimiter, daily_report_rate_limit_rules
 from app.core.rate_limit import RateLimitMiddleware, RateLimitRule
 from app.core.observability import JsonLogFormatter
+from app.core.security import issue_access_request_token, verify_access_request_token
 
 
 class FakeUpload:
@@ -31,6 +35,201 @@ class FakeUpload:
 
 
 class Phase8SecurityTests(unittest.TestCase):
+    def test_access_request_token_proves_verified_line_identity(self):
+        token = issue_access_request_token(
+            provider="line",
+            line_uid="U-verified",
+            portal="subcontractor",
+        )
+
+        payload = verify_access_request_token(token)
+
+        self.assertEqual(payload["provider"], "line")
+        self.assertEqual(payload["line_uid"], "U-verified")
+        self.assertEqual(payload["portal"], "subcontractor")
+
+    def test_access_request_token_rejects_tampering(self):
+        token = issue_access_request_token(provider="google", email="owner@example.com")
+        encoded_header, encoded_payload, signature = token.split(".", 2)
+        tampered_payload = f"{encoded_payload[:-1]}{'A' if encoded_payload[-1] != 'A' else 'B'}"
+
+        with self.assertRaises(HTTPException) as context:
+            verify_access_request_token(
+                f"{encoded_header}.{tampered_payload}.{signature}"
+            )
+
+        self.assertEqual(context.exception.status_code, 401)
+
+    def test_access_request_token_rejects_expired_proof(self):
+        token = issue_access_request_token(
+            provider="line",
+            line_uid="U-expired",
+            expires_minutes=0,
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            verify_access_request_token(token)
+
+        self.assertEqual(context.exception.status_code, 401)
+
+    def test_access_request_rejects_uid_that_does_not_match_verified_login(self):
+        token = issue_access_request_token(provider="line", line_uid="U-verified")
+
+        with self.assertRaises(HTTPException) as context:
+            asyncio.run(
+                submit_access_request(
+                    provider="line",
+                    registration_token=token,
+                    email=None,
+                    line_uid="U-attacker-supplied",
+                    picture_url=None,
+                    display_name="Test",
+                    requested_account_type="subcontractor",
+                    company_name="Test",
+                    first_name=None,
+                    nickname=None,
+                    contact_name=None,
+                    phone=None,
+                    tax_id=None,
+                    bank_name=None,
+                    account_no=None,
+                    account_name=None,
+                    kyc_image=None,
+                )
+            )
+
+        self.assertEqual(context.exception.status_code, 401)
+
+    def test_access_request_accepts_identity_that_matches_verified_login(self):
+        token = issue_access_request_token(provider="line", line_uid="U-verified")
+        stored_request = SimpleNamespace(
+            id="request-1",
+            provider="line",
+            email=None,
+            line_uid="U-verified",
+            display_name="Test",
+            company_name="Test",
+            contact_name=None,
+            status="pending",
+            rejection_reason=None,
+        )
+
+        with patch(
+            "app.api.v1.auth.upsert_access_request",
+            return_value=stored_request,
+        ) as upsert:
+            response = asyncio.run(
+                submit_access_request(
+                    provider="line",
+                    registration_token=token,
+                    email=None,
+                    line_uid="U-verified",
+                    picture_url=None,
+                    display_name="Test",
+                    requested_account_type="subcontractor",
+                    company_name="Test",
+                    first_name=None,
+                    nickname=None,
+                    contact_name=None,
+                    phone=None,
+                    tax_id=None,
+                    bank_name=None,
+                    account_no=None,
+                    account_name=None,
+                    kyc_image=None,
+                )
+            )
+
+        self.assertEqual(response.data.status, "PENDING_APPROVAL")
+        self.assertEqual(upsert.call_args.kwargs["line_uid"], "U-verified")
+
+    def test_customer_access_request_stores_first_name_and_nickname(self):
+        token = issue_access_request_token(
+            provider="line",
+            line_uid="U-customer",
+            portal="customer",
+        )
+        stored_request = SimpleNamespace(
+            id="request-customer",
+            provider="line",
+            email=None,
+            line_uid="U-customer",
+            display_name="LINE Display",
+            company_name=None,
+            contact_name="สมชาย",
+            status="pending",
+            rejection_reason=None,
+        )
+
+        with patch(
+            "app.api.v1.auth.upsert_access_request",
+            return_value=stored_request,
+        ) as upsert:
+            response = asyncio.run(
+                submit_access_request(
+                    provider="line",
+                    registration_token=token,
+                    email=None,
+                    line_uid="U-customer",
+                    picture_url=None,
+                    display_name="LINE Display",
+                    requested_account_type="customer",
+                    company_name=None,
+                    first_name="สมชาย",
+                    nickname="ชาย",
+                    contact_name="สมชาย",
+                    phone=None,
+                    tax_id=None,
+                    bank_name=None,
+                    account_no=None,
+                    account_name=None,
+                    kyc_image=None,
+                )
+            )
+
+        self.assertEqual(response.data.status, "PENDING_APPROVAL")
+        self.assertEqual(upsert.call_args.kwargs["first_name"], "สมชาย")
+        self.assertEqual(upsert.call_args.kwargs["nickname"], "ชาย")
+        self.assertEqual(upsert.call_args.kwargs["contact_name"], "สมชาย")
+        self.assertIsNone(upsert.call_args.kwargs["company_name"])
+
+    def test_customer_access_request_requires_first_name_and_nickname(self):
+        token = issue_access_request_token(
+            provider="line",
+            line_uid="U-customer",
+            portal="customer",
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            asyncio.run(
+                submit_access_request(
+                    provider="line",
+                    registration_token=token,
+                    email=None,
+                    line_uid="U-customer",
+                    picture_url=None,
+                    display_name="LINE Display",
+                    requested_account_type="customer",
+                    company_name=None,
+                    first_name="",
+                    nickname="",
+                    contact_name=None,
+                    phone=None,
+                    tax_id=None,
+                    bank_name=None,
+                    account_no=None,
+                    account_name=None,
+                    kyc_image=None,
+                )
+            )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("ชื่อจริง", context.exception.detail)
+
+    def test_legacy_raw_line_uid_signup_route_is_removed(self):
+        route_paths = {route.path for route in auth_router.routes}
+        self.assertNotIn("/auth/sign-up", route_paths)
+
     def test_structured_formatter_drops_non_allowlisted_private_fields(self):
         record = logging.LogRecord(
             name="test",

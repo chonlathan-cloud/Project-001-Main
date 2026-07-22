@@ -1586,38 +1586,18 @@ export async function lineLogin(payload) {
   });
 }
 
-export async function signUpSubcontractor(payload) {
-  const formData = new FormData();
-  formData.append('line_uid', payload.lineUid);
-  formData.append('line_picture_url', payload.linePictureUrl || '');
-  formData.append('name', payload.name);
-  formData.append('contact_name', payload.contactName);
-  formData.append('phone', payload.phone);
-  formData.append('tax_id', payload.taxId);
-  formData.append('bank_name', payload.bankName);
-  formData.append('account_no', payload.accountNo);
-  formData.append('account_name', payload.accountName);
-  if (payload.kycImage) {
-    formData.append('kyc_image', payload.kycImage);
-  }
-
-  return apiRequest('/api/v1/auth/sign-up', {
-    method: 'POST',
-    headers: {},
-    body: formData,
-    timeoutMs: 90000,
-  });
-}
-
 export async function submitAccessRequest(payload) {
   const formData = new FormData();
   formData.append('provider', payload.provider || 'line');
+  formData.append('registration_token', payload.registrationToken || '');
   formData.append('email', payload.email || '');
   formData.append('line_uid', payload.lineUid || '');
   formData.append('picture_url', payload.pictureUrl || payload.linePictureUrl || '');
   formData.append('display_name', payload.displayName || payload.name || '');
   formData.append('requested_account_type', payload.requestedAccountType || '');
   formData.append('company_name', payload.companyName || payload.name || '');
+  formData.append('first_name', payload.firstName || '');
+  formData.append('nickname', payload.nickname || '');
   formData.append('contact_name', payload.contactName || '');
   formData.append('phone', payload.phone || '');
   formData.append('tax_id', payload.taxId || '');
@@ -1675,6 +1655,24 @@ export async function resetProfileAvatar() {
 export async function getSettingSubcontractors() {
   const data = await apiRequest('/api/v1/settings/subcontractors');
   return Array.isArray(data) ? data : [];
+}
+
+export async function getSettingCustomers() {
+  const data = await apiRequest('/api/v1/settings/customers');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function updateSettingCustomer(customerId, payload) {
+  return apiRequest(`/api/v1/settings/customers/${customerId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function resetSettingCustomerLine(customerId) {
+  return apiRequest(`/api/v1/settings/customers/${customerId}/reset-line`, {
+    method: 'POST',
+  });
 }
 
 export async function updateSettingSubcontractor(subcontractorId, payload) {

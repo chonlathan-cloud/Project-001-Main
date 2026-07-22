@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   ClipboardCheck,
@@ -24,15 +24,19 @@ import {
   getSettingAccessRequests,
   getInputProjectOptions,
   getSettingAdmins,
+  getSettingCustomers,
   getSettingSubcontractorKycUrl,
   getSettingSubcontractors,
   rejectSettingAccessRequest,
+  resetSettingCustomerLine,
   resetSettingSubcontractorLine,
   updateSettingAdmin,
+  updateSettingCustomer,
   updateSettingSubcontractor,
 } from './api';
 import { canMutateAdminData, canMutateSubcontractorData, getStoredAuthUser } from './auth';
 import Loading from './components/Loading';
+import CustomerManagementSection from './components/settings/CustomerManagementSection';
 import {
   SettingsAccordionItem,
   SettingsAvatar,
@@ -75,6 +79,14 @@ const emptyAdminForm = {
   bank_account: { ...emptyBank },
   role: 'admin',
   roles: ['admin'],
+  assigned_project_ids: [],
+  is_active: true,
+};
+
+const emptyCustomerForm = {
+  name: '',
+  contact_name: '',
+  phone: '',
   assigned_project_ids: [],
   is_active: true,
 };
@@ -194,15 +206,27 @@ const buildAdminForm = (item = {}) => ({
   is_active: item.is_active !== false,
 });
 
+const buildCustomerForm = (item = {}) => ({
+  name: item.name || '',
+  contact_name: item.contact_name || '',
+  phone: item.phone || '',
+  assigned_project_ids: Array.isArray(item.assigned_project_ids) ? item.assigned_project_ids : [],
+  is_active: item.is_active !== false,
+});
+
 const buildAccessDecision = (item = {}) => {
   const requestedType = normalize(item.requested_account_type);
   const accountType = ['admin', 'customer'].includes(requestedType) ? requestedType : 'subcontractor';
-  const displayName = item.company_name || item.display_name || item.email || item.line_uid || '';
+  const displayName = accountType === 'customer'
+    ? item.nickname || item.first_name || item.contact_name || item.display_name || ''
+    : item.company_name || item.display_name || item.email || item.line_uid || '';
   return {
     ...emptyAccessDecision,
     account_type: accountType,
     display_name: displayName,
-    contact_name: item.contact_name || item.display_name || '',
+    contact_name: accountType === 'customer'
+      ? item.first_name || item.contact_name || ''
+      : item.contact_name || item.display_name || '',
     phone: item.phone || '',
     company: item.company_name || '',
     tax_id: item.tax_id || '',
@@ -288,6 +312,7 @@ function SettingPage() {
   const [accessRequests, setAccessRequests] = useState([]);
   const [subcontractors, setSubcontractors] = useState([]);
   const [admins, setAdmins] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [projects, setProjects] = useState([]);
   const [currentProfile, setCurrentProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -298,9 +323,12 @@ function SettingPage() {
   const [selectedAccessRequestId, setSelectedAccessRequestId] = useState('');
   const [selectedSubId, setSelectedSubId] = useState('');
   const [selectedAdminId, setSelectedAdminId] = useState('');
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [subcontractorSearch, setSubcontractorSearch] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
   const [subForm, setSubForm] = useState(emptySubForm);
   const [adminForm, setAdminForm] = useState(emptyAdminForm);
+  const [customerForm, setCustomerForm] = useState(emptyCustomerForm);
   const [accessDecision, setAccessDecision] = useState(emptyAccessDecision);
   const [generalPrefs, setGeneralPrefs] = useState({
     emailNotifications: true,
@@ -311,27 +339,32 @@ function SettingPage() {
   const storedAuthUser = getStoredAuthUser();
   const canMutateSettings = canMutateAdminData(storedAuthUser);
   const canMutateSubcontractors = canMutateSubcontractorData(storedAuthUser);
+  const canMutateCustomers = canMutateSubcontractorData(storedAuthUser);
   const settingsAccessLabel = canMutateSettings
     ? 'Owner access'
     : canMutateSubcontractors
       ? 'Subcontractor edit'
       : 'View only';
 
-  const loadPage = async () => {
+  const loadPage = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [subItems, adminItems, projectItems, profileResult] = await Promise.all([
-        getSettingSubcontractors(),
-        getSettingAdmins().catch(() => []),
+      const [subItems, adminItems, customerItems, projectItems, profileResult] = await Promise.all([
+        canMutateSubcontractors ? getSettingSubcontractors() : Promise.resolve([]),
+        canMutateSubcontractors ? getSettingAdmins().catch(() => []) : Promise.resolve([]),
+        getSettingCustomers(),
         getInputProjectOptions().catch(() => []),
         fetchData('profile').catch(() => null),
       ]);
-      const accessItems = await getSettingAccessRequests('pending').catch(() => []);
+      const accessItems = canMutateSubcontractors
+        ? await getSettingAccessRequests('pending').catch(() => [])
+        : [];
 
       setAccessRequests(accessItems);
       setSubcontractors(subItems);
       setAdmins(adminItems);
+      setCustomers(customerItems);
       setProjects(projectItems);
       setCurrentProfile(profileResult);
 
@@ -339,6 +372,8 @@ function SettingPage() {
       setSubForm(emptySubForm);
       setSelectedAdminId('');
       setAdminForm(emptyAdminForm);
+      setSelectedCustomerId('');
+      setCustomerForm(emptyCustomerForm);
       setSelectedAccessRequestId('');
       setAccessDecision(emptyAccessDecision);
     } catch (loadError) {
@@ -346,11 +381,11 @@ function SettingPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [canMutateSubcontractors]);
 
   useEffect(() => {
     loadPage();
-  }, []);
+  }, [loadPage]);
 
   useEffect(() => {
     const selected = accessRequests.find((item) => item.id === selectedAccessRequestId);
@@ -379,8 +414,18 @@ function SettingPage() {
     setAdminForm(buildAdminForm(selected));
   }, [selectedAdminId, admins]);
 
+  useEffect(() => {
+    const selected = customers.find((item) => item.id === selectedCustomerId);
+    if (!selected) {
+      setCustomerForm(emptyCustomerForm);
+      return;
+    }
+    setCustomerForm(buildCustomerForm(selected));
+  }, [selectedCustomerId, customers]);
+
   const selectedSubcontractor = subcontractors.find((item) => item.id === selectedSubId);
   const selectedAdmin = admins.find((item) => item.id === selectedAdminId);
+  const selectedCustomer = customers.find((item) => item.id === selectedCustomerId);
   const selectedAccessRequest = accessRequests.find((item) => item.id === selectedAccessRequestId);
   const currentProfileUser = currentProfile?.user || {};
   const currentProfileEmail = normalize(currentProfileUser.email || storedAuthUser?.email);
@@ -404,6 +449,28 @@ function SettingPage() {
     );
   }, [subcontractorSearch, subcontractors]);
 
+  const filteredCustomers = useMemo(() => {
+    const query = normalize(customerSearch);
+    if (!query) return customers;
+
+    return customers.filter((item) =>
+      [item.name, item.first_name, item.nickname, item.contact_name, item.phone, item.email, item.line_uid]
+        .some((value) => normalize(value).includes(query))
+    );
+  }, [customerSearch, customers]);
+
+  const customerProjects = useMemo(() => {
+    if (canMutateSubcontractors) return projects;
+    const visibleProjectIds = new Set(
+      customers.flatMap((item) => (
+        Array.isArray(item.assigned_project_ids) ? item.assigned_project_ids : []
+      )),
+    );
+    return projects.filter((project) =>
+      visibleProjectIds.has(String(project.project_id || project.id || ''))
+    );
+  }, [canMutateSubcontractors, customers, projects]);
+
   const connectedLineCount = useMemo(
     () => subcontractors.filter((item) => Boolean(item.line_uid)).length,
     [subcontractors]
@@ -422,6 +489,26 @@ function SettingPage() {
   const updateAdminField = (field, value) => {
     if (!canMutateSettings) return;
     setAdminForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const updateCustomerField = (field, value) => {
+    if (!canMutateCustomers) return;
+    setCustomerForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const toggleCustomerProject = (projectId) => {
+    if (!canMutateCustomers) return;
+    setCustomerForm((current) => {
+      const currentIds = Array.isArray(current.assigned_project_ids)
+        ? current.assigned_project_ids
+        : [];
+      return {
+        ...current,
+        assigned_project_ids: currentIds.includes(projectId)
+          ? currentIds.filter((item) => item !== projectId)
+          : [...currentIds, projectId],
+      };
+    });
   };
 
   const updateAdminBankField = (field, value) => {
@@ -553,6 +640,45 @@ function SettingPage() {
       setMessage('Subcontractor profile updated.');
     } catch (saveError) {
       setError(saveError.message || 'Failed to save subcontractor profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveCustomer = async () => {
+    if (!selectedCustomer || !canMutateCustomers) return;
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      const updated = await updateSettingCustomer(selectedCustomer.id, customerForm);
+      setCustomers((current) =>
+        current.map((item) => (item.id === selectedCustomer.id ? updated : item))
+      );
+      setMessage('Customer profile and project access updated.');
+    } catch (saveError) {
+      setError(saveError.message || 'Failed to save customer profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleResetCustomerLine = async (customer) => {
+    if (!customer?.id || !canMutateCustomers) return;
+    if (!window.confirm(`Reset the LINE connection for ${customer.contact_name || customer.name || 'this customer'}?`)) {
+      return;
+    }
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      const updated = await resetSettingCustomerLine(customer.id);
+      setCustomers((current) =>
+        current.map((item) => (item.id === customer.id ? updated : item))
+      );
+      setMessage('Customer LINE binding reset completed.');
+    } catch (actionError) {
+      setError(actionError.message || 'Failed to reset customer LINE binding.');
     } finally {
       setSaving(false);
     }
@@ -742,6 +868,26 @@ function SettingPage() {
     ].join('\n'));
   };
 
+  const handleCopyCustomerProfile = (item) => {
+    if (!item) return;
+    const assignedProjectLabels = Array.isArray(item.assigned_project_ids)
+      ? item.assigned_project_ids
+          .map((projectId) => projectNameById.get(String(projectId)) || projectId)
+          .filter(Boolean)
+          .join(', ')
+      : '';
+    handleCopyText('Customer profile', [
+      `First name: ${item.first_name || item.contact_name || '-'}`,
+      `Nickname: ${item.nickname || '-'}`,
+      `Display name: ${item.name || '-'}`,
+      `Contact: ${item.contact_name || '-'}`,
+      `Phone: ${item.phone || '-'}`,
+      `LINE: ${item.line_uid ? 'Connected' : 'Not connected'}`,
+      `Status: ${item.is_active !== false ? 'Active' : 'Inactive'}`,
+      `Assigned Projects: ${assignedProjectLabels || '-'}`,
+    ].join('\n'));
+  };
+
   const handlePreferenceSave = () => {
     setMessage('General preferences updated.');
     setError('');
@@ -828,7 +974,11 @@ function SettingPage() {
           accessRequests.map((item) => {
             const isOpen = item.id === selectedAccessRequestId;
             const requestedType = item.requested_account_type || 'Admin decides';
+            const isCustomerRequest = normalize(item.requested_account_type) === 'customer';
             const identity = item.email || item.line_uid || item.id;
+            const customerName = item.first_name
+              ? `${item.first_name}${item.nickname ? ` (${item.nickname})` : ''}`
+              : '';
 
             return (
               <SettingsAccordionItem
@@ -846,11 +996,11 @@ function SettingPage() {
                 }}
                 avatar={(
                   <SettingsAvatar
-                    name={item.display_name || item.company_name || identity}
+                    name={customerName || item.display_name || item.company_name || identity}
                     imageUrl={item.picture_url}
                   />
                 )}
-                title={item.company_name || item.display_name || identity}
+                title={customerName || item.company_name || item.display_name || identity}
                 subtitle={`${item.provider || 'provider'} • ${identity}`}
                 meta={(
                   <>
@@ -866,6 +1016,10 @@ function SettingPage() {
                       { label: 'Provider', value: item.provider },
                       { label: 'Identity', value: identity, wide: true },
                       { label: 'Requested Type', value: requestedType },
+                      ...(isCustomerRequest ? [
+                        { label: 'First Name', value: displayValue(item.first_name) },
+                        { label: 'Nickname', value: displayValue(item.nickname) },
+                      ] : []),
                       { label: 'Contact', value: displayValue(item.contact_name) },
                       { label: 'Phone', value: displayValue(item.phone) },
                       { label: 'Tax ID', value: maskIdentifier(item.tax_id) },
@@ -1120,7 +1274,7 @@ function SettingPage() {
       <SettingsPanelHeader
         kicker="Owner Only"
         title="Admin & Staff Management"
-        description="Manage internal access and subcontractor records with expandable profile details."
+        description="Manage internal access, customer accounts, and subcontractor records with expandable details."
         action={(
           <button type="button" className="settings-button primary" onClick={handleNewAdmin} disabled={!canMutateSettings}>
             <Plus size={16} />
@@ -1552,6 +1706,26 @@ function SettingPage() {
 
       <div className="settings-section-divider" />
 
+      <CustomerManagementSection
+        canEdit={canMutateCustomers}
+        customerForm={customerForm}
+        customers={customers}
+        filteredCustomers={filteredCustomers}
+        onCopy={handleCopyCustomerProfile}
+        onFieldChange={updateCustomerField}
+        onResetLine={handleResetCustomerLine}
+        onSave={handleSaveCustomer}
+        onSearchChange={setCustomerSearch}
+        onSelect={setSelectedCustomerId}
+        onToggleProject={toggleCustomerProject}
+        projects={projects}
+        saving={saving}
+        search={customerSearch}
+        selectedCustomerId={selectedCustomerId}
+      />
+
+      <div className="settings-section-divider" />
+
       <SettingsPanelHeader
         title="Subcontractor Management"
         description="Review company records, LINE binding, KYC status, project access, and payout details."
@@ -1836,6 +2010,33 @@ function SettingPage() {
     </SettingsPanel>
   );
 
+  const renderReadOnlyCustomerPanel = () => (
+    <SettingsPanel>
+      <SettingsPanelHeader
+        kicker="Staff View"
+        title="Customer Access"
+        description="View customers connected to your assigned projects. Editing is restricted to Owners and Admins."
+      />
+      <CustomerManagementSection
+        canEdit={false}
+        customerForm={customerForm}
+        customers={customers}
+        filteredCustomers={filteredCustomers}
+        onCopy={handleCopyCustomerProfile}
+        onFieldChange={updateCustomerField}
+        onResetLine={handleResetCustomerLine}
+        onSave={handleSaveCustomer}
+        onSearchChange={setCustomerSearch}
+        onSelect={setSelectedCustomerId}
+        onToggleProject={toggleCustomerProject}
+        projects={customerProjects}
+        saving={saving}
+        search={customerSearch}
+        selectedCustomerId={selectedCustomerId}
+      />
+    </SettingsPanel>
+  );
+
   const renderKycPanel = () => (
     <SettingsPanel>
       <SettingsPanelHeader
@@ -1989,7 +2190,11 @@ function SettingPage() {
         </div>
         <div className="settings-page-status">
           <span>{settingsAccessLabel}</span>
-          <strong>{admins.length.toLocaleString('en-US')} admins</strong>
+          <strong>
+            {canMutateSubcontractors
+              ? `${admins.length.toLocaleString('en-US')} admins · ${customers.length.toLocaleString('en-US')} customers`
+              : `${customers.length.toLocaleString('en-US')} customers`}
+          </strong>
         </div>
       </header>
 
@@ -1997,11 +2202,17 @@ function SettingPage() {
       {message ? <SettingsNotice tone="success">{message}</SettingsNotice> : null}
 
       <div className="settings-layout">
-        <SettingsLocalNav items={NAV_ITEMS} activeTab={activeTab} onTabChange={setActiveTab} />
+        <SettingsLocalNav
+          items={canMutateSubcontractors ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.id === 'users')}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+        />
 
         <div className="settings-content">
           {activeTab === 'general' ? renderGeneralPanel() : null}
-          {activeTab === 'users' ? renderUsersPanel() : null}
+          {activeTab === 'users'
+            ? canMutateSubcontractors ? renderUsersPanel() : renderReadOnlyCustomerPanel()
+            : null}
           {activeTab === 'kyc' ? renderKycPanel() : null}
           {activeTab === 'integrations' ? renderIntegrationsPanel() : null}
         </div>

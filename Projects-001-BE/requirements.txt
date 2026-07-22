@@ -22,3 +22,5 @@ firebase-admin>=6.6.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.18
 httpx>=0.28.0
+Pillow>=11.1.0
+pillow-heif>=0.22.0

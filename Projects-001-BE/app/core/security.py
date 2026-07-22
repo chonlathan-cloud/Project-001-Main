@@ -16,6 +16,10 @@ from fastapi import HTTPException, status
 from app.core.config import get_settings
 
 
+ACCESS_REQUEST_TOKEN_PURPOSE = "access_request"
+ACCESS_REQUEST_TOKEN_EXPIRE_MINUTES = 15
+
+
 def _b64url_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
@@ -132,5 +136,123 @@ def verify_session_token(token: str) -> dict[str, Any]:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Session token was issued for a different environment.",
             )
+
+    return payload
+
+
+def issue_access_request_token(
+    *,
+    provider: str,
+    email: str | None = None,
+    line_uid: str | None = None,
+    portal: str | None = None,
+    expires_minutes: int = ACCESS_REQUEST_TOKEN_EXPIRE_MINUTES,
+) -> str:
+    """Issue a short-lived proof that an identity provider login succeeded."""
+    settings = get_settings()
+    normalized_provider = str(provider or "").strip().lower()
+    normalized_email = str(email or "").strip().lower() or None
+    normalized_line_uid = str(line_uid or "").strip() or None
+
+    if normalized_provider == "google" and not normalized_email:
+        raise ValueError("Google access request tokens require an email.")
+    if normalized_provider == "line" and not normalized_line_uid:
+        raise ValueError("LINE access request tokens require a LINE UID.")
+    if normalized_provider not in {"google", "line"}:
+        raise ValueError("Unsupported access request token provider.")
+
+    now = datetime.now(UTC)
+    expires_at = now + timedelta(minutes=expires_minutes)
+    header = {"alg": settings.jwt_algorithm, "typ": "RAYADEE-ACCESS-REQUEST"}
+    payload = {
+        "purpose": ACCESS_REQUEST_TOKEN_PURPOSE,
+        "provider": normalized_provider,
+        "email": normalized_email,
+        "line_uid": normalized_line_uid,
+        "portal": str(portal or "").strip().lower() or None,
+        "tenant_id": settings.identity_platform_tenant_id,
+        "app_env": settings.app_env,
+        "iat": int(now.timestamp()),
+        "exp": int(expires_at.timestamp()),
+    }
+    encoded_header = _b64url_encode(_json_bytes(header))
+    encoded_payload = _b64url_encode(_json_bytes(payload))
+    signing_input = f"{encoded_header}.{encoded_payload}".encode("ascii")
+    signature = _sign(signing_input, settings.jwt_secret_key)
+    return f"{encoded_header}.{encoded_payload}.{signature}"
+
+
+def verify_access_request_token(token: str) -> dict[str, Any]:
+    """Verify an access-request proof and return its trusted identity claims."""
+    settings = get_settings()
+
+    try:
+        encoded_header, encoded_payload, signature = token.split(".", 2)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Malformed access request token.",
+        ) from exc
+
+    signing_input = f"{encoded_header}.{encoded_payload}".encode("ascii")
+    expected_signature = _sign(signing_input, settings.jwt_secret_key)
+    if not hmac.compare_digest(signature, expected_signature):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access request token signature.",
+        )
+
+    try:
+        payload = json.loads(_b64url_decode(encoded_payload).decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access request token payload.",
+        ) from exc
+
+    now_timestamp = int(datetime.now(UTC).timestamp())
+    if int(payload.get("exp") or 0) <= now_timestamp:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access request token has expired. Please sign in again.",
+        )
+    if payload.get("purpose") != ACCESS_REQUEST_TOKEN_PURPOSE:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access request token purpose.",
+        )
+
+    actual_tenant_id = str(payload.get("tenant_id") or "").strip()
+    expected_tenant_id = str(settings.identity_platform_tenant_id or "").strip()
+    if actual_tenant_id != expected_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access request token was issued for a different tenant.",
+        )
+    actual_app_env = str(payload.get("app_env") or "").strip()
+    if actual_app_env != settings.app_env:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access request token was issued for a different environment.",
+        )
+
+    provider = str(payload.get("provider") or "").strip().lower()
+    email = str(payload.get("email") or "").strip().lower() or None
+    line_uid = str(payload.get("line_uid") or "").strip() or None
+    if provider == "google" and not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access request token is missing its verified Google identity.",
+        )
+    if provider == "line" and not line_uid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access request token is missing its verified LINE identity.",
+        )
+    if provider not in {"google", "line"}:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access request token has an unsupported provider.",
+        )
 
     return payload

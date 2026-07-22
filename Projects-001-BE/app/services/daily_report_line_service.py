@@ -4,11 +4,13 @@ LINE Messaging API delivery for published Daily Reports.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import logging
-from urllib.parse import urlencode
+from datetime import UTC, datetime, timedelta
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -18,6 +20,88 @@ from app.services import daily_report_service
 from app.services.identity_service import get_subcontractor
 
 logger = logging.getLogger(__name__)
+
+LINE_GROUP_SUMMARY_REFRESH_INTERVAL = timedelta(hours=24)
+LINE_GROUP_SUMMARY_TIMEOUT_SECONDS = 5.0
+LINE_GROUP_SUMMARY_REFRESH_LIMIT = 20
+
+
+def _group_summary_needs_refresh(candidate: dict | None, *, now: datetime | None = None) -> bool:
+    if not candidate:
+        return True
+    checked_at = candidate.get("display_name_checked_at")
+    if not isinstance(checked_at, datetime):
+        return True
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=UTC)
+    current = now or datetime.now(UTC)
+    return current - checked_at >= LINE_GROUP_SUMMARY_REFRESH_INTERVAL
+
+
+async def _fetch_line_group_name(*, group_id: str, access_token: str) -> str:
+    async with httpx.AsyncClient(timeout=LINE_GROUP_SUMMARY_TIMEOUT_SECONDS) as client:
+        response = await client.get(
+            f"https://api.line.me/v2/bot/group/{quote(group_id, safe='')}/summary",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    response.raise_for_status()
+    payload = response.json()
+    group_name = str(payload.get("groupName") or "").strip() if isinstance(payload, dict) else ""
+    if not group_name:
+        raise ValueError("LINE group summary did not include groupName.")
+    return group_name
+
+
+async def _refresh_line_group_name(*, group_id: str, access_token: str) -> None:
+    try:
+        group_name = await _fetch_line_group_name(
+            group_id=group_id,
+            access_token=access_token,
+        )
+    except Exception as exc:
+        daily_report_service.update_line_destination_candidate_display_name(
+            line_target_id=group_id,
+            display_name=None,
+            display_name_status="UNAVAILABLE",
+        )
+        log_event(
+            logger,
+            logging.WARNING,
+            "line_group_summary_lookup_failed",
+            error_category=type(exc).__name__,
+            status="FAILED",
+        )
+        return
+    daily_report_service.update_line_destination_candidate_display_name(
+        line_target_id=group_id,
+        display_name=group_name,
+        display_name_status="AVAILABLE",
+    )
+
+
+async def refresh_line_destination_candidate_names(candidates: list[dict]) -> list[dict]:
+    access_token = get_settings().line_customer_channel_access_token
+    if not access_token:
+        return candidates
+    refreshable = [
+        candidate
+        for candidate in candidates
+        if str(candidate.get("target_type") or "").strip().lower() == "group"
+        and candidate.get("line_target_id")
+        and _group_summary_needs_refresh(candidate)
+    ][:LINE_GROUP_SUMMARY_REFRESH_LIMIT]
+    if not refreshable:
+        return candidates
+    await asyncio.gather(
+        *(
+            _refresh_line_group_name(
+                group_id=str(candidate["line_target_id"]),
+                access_token=access_token,
+            )
+            for candidate in refreshable
+        )
+    )
+    return daily_report_service.list_line_destination_candidates()
 
 
 def _report_url(report_id: str) -> str:
@@ -278,12 +362,23 @@ async def handle_customer_webhook(payload: dict) -> dict[str, int]:
             or ""
         ).strip()
         if target_id and source_type in {"group", "room", "user"}:
+            event_type = str(event.get("type") or "unknown")
+            existing_candidate = daily_report_service.get_line_destination_candidate(target_id)
             daily_report_service.record_line_destination_candidate(
                 line_target_id=target_id,
                 target_type=source_type,
-                event_type=str(event.get("type") or "unknown"),
+                event_type=event_type,
             )
             discovered += 1
+            if (
+                source_type == "group"
+                and access_token
+                and _group_summary_needs_refresh(existing_candidate)
+            ):
+                await _refresh_line_group_name(
+                    group_id=target_id,
+                    access_token=access_token,
+                )
 
         reply_token = str(event.get("replyToken") or "").strip()
         if event.get("type") == "join" and reply_token and access_token:

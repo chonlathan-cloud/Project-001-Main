@@ -5,6 +5,7 @@ GCS helpers for receipt and KYC file storage.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import unicodedata
@@ -22,6 +23,11 @@ else:
     _STORAGE_IMPORT_ERROR = None
 
 from app.core.config import get_settings
+from app.services.daily_report_thumbnail_service import (
+    THUMBNAIL_CACHE_CONTROL,
+    create_daily_report_thumbnail,
+    daily_report_thumbnail_storage_key,
+)
 
 _settings = get_settings()
 _DEFAULT_BUCKET = _settings.gcs_bucket_name
@@ -35,6 +41,7 @@ _DAILY_REPORT_BUCKET = _settings.daily_report_gcs_bucket or _settings.gcs_bucket
 _DAILY_REPORT_PREFIX = _settings.daily_report_gcs_prefix.strip().strip("/")
 
 _storage_client = None
+logger = logging.getLogger(__name__)
 
 
 def _require_storage_client():
@@ -163,10 +170,13 @@ def _upload_bytes_to_bucket_sync(
     object_name: str,
     file_bytes: bytes,
     content_type: str | None,
+    cache_control: str | None = None,
 ) -> str:
     client = _require_storage_client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(object_name)
+    if cache_control:
+        blob.cache_control = cache_control
     blob.upload_from_string(
         file_bytes,
         content_type=content_type or "application/octet-stream",
@@ -193,6 +203,13 @@ def _upload_file_to_bucket_sync(
         rewind=True,
     )
     return f"gs://{bucket_name}/{object_name}"
+
+
+def _read_file_bytes_sync(file_obj: BinaryIO) -> bytes:
+    file_obj.seek(0)
+    file_bytes = file_obj.read()
+    file_obj.seek(0)
+    return file_bytes
 
 
 async def upload_input_receipt_to_temp_storage(
@@ -298,7 +315,7 @@ async def upload_daily_report_media_to_storage(
         media_id=media_id,
         file_name=file_name,
     )
-    return await asyncio.to_thread(
+    storage_key = await asyncio.to_thread(
         _upload_file_to_bucket_sync,
         bucket_name=bucket_name,
         object_name=object_name,
@@ -306,6 +323,35 @@ async def upload_daily_report_media_to_storage(
         size_bytes=size_bytes,
         content_type=content_type,
     )
+    if not str(content_type or "").startswith("image/"):
+        return storage_key
+
+    try:
+        source_bytes = await asyncio.to_thread(_read_file_bytes_sync, file_obj)
+        thumbnail_bytes = await asyncio.to_thread(
+            create_daily_report_thumbnail,
+            source_bytes,
+        )
+        thumbnail_key = daily_report_thumbnail_storage_key(storage_key)
+        thumbnail_bucket, thumbnail_object = _parse_gs_storage_key(thumbnail_key)
+        await asyncio.to_thread(
+            _upload_bytes_to_bucket_sync,
+            bucket_name=thumbnail_bucket,
+            object_name=thumbnail_object,
+            file_bytes=thumbnail_bytes,
+            content_type="image/webp",
+            cache_control=THUMBNAIL_CACHE_CONTROL,
+        )
+    except Exception as exc:  # Thumbnail failure must not discard the original upload.
+        logger.warning(
+            "daily_report_thumbnail_generation_failed",
+            extra={
+                "media_id": media_id,
+                "error_category": type(exc).__name__,
+            },
+        )
+
+    return storage_key
 
 
 def _move_input_receipt_to_perm_storage_sync(
@@ -444,3 +490,15 @@ def _delete_storage_key_sync(storage_key: str) -> None:
 
 async def delete_storage_key(storage_key: str) -> None:
     await asyncio.to_thread(_delete_storage_key_sync, storage_key)
+
+
+async def delete_daily_report_media_storage(storage_key: str) -> None:
+    """Delete an original Daily Report object and its derived thumbnail."""
+    await delete_storage_key(storage_key)
+    try:
+        await delete_storage_key(daily_report_thumbnail_storage_key(storage_key))
+    except Exception as exc:  # Original deletion remains the primary operation.
+        logger.warning(
+            "daily_report_thumbnail_delete_failed",
+            extra={"error_category": type(exc).__name__},
+        )

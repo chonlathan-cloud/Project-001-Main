@@ -199,6 +199,8 @@ class CustomerProfile:
     line_uid: str | None
     line_picture_url: str | None
     name: str
+    first_name: str | None
+    nickname: str | None
     contact_name: str | None
     phone: str | None
     is_active: bool
@@ -217,6 +219,8 @@ class AccessRequest:
     status: str
     requested_account_type: str | None
     company_name: str | None
+    first_name: str | None
+    nickname: str | None
     contact_name: str | None
     phone: str | None
     tax_id: str | None
@@ -305,6 +309,8 @@ def _access_request_from_dict(doc_id: str, payload: dict[str, Any]) -> AccessReq
         status=_normalize_access_status(payload.get("status")),
         requested_account_type=_normalize_optional_text(payload.get("requested_account_type")),
         company_name=_normalize_optional_text(payload.get("company_name")),
+        first_name=_normalize_optional_text(payload.get("first_name")),
+        nickname=_normalize_optional_text(payload.get("nickname")),
         contact_name=_normalize_optional_text(payload.get("contact_name")),
         phone=_normalize_optional_text(payload.get("phone")),
         tax_id=_normalize_optional_text(payload.get("tax_id")),
@@ -337,6 +343,12 @@ def _customer_from_dict(doc_id: str, payload: dict[str, Any]) -> CustomerProfile
         line_uid=_normalize_optional_text(payload.get("line_uid")),
         line_picture_url=_normalize_optional_text(payload.get("line_picture_url")),
         name=str(payload.get("name") or doc_id),
+        first_name=(
+            _normalize_optional_text(payload.get("first_name"))
+            or _normalize_optional_text(payload.get("contact_name"))
+            or _normalize_optional_text(payload.get("name"))
+        ),
+        nickname=_normalize_optional_text(payload.get("nickname")),
         contact_name=_normalize_optional_text(payload.get("contact_name")),
         phone=_normalize_optional_text(payload.get("phone")),
         is_active=bool(payload.get("is_active", True)),
@@ -416,6 +428,15 @@ def get_customer(customer_id: str) -> CustomerProfile:
     return _customer_from_dict(snapshot.id, snapshot.to_dict() or {})
 
 
+def list_customers() -> list[CustomerProfile]:
+    docs = _ensure_firestore().collection(CUSTOMERS_COLLECTION).stream()
+    items = [
+        _customer_from_dict(doc.id, doc.to_dict() or {})
+        for doc in docs
+    ]
+    return sorted(items, key=lambda item: (item.contact_name or item.name).lower())
+
+
 def get_customer_by_line_uid(line_uid: str) -> CustomerProfile | None:
     docs = (
         _ensure_firestore()
@@ -437,14 +458,23 @@ def create_customer_profile(
     name: str,
     contact_name: str | None,
     phone: str | None,
+    first_name: str | None = None,
+    nickname: str | None = None,
 ) -> CustomerProfile:
     now = _now_utc()
+    normalized_first_name = (
+        _normalize_optional_text(first_name)
+        or _normalize_optional_text(contact_name)
+        or name.strip()
+    )
     payload = {
         "email": _normalize_email(email or "") or None,
         "line_uid": _normalize_optional_text(line_uid),
         "line_picture_url": _normalize_optional_text(line_picture_url),
         "name": name.strip(),
-        "contact_name": _normalize_optional_text(contact_name) or name.strip(),
+        "first_name": normalized_first_name,
+        "nickname": _normalize_optional_text(nickname),
+        "contact_name": _normalize_optional_text(contact_name) or normalized_first_name,
         "phone": _normalize_optional_text(phone),
         "is_active": True,
         "created_at": now,
@@ -452,6 +482,51 @@ def create_customer_profile(
     }
     _ensure_firestore().collection(CUSTOMERS_COLLECTION).document(customer_id).set(payload)
     return _customer_from_dict(customer_id, payload)
+
+
+def update_customer_profile(
+    customer_id: str,
+    *,
+    updates: dict[str, Any],
+) -> CustomerProfile:
+    current = get_customer(customer_id)
+    payload: dict[str, Any] = {"updated_at": _now_utc()}
+    if "name" in updates:
+        cleaned_name = str(updates["name"] or "").strip()
+        payload["name"] = cleaned_name or current.name
+    if "first_name" in updates:
+        payload["first_name"] = _normalize_optional_text(updates["first_name"])
+    if "nickname" in updates:
+        payload["nickname"] = _normalize_optional_text(updates["nickname"])
+    if "contact_name" in updates:
+        payload["contact_name"] = _normalize_optional_text(updates["contact_name"])
+    if "phone" in updates:
+        payload["phone"] = _normalize_optional_text(updates["phone"])
+    if "is_active" in updates:
+        payload["is_active"] = bool(updates["is_active"])
+
+    _ensure_firestore().collection(CUSTOMERS_COLLECTION).document(customer_id).set(
+        payload,
+        merge=True,
+    )
+    merged = asdict(current)
+    merged.update(payload)
+    return _customer_from_dict(customer_id, merged)
+
+
+def reset_customer_line_binding(customer_id: str) -> CustomerProfile:
+    current = get_customer(customer_id)
+    payload = {
+        "line_uid": None,
+        "updated_at": _now_utc(),
+    }
+    _ensure_firestore().collection(CUSTOMERS_COLLECTION).document(customer_id).set(
+        payload,
+        merge=True,
+    )
+    merged = asdict(current)
+    merged.update(payload)
+    return _customer_from_dict(customer_id, merged)
 
 
 def create_subcontractor_profile(
@@ -645,6 +720,8 @@ def upsert_access_request(
     picture_url: str | None = None,
     requested_account_type: str | None = None,
     company_name: str | None = None,
+    first_name: str | None = None,
+    nickname: str | None = None,
     contact_name: str | None = None,
     phone: str | None = None,
     tax_id: str | None = None,
@@ -674,6 +751,8 @@ def upsert_access_request(
         "picture_url": _normalize_optional_text(picture_url),
         "requested_account_type": _normalize_optional_text(requested_account_type),
         "company_name": _normalize_optional_text(company_name),
+        "first_name": _normalize_optional_text(first_name),
+        "nickname": _normalize_optional_text(nickname),
         "contact_name": _normalize_optional_text(contact_name),
         "phone": _normalize_optional_text(phone),
         "tax_id": _normalize_optional_text(tax_id),

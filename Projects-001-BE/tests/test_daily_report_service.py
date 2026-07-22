@@ -219,6 +219,37 @@ class DailyReportServiceTests(unittest.TestCase):
             )
         )
 
+    def test_line_destination_uses_discovered_group_name(self):
+        daily_report_service.record_line_destination_candidate(
+            line_target_id="Cgroup1234567890",
+            target_type="group",
+            event_type="join",
+        )
+        daily_report_service.update_line_destination_candidate_display_name(
+            line_target_id="Cgroup1234567890",
+            display_name="โครงการบ้านคุณสมชาย",
+            display_name_status="AVAILABLE",
+        )
+        daily_report_service.record_line_destination_candidate(
+            line_target_id="Cgroup1234567890",
+            target_type="group",
+            event_type="message",
+        )
+
+        candidate = daily_report_service.get_line_destination_candidate("Cgroup1234567890")
+        self.assertEqual(candidate["display_name"], "โครงการบ้านคุณสมชาย")
+        self.assertEqual(candidate["display_name_status"], "AVAILABLE")
+
+        destination = daily_report_service.update_line_destination(
+            project_id="project-1",
+            line_target_id="Cgroup1234567890",
+            target_type="group",
+            is_active=True,
+            actor_id="owner@example.com",
+        )
+        self.assertEqual(destination["display_name"], "โครงการบ้านคุณสมชาย")
+        self.assertEqual(destination["status"], "ACTIVE")
+
     def test_global_staff_alert_is_visible_to_every_admin_scope(self):
         project_alert = daily_report_service.ensure_staff_notification(
             project_id="project-1",

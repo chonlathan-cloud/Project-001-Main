@@ -1,10 +1,11 @@
 """
-Probe FlowAccount sandbox configuration without printing secrets.
+Probe the configured FlowAccount environment without printing secrets.
 
 Usage:
   cd Projects-001-BE
   source .venv/bin/activate
   python scripts/flowaccount_sandbox_probe.py
+  python scripts/flowaccount_sandbox_probe.py --section bank_accounts
 
 The script reads FlowAccount settings from the backend environment/.env,
 checks token retrieval, then lists read-only bank channels and expense
@@ -14,6 +15,7 @@ FLOWACCOUNT_EXPENSE_CATEGORY_MAPPING_JSON.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import sys
@@ -47,6 +49,13 @@ SUMMARY_FIELDS = (
     "bankName",
     "accountName",
     "accountNumber",
+    "bankAccountName",
+    "bankAccountNumber",
+    "bankAccountBranch",
+    "bankAccountType",
+    "bankCode",
+    "isDefault",
+    "isActive",
     "creditId",
     "creditCategory",
     "debitId",
@@ -57,6 +66,16 @@ SUMMARY_FIELDS = (
 
 def _safe_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _safe_summary_value(field: str, value: Any) -> Any:
+    normalized_field = field.lower().replace("_", "")
+    if normalized_field.endswith("accountnumber"):
+        digits = "".join(character for character in str(value) if character.isdigit())
+        return f"****{digits[-4:]}" if digits else "[masked]"
+    if any(sensitive_term in normalized_field for sensitive_term in ("password", "secret", "token")):
+        return "[redacted]"
+    return value
 
 
 def _extract_items(payload: dict[str, Any]) -> list[Any]:
@@ -84,12 +103,12 @@ def _summarize_item(item: Any) -> Any:
     if not isinstance(item, dict):
         return item
     summary = {
-        field: item.get(field)
+        field: _safe_summary_value(field, item.get(field))
         for field in SUMMARY_FIELDS
         if field in item and item.get(field) not in (None, "")
     }
     return summary or {
-        key: value
+        key: _safe_summary_value(key, value)
         for key, value in item.items()
         if not isinstance(value, (dict, list)) and value not in (None, "")
     }
@@ -107,7 +126,7 @@ def _print_section(title: str, payload: dict[str, Any], *, limit: int = 30) -> N
 
 def _print_preflight() -> None:
     settings = get_settings()
-    print("== FlowAccount sandbox probe ==")
+    print("== FlowAccount environment probe ==")
     print(f"enabled: {settings.flowaccount_enabled}")
     print(f"base_url: {settings.flowaccount_base_url}")
     print(f"scope: {settings.flowaccount_scope}")
@@ -117,7 +136,20 @@ def _print_preflight() -> None:
     print(f"default bank account id configured: {bool(settings.flowaccount_default_bank_account_id)}")
 
 
+def _parse_sections() -> list[str]:
+    parser = argparse.ArgumentParser(description="Run read-only FlowAccount environment checks.")
+    parser.add_argument(
+        "--section",
+        action="append",
+        choices=tuple(READ_ONLY_ENDPOINTS),
+        help="Run only the selected section. Repeat to select multiple sections.",
+    )
+    args = parser.parse_args()
+    return args.section or list(READ_ONLY_ENDPOINTS)
+
+
 async def main() -> None:
+    sections = _parse_sections()
     _print_preflight()
     service = FlowAccountService()
 
@@ -128,7 +160,8 @@ async def main() -> None:
         raise SystemExit(1) from exc
 
     print("\nToken: OK")
-    for title, path in READ_ONLY_ENDPOINTS.items():
+    for title in sections:
+        path = READ_ONLY_ENDPOINTS[title]
         try:
             payload = await service._request("GET", path)
         except FlowAccountError as exc:
