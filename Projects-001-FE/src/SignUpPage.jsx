@@ -13,6 +13,9 @@ import { adminLogin, lineLogin, submitAccessRequest } from './api';
 import { signInAdminWithGooglePopup } from './firebaseClient';
 import { beginLineLogin, getActiveLineAccessToken } from './liffClient';
 import logoImage from './assets/Logo.png';
+import AuthNotice from './components/AuthNotice';
+import ExternalBrowserLoginNotice from './components/ExternalBrowserLoginNotice';
+import { getEmbeddedBrowserInfo } from './components/embeddedBrowserUtils';
 import CustomerAccessRequestForm from './components/signup/CustomerAccessRequestForm';
 import SignupFormField from './components/signup/SignupFormField';
 
@@ -37,6 +40,8 @@ const SignUpPage = () => {
     ? 'customer'
     : 'subcontractor';
   const isCustomerPortal = portal === 'customer';
+  const embeddedBrowserInfo = getEmbeddedBrowserInfo();
+  const isGoogleLoginBlocked = embeddedBrowserInfo.isEmbedded;
   const [lineInfo, setLineInfo] = useState(pendingLineAuth);
   const [formData, setFormData] = useState({
     name: isCustomerPortal
@@ -50,11 +55,11 @@ const SignUpPage = () => {
       : '',
     contactName: pendingLineAuth?.contact_name
       || (isCustomerPortal ? '' : pendingLineAuth?.display_name || ''),
-    phone: '',
-    taxId: '',
-    bankName: '',
-    accountNo: '',
-    accountName: pendingLineAuth?.display_name || '',
+    phone: pendingLineAuth?.phone || '',
+    taxId: pendingLineAuth?.tax_id || '',
+    bankName: pendingLineAuth?.bank_account?.bank_name || '',
+    accountNo: pendingLineAuth?.bank_account?.account_no || '',
+    accountName: pendingLineAuth?.bank_account?.account_name || pendingLineAuth?.display_name || '',
     requestedAccountType: portal === 'customer'
       ? 'customer'
       : pendingLineAuth?.provider === 'google'
@@ -70,6 +75,7 @@ const SignUpPage = () => {
     : Boolean(lineInfo?.line_uid || lineInfo?.email);
   const providerLabel = lineInfo?.provider === 'google' ? 'Google' : 'LINE';
   const identityLabel = lineInfo?.email || lineInfo?.display_name || lineInfo?.line_uid || '';
+  const isResubmission = Boolean(lineInfo?.resubmission);
 
   const applySignupIdentity = (response) => {
     const identity = response || {};
@@ -89,7 +95,14 @@ const SignUpPage = () => {
       contactName: current.contactName
         || identity.contact_name
         || (isCustomerIdentity ? '' : identity.display_name || ''),
-      accountName: current.accountName || identity.display_name || '',
+      phone: current.phone || identity.phone || '',
+      taxId: current.taxId || identity.tax_id || '',
+      bankName: current.bankName || identity.bank_account?.bank_name || '',
+      accountNo: current.accountNo || identity.bank_account?.account_no || '',
+      accountName: current.accountName
+        || identity.bank_account?.account_name
+        || identity.display_name
+        || '',
       requestedAccountType: current.requestedAccountType
         || (identity.portal === 'customer' ? 'customer' : provider === 'line' ? 'subcontractor' : ''),
     }));
@@ -102,6 +115,11 @@ const SignUpPage = () => {
   };
 
   const handleGoogleIdentity = async () => {
+    if (isGoogleLoginBlocked) {
+      setError('กรุณาเปิดหน้านี้ด้วย Chrome ก่อนยืนยันตัวตนด้วย Google');
+      return;
+    }
+
     setIdentityLoadingAction('google');
     setError('');
 
@@ -228,16 +246,36 @@ const SignUpPage = () => {
 
         <div className="signup-content">
           <header className="signup-intro">
-            <span className="signup-eyebrow">{isCustomerPortal ? 'สำหรับลูกค้า' : 'สร้างบัญชีผู้ใช้งาน'}</span>
+            <span className="signup-eyebrow">
+              {isCustomerPortal ? 'สำหรับลูกค้า' : isResubmission ? 'ส่งคำขอใหม่' : 'สร้างบัญชีผู้ใช้งาน'}
+            </span>
             <h1 id="signup-title">
-              {isCustomerPortal ? 'เริ่มต้นใช้งาน RAYADEE' : 'ลงทะเบียนเพื่อเข้าใช้งานระบบ'}
+              {isCustomerPortal
+                ? 'เริ่มต้นใช้งาน RAYADEE'
+                : isResubmission
+                  ? 'ตรวจสอบข้อมูลและส่งให้ผู้ดูแลพิจารณาอีกครั้ง'
+                  : 'ลงทะเบียนเพื่อเข้าใช้งานระบบ'}
             </h1>
             <p>
               {isCustomerPortal
                 ? 'ยืนยันข้อมูลเล็กน้อย เพื่อให้ผู้ดูแลเชื่อมบัญชีของคุณกับโครงการ'
-                : 'กรอกข้อมูลติดต่อเพื่อส่งให้ผู้ดูแลตรวจสอบ คุณจะเข้าใช้งานระบบได้หลังจากได้รับอนุมัติ'}
+                : isResubmission
+                  ? 'ระบบนำข้อมูลเดิมกลับมาให้แล้ว คุณสามารถแก้ไขก่อนส่งคำขอใหม่ได้'
+                  : 'กรอกข้อมูลติดต่อเพื่อส่งให้ผู้ดูแลตรวจสอบ คุณจะเข้าใช้งานระบบได้หลังจากได้รับอนุมัติ'}
             </p>
           </header>
+
+          {isResubmission ? (
+            <AuthNotice
+              notice={{
+                tone: 'warning',
+                title: 'คำขอก่อนหน้าถูกปฏิเสธ',
+                message: lineInfo?.rejection_reason
+                  ? `เหตุผล: ${lineInfo.rejection_reason} กรุณาตรวจสอบข้อมูลแล้วส่งคำขออีกครั้ง`
+                  : 'กรุณาตรวจสอบข้อมูลแล้วส่งคำขออีกครั้งเพื่อให้ผู้ดูแลพิจารณา',
+              }}
+            />
+          ) : null}
 
           {hasVerifiedIdentity && !isCustomerPortal ? (
             <div className="signup-identity-summary" aria-live="polite">
@@ -275,17 +313,28 @@ const SignUpPage = () => {
                 </div>
               </div>
 
+              {!isCustomerPortal && isGoogleLoginBlocked ? (
+                <ExternalBrowserLoginNotice
+                  browserInfo={embeddedBrowserInfo}
+                  lineAlternative="หากลงทะเบียนเป็นผู้รับเหมา สามารถเลือกลงทะเบียนด้วย LINE ด้านล่างได้"
+                />
+              ) : null}
+
               <div className="signup-identity-actions identity-choice-grid">
                 {!isCustomerPortal ? (
                   <button
-                    className="signup-identity-button"
+                    className={`signup-identity-button${isGoogleLoginBlocked ? ' is-blocked' : ''}`}
                     type="button"
                     onClick={handleGoogleIdentity}
-                    disabled={identityLoadingAction !== ''}
+                    disabled={identityLoadingAction !== '' || isGoogleLoginBlocked}
                     aria-busy={identityLoadingAction === 'google'}
                   >
                     <ShieldCheck aria-hidden="true" size={18} />
-                    {identityLoadingAction === 'google' ? 'กำลังยืนยันด้วย Google...' : 'ลงทะเบียนด้วย Google'}
+                    {identityLoadingAction === 'google'
+                      ? 'กำลังยืนยันด้วย Google...'
+                      : isGoogleLoginBlocked
+                        ? 'Google ต้องเปิดใน Chrome'
+                        : 'ลงทะเบียนด้วย Google'}
                   </button>
                 ) : null}
 
@@ -449,7 +498,13 @@ const SignUpPage = () => {
               </div>
 
               <button className="signup-submit-button" type="submit" disabled={loading} aria-busy={loading}>
-                <span>{loading ? 'กำลังส่งคำขอ...' : 'ส่งคำขอเพื่อรออนุมัติ'}</span>
+                <span>
+                  {loading
+                    ? 'กำลังส่งคำขอ...'
+                    : isResubmission
+                      ? 'ส่งคำขอใหม่เพื่อรออนุมัติ'
+                      : 'ส่งคำขอเพื่อรออนุมัติ'}
+                </span>
                 <ArrowRight aria-hidden="true" size={18} />
               </button>
             </form>

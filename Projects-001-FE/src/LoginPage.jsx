@@ -13,6 +13,8 @@ import {
 } from './auth';
 import { adminLogin, getCurrentProfile, lineLogin } from './api';
 import AuthNotice from './components/AuthNotice';
+import ExternalBrowserLoginNotice from './components/ExternalBrowserLoginNotice';
+import { getEmbeddedBrowserInfo } from './components/embeddedBrowserUtils';
 import { signInAdminWithGooglePopup } from './firebaseClient';
 import { beginLineLogin, getActiveLineAccessToken } from './liffClient';
 import logoImage from './assets/Logo.png';
@@ -63,6 +65,8 @@ const LoginPage = () => {
     ? requestedReturnTo
     : '';
   const autoLine = searchParams.get('autoLine') === '1';
+  const embeddedBrowserInfo = getEmbeddedBrowserInfo();
+  const isGoogleLoginBlocked = embeddedBrowserInfo.isEmbedded;
   const autoLineAttemptedRef = useRef(false);
   const [loadingAction, setLoadingAction] = useState('');
   const [error, setError] = useState('');
@@ -79,6 +83,11 @@ const LoginPage = () => {
   ));
 
   const handleAdminGoogleLogin = async () => {
+    if (isGoogleLoginBlocked) {
+      setError('กรุณาเปิดหน้านี้ด้วย Chrome ก่อนเข้าสู่ระบบด้วย Google');
+      return;
+    }
+
     setLoadingAction('admin');
     setError('');
     setAuthNotice(null);
@@ -198,16 +207,32 @@ const LoginPage = () => {
             </div>
           ) : null}
 
+          {!isCustomerPortal && isGoogleLoginBlocked ? (
+            <ExternalBrowserLoginNotice
+              browserInfo={embeddedBrowserInfo}
+              lineAlternative="หากเป็นช่างหรือผู้รับเหมา สามารถใช้ปุ่ม LINE ด้านล่างได้"
+            />
+          ) : null}
+
           <div style={{ display: 'grid', gap: '14px' }}>
             {!isCustomerPortal ? (
               <button
                 type="button"
-                style={actionButton('primary')}
+                style={{
+                  ...actionButton('primary'),
+                  ...(isGoogleLoginBlocked
+                    ? { backgroundColor: '#8a9691', cursor: 'not-allowed', opacity: 0.72 }
+                    : {}),
+                }}
                 onClick={handleAdminGoogleLogin}
-                disabled={loadingAction !== ''}
+                disabled={loadingAction !== '' || isGoogleLoginBlocked}
               >
                 <ShieldCheck size={18} />
-                {loadingAction === 'admin' ? 'Signing in with Google...' : 'Continue with Google'}
+                {loadingAction === 'admin'
+                  ? 'Signing in with Google...'
+                  : isGoogleLoginBlocked
+                    ? 'Google Login ต้องเปิดใน Chrome'
+                    : 'Continue with Google'}
               </button>
             ) : null}
 

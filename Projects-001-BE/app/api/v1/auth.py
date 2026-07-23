@@ -322,8 +322,32 @@ async def line_login(request: LineLoginRequest):
 
         if profile is None:
             existing_request = get_access_request_by_identity(provider="line", line_uid=line_uid)
-            if existing_request is not None and existing_request.status != "approved":
+            if existing_request is not None and existing_request.status == "pending":
                 return StandardResponse(data=_pending_session_response(existing_request))
+            if existing_request is not None and existing_request.status == "rejected":
+                return StandardResponse(
+                    data={
+                        "status": "REQUIRE_SIGNUP",
+                        "provider": "line",
+                        "portal": "subcontractor",
+                        "line_uid": line_uid,
+                        "display_name": display_name,
+                        "line_picture_url": line_picture_url,
+                        "registration_token": issue_access_request_token(
+                            provider="line",
+                            line_uid=line_uid,
+                            portal=portal,
+                        ),
+                        "resubmission": True,
+                        "company_name": existing_request.company_name,
+                        "contact_name": existing_request.contact_name,
+                        "phone": existing_request.phone,
+                        "tax_id": existing_request.tax_id,
+                        "bank_account": existing_request.bank_account,
+                        "rejection_reason": existing_request.rejection_reason,
+                        "message": "The previous request was rejected. Please review and resubmit your information.",
+                    }
+                )
             return StandardResponse(
                 data={
                     "status": "REQUIRE_SIGNUP",

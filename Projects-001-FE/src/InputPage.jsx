@@ -21,7 +21,7 @@ import {
   submitInputRequest,
   uploadInputReceipt,
 } from './api';
-import { getStoredAuthUser } from './auth';
+import { getStoredAuthUser, isAdminUser, isSubcontractorUser } from './auth';
 import InputLineItemsEditor from './components/InputLineItemsEditor';
 import ReceiptOcrInspector from './components/ReceiptOcrInspector';
 import { createEmptyLineItem, sumLineItems } from './components/inputLineItemsUtils';
@@ -777,6 +777,8 @@ const buildSubmitReviewWarnings = ({
 };
 
 const InputPage = () => {
+  const authUser = getStoredAuthUser() || {};
+  const isSubcontractor = isSubcontractorUser(authUser) && !isAdminUser(authUser);
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
   const [workTypeOptions, setWorkTypeOptions] = useState(WORK_TYPE_OPTIONS);
@@ -1032,8 +1034,9 @@ const InputPage = () => {
       const extracted = await extractInputReceipt(file);
       const normalizedExtracted = {
         ...extracted,
-        suggested_entry_type:
-          normalizeEntryType(extracted.suggested_entry_type) || initialFormState.entryType,
+        suggested_entry_type: isSubcontractor
+          ? 'EXPENSE'
+          : normalizeEntryType(extracted.suggested_entry_type) || initialFormState.entryType,
         suggested_request_type: normalizeRequestType(extracted.suggested_request_type),
         suggested_accounting_vat_mode: normalizeAccountingVatMode(extracted.suggested_accounting_vat_mode),
       };
@@ -1041,7 +1044,9 @@ const InputPage = () => {
       setExtractData(normalizedExtracted);
       setForm((current) => {
         const nextEntryType =
-          !entryTypeTouched && normalizedExtracted.suggested_entry_type
+          isSubcontractor
+            ? 'EXPENSE'
+            : !entryTypeTouched && normalizedExtracted.suggested_entry_type
             ? normalizedExtracted.suggested_entry_type
             : current.entryType;
         const nextRequestType = current.requestType || normalizedExtracted.suggested_request_type || '';
@@ -1113,8 +1118,10 @@ const InputPage = () => {
       setSubmitError('กรุณาระบุวันที่');
       return;
     }
+    const requestEntryType = isSubcontractor ? 'EXPENSE' : form.entryType;
+    const isIncomeRequest = requestEntryType === 'INCOME';
     const lineItemsForValidation = normalizeLineItemsForSubmit(form.lineItems, {
-      isIncomeRequest: form.entryType === 'INCOME',
+      isIncomeRequest,
       workType: form.workType === OTHER_WORK_TYPE_VALUE ? form.customWorkType : form.workType,
       requestType: form.requestType,
     });
@@ -1128,7 +1135,6 @@ const InputPage = () => {
       return;
     }
 
-    const isIncomeRequest = form.entryType === 'INCOME';
     const normalizedTags = normalizeTags(form.tags);
     const normalizedWorkType = isIncomeRequest
       ? ''
@@ -1195,7 +1201,7 @@ const InputPage = () => {
       setSubmitError('ประเภทการเบิกไม่ถูกต้อง กรุณาเลือกใหม่');
       return;
     }
-    if (normalizedRequestType === 'ค่าเบิกล่วงหน้า' && form.entryType !== 'EXPENSE') {
+    if (normalizedRequestType === 'ค่าเบิกล่วงหน้า' && requestEntryType !== 'EXPENSE') {
       setSubmitError('ค่าเบิกล่วงหน้า ใช้ได้เฉพาะรายการรายจ่าย');
       return;
     }
@@ -1225,7 +1231,7 @@ const InputPage = () => {
         warnings: reviewWarnings,
         summary: {
           projectName: selectedProject?.name || '-',
-          entryTypeLabel: formatEntryTypeLabel(form.entryType),
+          entryTypeLabel: formatEntryTypeLabel(requestEntryType),
           requesterName: form.requesterName.trim() || '-',
           vendorName: isIncomeRequest ? '-' : form.vendorName.trim() || '-',
           amount: numericAmount,
@@ -1250,7 +1256,7 @@ const InputPage = () => {
 
       const response = await submitInputRequest({
         project_id: form.projectId,
-        entry_type: form.entryType,
+        entry_type: requestEntryType,
         requester_name: form.requesterName.trim(),
         phone: form.phone.trim() || null,
         request_date: form.requestDate,
@@ -1291,7 +1297,7 @@ const InputPage = () => {
       setFlashMessage('ส่งคำขอเรียบร้อยแล้ว');
       setForm(
         buildDefaultedFormState(inputDefaults, {
-          entryType: form.entryType,
+          entryType: requestEntryType,
           projectId:
             projects.length === 1
               ? String(projects[0]?.project_id || '')
@@ -1345,7 +1351,8 @@ const InputPage = () => {
     );
   }
 
-  const isIncome = form.entryType === 'INCOME';
+  const effectiveEntryType = isSubcontractor ? 'EXPENSE' : form.entryType;
+  const isIncome = effectiveEntryType === 'INCOME';
   const projectOptions = projects.map((project) => ({
     value: project.project_id,
     label: project.name,
@@ -1623,10 +1630,12 @@ const InputPage = () => {
               </div>
 
               <div className="input-section-title" style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
-                2. รายละเอียดคำขอ
+                {isSubcontractor ? '2. รายละเอียดค่าใช้จ่าย' : '2. รายละเอียดคำขอ'}
               </div>
 
-              <EntryTypeSegment value={form.entryType} onChange={handleEntryTypeChange} />
+              {!isSubcontractor ? (
+                <EntryTypeSegment value={form.entryType} onChange={handleEntryTypeChange} />
+              ) : null}
 
               <SelectField
                 label="โครงการ"
@@ -1724,7 +1733,7 @@ const InputPage = () => {
                 value={formLineItems}
                 onChange={handleLineItemsChange}
                 disabled={isExtracting || isSubmitting}
-                entryType={form.entryType}
+                entryType={effectiveEntryType}
                 workTypeOptions={workTypeOptions}
                 requestTypeOptions={REQUEST_TYPE_OPTIONS}
                 fallbackWorkType={form.workType === OTHER_WORK_TYPE_VALUE ? form.customWorkType : form.workType}

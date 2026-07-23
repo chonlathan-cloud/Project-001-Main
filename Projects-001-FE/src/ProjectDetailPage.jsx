@@ -25,6 +25,7 @@ import BoqSheetCharts from './components/BoqSheetCharts';
 import BoqWorkbench from './components/BoqWorkbench';
 import InspectionWorkspace from './components/inspection/InspectionWorkspace';
 import Loading from './components/Loading';
+import ProjectCashflowCards from './components/ProjectCashflowCards';
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
@@ -116,6 +117,28 @@ const PROJECT_SECTION_TABS = [
   { value: 'warehouse', label: 'Warehouse Records', icon: Database },
   { value: 'inspection', label: 'Inspection', icon: ClipboardCheck },
 ];
+
+const loadAllProjectInputRequestRows = async (projectId) => {
+  const items = [];
+  let page = 1;
+  let hasNext = true;
+
+  while (hasNext) {
+    const response = await getInsightWarehouseRows({
+      projectId,
+      sourceTypes: ['INPUT_REQUEST'],
+      page,
+      pageSize: 200,
+      sortBy: 'event_date',
+      sortOrder: 'desc',
+    });
+    items.push(...(response.items || []));
+    hasNext = response.pageInfo?.hasNext === true;
+    page += 1;
+  }
+
+  return items;
+};
 
 function SummaryCard({ icon, label, value, subtext, tone = 'neutral' }) {
   const toneStyles = {
@@ -388,10 +411,13 @@ function ProjectDetailPage() {
   const [focusedRows, setFocusedRows] = useState([]);
   const [projectInstallmentRows, setProjectInstallmentRows] = useState([]);
   const [projectTransactionRows, setProjectTransactionRows] = useState([]);
+  const [projectInputRequestRows, setProjectInputRequestRows] = useState([]);
   const [focusedRowsLoading, setFocusedRowsLoading] = useState(false);
   const [projectRowsLoading, setProjectRowsLoading] = useState(false);
+  const [projectCashflowLoading, setProjectCashflowLoading] = useState(false);
   const [focusedRowsError, setFocusedRowsError] = useState('');
   const [projectRowsError, setProjectRowsError] = useState('');
+  const [projectCashflowError, setProjectCashflowError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeProjectSection, setActiveProjectSection] = useState(
@@ -516,6 +542,43 @@ function ProjectDetailPage() {
     };
 
     loadProjectLevelRows();
+  }, [projectId]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadProjectCashflow = async () => {
+      if (!projectId) {
+        setProjectInputRequestRows([]);
+        setProjectCashflowError('');
+        setProjectCashflowLoading(false);
+        return;
+      }
+
+      try {
+        setProjectCashflowLoading(true);
+        setProjectCashflowError('');
+        const rows = await loadAllProjectInputRequestRows(projectId);
+        if (isActive) {
+          setProjectInputRequestRows(rows);
+        }
+      } catch (loadError) {
+        if (isActive) {
+          setProjectInputRequestRows([]);
+          setProjectCashflowError(loadError.message || 'Failed to load project cash flow.');
+        }
+      } finally {
+        if (isActive) {
+          setProjectCashflowLoading(false);
+        }
+      }
+    };
+
+    loadProjectCashflow();
+
+    return () => {
+      isActive = false;
+    };
   }, [projectId]);
 
   if (loading) return <Loading />;
@@ -682,6 +745,13 @@ function ProjectDetailPage() {
           ) : null}
         </div>
       </section>
+
+      <ProjectCashflowCards
+        projectId={projectId}
+        rows={projectInputRequestRows}
+        loading={projectCashflowLoading}
+        error={projectCashflowError}
+      />
 
       <nav className="project-detail-local-tabs" aria-label="Project detail sections">
         {PROJECT_SECTION_TABS.map((tab) => {

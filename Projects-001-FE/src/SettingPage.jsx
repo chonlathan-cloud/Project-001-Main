@@ -10,6 +10,7 @@ import {
   Link2Off,
   LoaderCircle,
   Plus,
+  RotateCcw,
   Save,
   ShieldCheck,
   SlidersHorizontal,
@@ -28,6 +29,7 @@ import {
   getSettingSubcontractorKycUrl,
   getSettingSubcontractors,
   rejectSettingAccessRequest,
+  reopenSettingAccessRequest,
   resetSettingCustomerLine,
   resetSettingSubcontractorLine,
   updateSettingAdmin,
@@ -310,6 +312,7 @@ const pickFields = (source, fields) => fields.reduce((payload, field) => ({
 
 function SettingPage() {
   const [accessRequests, setAccessRequests] = useState([]);
+  const [accessRequestStatus, setAccessRequestStatus] = useState('pending');
   const [subcontractors, setSubcontractors] = useState([]);
   const [admins, setAdmins] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -358,7 +361,7 @@ function SettingPage() {
         fetchData('profile').catch(() => null),
       ]);
       const accessItems = canMutateSubcontractors
-        ? await getSettingAccessRequests('pending').catch(() => [])
+        ? await getSettingAccessRequests('all').catch(() => [])
         : [];
 
       setAccessRequests(accessItems);
@@ -480,6 +483,20 @@ function SettingPage() {
     () => subcontractors.filter((item) => hasBankInfo(item)).length,
     [subcontractors]
   );
+
+  const pendingAccessRequests = useMemo(
+    () => accessRequests.filter((item) => normalize(item.status) === 'pending'),
+    [accessRequests],
+  );
+
+  const rejectedAccessRequests = useMemo(
+    () => accessRequests.filter((item) => normalize(item.status) === 'rejected'),
+    [accessRequests],
+  );
+
+  const visibleAccessRequests = accessRequestStatus === 'rejected'
+    ? rejectedAccessRequests
+    : pendingAccessRequests;
 
   const updateSubField = (field, value) => {
     if (!canMutateSubcontractors) return;
@@ -825,6 +842,23 @@ function SettingPage() {
     }
   };
 
+  const handleReopenAccessRequest = async () => {
+    if (!selectedAccessRequest || !canMutateSubcontractors) return;
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      await reopenSettingAccessRequest(selectedAccessRequest.id);
+      setAccessRequestStatus('pending');
+      setMessage('Access request reopened and returned to pending review.');
+      await loadPage();
+    } catch (reopenError) {
+      setError(reopenError.message || 'Failed to reopen access request.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleCopyText = async (label, text) => {
     setMessage('');
     setError('');
@@ -965,14 +999,37 @@ function SettingPage() {
       <div className="settings-accordion-section-head">
         <div>
           <span className="settings-kicker">Access Review</span>
-          <h3>{accessRequests.length.toLocaleString('en-US')} pending requests</h3>
+          <h3>{visibleAccessRequests.length.toLocaleString('en-US')} {accessRequestStatus} requests</h3>
+        </div>
+        <div className="settings-access-request-filters" role="group" aria-label="Filter access requests by status">
+          <button
+            type="button"
+            className={`settings-button ${accessRequestStatus === 'pending' ? 'primary' : 'secondary'}`}
+            onClick={() => {
+              setAccessRequestStatus('pending');
+              setSelectedAccessRequestId('');
+            }}
+          >
+            Pending ({pendingAccessRequests.length})
+          </button>
+          <button
+            type="button"
+            className={`settings-button ${accessRequestStatus === 'rejected' ? 'danger' : 'secondary'}`}
+            onClick={() => {
+              setAccessRequestStatus('rejected');
+              setSelectedAccessRequestId('');
+            }}
+          >
+            Rejected ({rejectedAccessRequests.length})
+          </button>
         </div>
       </div>
 
       <div className="settings-accordion-list">
-        {accessRequests.length > 0 ? (
-          accessRequests.map((item) => {
+        {visibleAccessRequests.length > 0 ? (
+          visibleAccessRequests.map((item) => {
             const isOpen = item.id === selectedAccessRequestId;
+            const isRejected = normalize(item.status) === 'rejected';
             const requestedType = item.requested_account_type || 'Admin decides';
             const isCustomerRequest = normalize(item.requested_account_type) === 'customer';
             const identity = item.email || item.line_uid || item.id;
@@ -1004,7 +1061,9 @@ function SettingPage() {
                 subtitle={`${item.provider || 'provider'} • ${identity}`}
                 meta={(
                   <>
-                    <SettingsBadge tone="warning">Pending</SettingsBadge>
+                    <SettingsBadge tone={isRejected ? 'danger' : 'warning'}>
+                      {isRejected ? 'Rejected' : 'Pending'}
+                    </SettingsBadge>
                     <SettingsBadge tone="neutral">{requestedType}</SettingsBadge>
                   </>
                 )}
@@ -1026,10 +1085,42 @@ function SettingPage() {
                       { label: 'Bank Name', value: displayValue(item.bank_account?.bank_name) },
                       { label: 'Account No.', value: maskIdentifier(item.bank_account?.account_no) },
                       { label: 'Account Name', value: displayValue(item.bank_account?.account_name) },
+                      ...(isRejected ? [
+                        { label: 'Rejection Reason', value: displayValue(item.rejection_reason), wide: true },
+                        { label: 'Rejected By', value: displayValue(item.decided_by) },
+                      ] : []),
                     ]}
                   />
 
-                  <div className="settings-inline-editor">
+                  {isRejected ? (
+                    <div className="settings-inline-editor settings-reopen-panel">
+                      <div>
+                        <span className="settings-kicker">Recover Request</span>
+                        <h4>Return this request to pending review</h4>
+                        <p>
+                          Use this when the request was rejected by mistake. The applicant’s submitted
+                          information remains unchanged and the action is recorded in the review history.
+                        </p>
+                      </div>
+                      <div className="settings-editor-actions">
+                        <span>
+                          Reopening does not approve access. An admin must still review and approve the request.
+                        </span>
+                        <div>
+                          <button
+                            type="button"
+                            className="settings-button primary"
+                            onClick={handleReopenAccessRequest}
+                            disabled={saving || !canMutateSubcontractors}
+                          >
+                            {saving ? <LoaderCircle size={16} className="spin" /> : <RotateCcw size={16} />}
+                            Reopen Request
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="settings-inline-editor">
                     <div>
                       <span className="settings-kicker">Approval Decision</span>
                       <h4>Classify and approve access</h4>
@@ -1257,13 +1348,16 @@ function SettingPage() {
                         </button>
                       </div>
                     </div>
-                  </div>
+                    </div>
+                  )}
                 </div>
               </SettingsAccordionItem>
             );
           })
         ) : (
-          <div className="settings-empty-state">No pending access requests.</div>
+          <div className="settings-empty-state">
+            No {accessRequestStatus} access requests.
+          </div>
         )}
       </div>
     </div>
@@ -1792,7 +1886,7 @@ function SettingPage() {
                 meta={(
                   <>
                     <SettingsBadge tone={item.line_uid ? 'success' : 'warning'}>
-                      {item.line_uid ? 'LINE Connected' : 'LINE Pending'}
+                      {item.line_uid ? 'LINE Connected' : 'LINE Not Connected'}
                     </SettingsBadge>
                     <SettingsBadge tone={kycStatus.tone}>{kycStatus.label}</SettingsBadge>
                   </>

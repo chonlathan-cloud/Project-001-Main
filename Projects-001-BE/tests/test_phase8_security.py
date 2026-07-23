@@ -4,12 +4,12 @@ import asyncio
 import logging
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from app.api.v1.auth import router as auth_router
+from app.api.v1.auth import LineLoginRequest, line_login, router as auth_router
 from app.api.v1.auth import submit_access_request
 from app.api.v1.daily_reports import (
     _inspect_upload_with_limit,
@@ -35,6 +35,49 @@ class FakeUpload:
 
 
 class Phase8SecurityTests(unittest.TestCase):
+    def test_rejected_line_subcontractor_can_start_a_new_access_request(self):
+        rejected_request = SimpleNamespace(
+            id="line-request-1",
+            status="rejected",
+            company_name="Previous Company",
+            contact_name="Previous Contact",
+            phone="0812345678",
+            tax_id="1234567890123",
+            bank_account={"bank_name": "Test Bank"},
+            rejection_reason="Please correct the submitted details",
+        )
+
+        with (
+            patch(
+                "app.api.v1.auth._fetch_line_profile",
+                new=AsyncMock(
+                    return_value={
+                        "userId": "U-rejected",
+                        "displayName": "LINE User",
+                    }
+                ),
+            ),
+            patch("app.api.v1.auth.get_subcontractor_by_line_uid", return_value=None),
+            patch(
+                "app.api.v1.auth.get_access_request_by_identity",
+                return_value=rejected_request,
+            ),
+            patch("app.api.v1.auth.issue_access_request_token", return_value="proof-token"),
+        ):
+            response = asyncio.run(
+                line_login(
+                    LineLoginRequest(
+                        line_access_token="line-access-token",
+                        portal="subcontractor",
+                    )
+                )
+            )
+
+        self.assertEqual(response.data["status"], "REQUIRE_SIGNUP")
+        self.assertTrue(response.data["resubmission"])
+        self.assertEqual(response.data["registration_token"], "proof-token")
+        self.assertEqual(response.data["company_name"], "Previous Company")
+
     def test_access_request_token_proves_verified_line_identity(self):
         token = issue_access_request_token(
             provider="line",

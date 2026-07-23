@@ -25,8 +25,8 @@ const statusCopy = {
   },
   rejected: {
     icon: XCircle,
-    title: 'Access request rejected',
-    message: 'Please contact your admin if you think this needs another review.',
+    title: 'คำขอเข้าใช้งานถูกปฏิเสธ',
+    message: 'คุณสามารถเข้าสู่ระบบด้วยบัญชีเดิม ตรวจสอบข้อมูล และส่งคำขอใหม่ให้ผู้ดูแลพิจารณาอีกครั้งได้',
     tone: '#b42318',
     bg: '#fff1f0',
   },
@@ -120,7 +120,7 @@ export default function PendingApprovalPage() {
           </button>
           <button type="button" className="settings-button primary" onClick={handleSignOut}>
             <LogOut size={16} />
-            Sign In Again
+            {status === 'rejected' ? 'กรอกคำขอใหม่' : 'Sign In Again'}
           </button>
         </div>
       </section>

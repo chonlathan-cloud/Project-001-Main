@@ -187,6 +187,12 @@ function ApprovalPage() {
   const deepLinkParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const deepLinkRequestId = deepLinkParams.get('request_id') || '';
   const deepLinkProjectId = deepLinkParams.get('project_id') || '';
+  const deepLinkEntryType = ['EXPENSE', 'INCOME'].includes(deepLinkParams.get('entry_type'))
+    ? deepLinkParams.get('entry_type')
+    : '';
+  const deepLinkStatus = STATUS_OPTIONS.some((option) => option.value === deepLinkParams.get('status'))
+    ? deepLinkParams.get('status')
+    : '';
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [requests, setRequests] = useState([]);
@@ -194,8 +200,8 @@ function ApprovalPage() {
   const [selectedRequestId, setSelectedRequestId] = useState('');
   const [editor, setEditor] = useState(emptyEditor);
   const [filters, setFilters] = useState({
-    status: deepLinkRequestId ? '' : 'PENDING_ADMIN',
-    entryType: '',
+    status: deepLinkRequestId ? '' : (deepLinkStatus || 'PENDING_ADMIN'),
+    entryType: deepLinkEntryType,
     projectId: deepLinkProjectId,
   });
   const [attentionFilter, setAttentionFilter] = useState('all');
@@ -324,16 +330,17 @@ function ApprovalPage() {
   }, []);
 
   useEffect(() => {
-    if (!deepLinkRequestId && !deepLinkProjectId) return;
+    if (!deepLinkRequestId && !deepLinkProjectId && !deepLinkEntryType && !deepLinkStatus) return;
     setFilters((current) => ({
       ...current,
-      status: deepLinkRequestId ? '' : current.status,
+      status: deepLinkRequestId ? '' : (deepLinkStatus || current.status),
+      entryType: deepLinkEntryType || current.entryType,
       projectId: deepLinkProjectId || current.projectId,
     }));
     if (deepLinkRequestId) {
       setSelectedRequestId(deepLinkRequestId);
     }
-  }, [deepLinkProjectId, deepLinkRequestId]);
+  }, [deepLinkEntryType, deepLinkProjectId, deepLinkRequestId, deepLinkStatus]);
 
   useEffect(() => {
     loadData();
@@ -671,22 +678,25 @@ function ApprovalPage() {
 
   const openMarkPaidDialog = () => {
     if (!selectedRequest) return;
+    const isIncome = selectedRequest.entry_type === 'INCOME';
     setActionError('');
     setFlashMessage('');
     setConfirmDialog({
       type: 'mark-paid',
       busyAction: 'mark-paid',
       icon: CircleDollarSign,
-      tone: 'warning',
-      kicker: 'Mark Paid',
-      title: 'Confirm payment completion',
-      description: 'Confirm that the payment has been completed. When FlowAccount is enabled, payment sync must succeed before this request becomes PAID.',
-      confirmLabel: 'Confirm Paid',
-      busyLabel: 'Marking paid...',
+      tone: isIncome ? 'neutral' : 'warning',
+      kicker: isIncome ? 'รับเงิน' : 'จ่ายเงิน',
+      title: isIncome ? 'ยืนยันการรับเงิน' : 'ยืนยันการจ่ายเงิน',
+      description: isIncome
+        ? 'ระบบจะบันทึกรายการนี้เป็นรับเงินจริงแล้ว โดยไม่ส่งข้อมูลไป FlowAccount'
+        : 'ยืนยันว่าจ่ายเงินเรียบร้อยแล้ว ระบบจะ Sync payment ไป FlowAccount ก่อนเปลี่ยนสถานะ',
+      confirmLabel: isIncome ? 'ยืนยันรับเงิน' : 'ยืนยันจ่ายเงิน',
+      busyLabel: isIncome ? 'กำลังบันทึกรับเงิน...' : 'กำลังบันทึกจ่ายเงิน...',
       summary: [
         ...requestSummary(),
-        { label: 'Payment Reference', value: editor.payment_reference || '-' },
-        { label: 'Payment Date', value: editor.payment_date || '-' },
+        { label: isIncome ? 'เลขอ้างอิงการรับเงิน' : 'เลขอ้างอิงการจ่าย', value: editor.payment_reference || '-' },
+        { label: isIncome ? 'วันที่รับเงิน' : 'วันที่จ่าย', value: editor.payment_date || '-' },
       ],
     });
   };
@@ -738,6 +748,7 @@ function ApprovalPage() {
 
   const handleMarkPaid = async () => {
     if (!selectedRequest) return;
+    const isIncome = selectedRequest.entry_type === 'INCOME';
 
     try {
       setBusyAction('mark-paid');
@@ -753,9 +764,12 @@ function ApprovalPage() {
       } else {
         await loadData({ keepSelection: false });
       }
-      setFlashMessage('อัปเดตสถานะเป็น PAID เรียบร้อย');
+      setFlashMessage(isIncome ? 'บันทึกว่ารับเงินแล้วเรียบร้อย' : 'บันทึกว่าจ่ายเงินแล้วเรียบร้อย');
     } catch (error) {
-      setActionError(error.message || 'Failed to mark request as paid.');
+      setActionError(
+        error.message ||
+        (isIncome ? 'บันทึกการรับเงินไม่สำเร็จ' : 'บันทึกการจ่ายเงินไม่สำเร็จ')
+      );
     } finally {
       setBusyAction('');
     }
@@ -847,6 +861,8 @@ function ApprovalPage() {
   const projectOptions = [{ project_id: '', name: 'ทุกโครงการ' }, ...projects];
   const canMutateApprovals = canMutateAdminData(getStoredAuthUser());
   const hasFlowAccountDocument = Boolean(selectedRequest?.flowaccount_expense_id);
+  const isIncomeRequest = selectedRequest?.entry_type === 'INCOME';
+  const isExpenseRequest = selectedRequest?.entry_type === 'EXPENSE';
   const canEdit = canMutateApprovals && selectedRequest ? isEditableStatus(selectedRequest.status) && !hasFlowAccountDocument : false;
   const canEditTaxFilingFields =
     canMutateApprovals &&
@@ -901,10 +917,16 @@ function ApprovalPage() {
     hasFlowAccountDocument &&
     hasDraftPaymentInputs &&
     !hasPaymentConfigBlocker;
+  const canMarkIncomeReceived =
+    isIncomeRequest &&
+    hasDraftPaymentInputs;
+  const canMarkExpensePaid =
+    isExpenseRequest &&
+    (!flowAccountEnabled || accountingReadiness?.can_mark_paid || canMarkPaidWithDraftPayment);
   const canMarkPaid =
     canMutateApprovals &&
     selectedRequest?.status === 'APPROVED' &&
-    (!flowAccountEnabled || accountingReadiness?.can_mark_paid || canMarkPaidWithDraftPayment);
+    (canMarkIncomeReceived || canMarkExpensePaid);
   const inputVatNotReady =
     selectedRequest?.accounting_vat_mode &&
     selectedRequest.accounting_vat_mode !== 'no_vat' &&
@@ -1049,7 +1071,11 @@ function ApprovalPage() {
         nextAction: 'แจ้ง Owner เมื่อข้อมูลพร้อม',
       };
     }
-    if (isFlowAccountStage && (flowAccountErrors.length || accountingReadiness?.errors?.length)) {
+    if (
+      isExpenseRequest &&
+      isFlowAccountStage &&
+      (flowAccountErrors.length || accountingReadiness?.errors?.length)
+    ) {
       return {
         tone: 'danger',
         label: 'Blocked',
@@ -1062,7 +1088,7 @@ function ApprovalPage() {
       return {
         tone: 'success',
         label: 'Completed',
-        title: 'รายการนี้จ่ายเงินแล้ว',
+        title: isIncomeRequest ? 'รายการนี้รับเงินแล้ว' : 'รายการนี้จ่ายเงินแล้ว',
         description: 'ตรวจข้อมูลย้อนหลังได้ แต่ workflow หลักของรายการนี้เสร็จแล้ว',
         nextAction: 'ใช้เป็นหลักฐานหรือ reference เท่านั้น',
       };
@@ -1072,16 +1098,26 @@ function ApprovalPage() {
         ? {
             tone: 'success',
             label: 'Ready',
-            title: 'พร้อมบันทึกการจ่ายเงิน',
-            description: 'รายการนี้อนุมัติแล้ว และข้อมูลพร้อมสำหรับขั้นตอน payment',
-            nextAction: 'ตรวจ payment reference แล้วกด Mark Paid',
+            title: isIncomeRequest ? 'พร้อมบันทึกการรับเงิน' : 'พร้อมบันทึกการจ่ายเงิน',
+            description: isIncomeRequest
+              ? 'รายการนี้อนุมัติแล้ว และระบุวันที่รับเงินกับเลขอ้างอิงครบแล้ว'
+              : 'รายการนี้อนุมัติแล้ว และข้อมูลพร้อมสำหรับขั้นตอน payment',
+            nextAction: isIncomeRequest
+              ? 'ตรวจข้อมูลแล้วกด “บันทึกว่ารับเงินแล้ว”'
+              : 'ตรวจข้อมูลแล้วกด “บันทึกว่าจ่ายแล้ว”',
           }
         : {
             tone: 'warning',
             label: 'Check',
-            title: 'อนุมัติแล้ว แต่ยังไม่พร้อม mark paid',
-            description: 'อาจต้อง sync FlowAccount หรือเติมข้อมูล payment/accounting ก่อน',
-            nextAction: 'ดู Accounting panel และ field ที่ขึ้น required',
+            title: isIncomeRequest
+              ? 'อนุมัติแล้ว แต่ข้อมูลรับเงินยังไม่ครบ'
+              : 'อนุมัติแล้ว แต่ยังไม่พร้อมบันทึกการจ่ายเงิน',
+            description: isIncomeRequest
+              ? 'กรุณาระบุวันที่รับเงินและเลขอ้างอิงก่อนยืนยัน'
+              : 'อาจต้อง sync FlowAccount หรือเติมข้อมูล payment/accounting ก่อน',
+            nextAction: isIncomeRequest
+              ? 'กรอกข้อมูลรับเงินที่ช่องด้านล่าง'
+              : 'ดู Accounting panel และ field ที่ขึ้น required',
           };
     }
     if (
@@ -1212,7 +1248,6 @@ function ApprovalPage() {
     ? (selectedRequest?.flowaccount_payment_status === 'PAYMENT_SYNCED' ? 'PAID' : 'CHECK')
     : undefined;
   const shouldShowFieldRequirements = Boolean(selectedRequest && selectedRequest.status !== 'PAID');
-  const isExpenseRequest = selectedRequest?.entry_type === 'EXPENSE';
   const vatModeForRequirements = editor.accounting_vat_mode || selectedRequest?.accounting_vat_mode || '';
   const needsVatFields =
     shouldShowFieldRequirements &&
@@ -1229,7 +1264,7 @@ function ApprovalPage() {
   const needsPaymentFields =
     shouldShowFieldRequirements &&
     selectedRequest?.status === 'APPROVED' &&
-    hasFlowAccountDocument;
+    (isIncomeRequest || hasFlowAccountDocument);
   const taxFieldHint = needsVatFields && needsWhtFields
     ? 'จำเป็นสำหรับ VAT และหัก ณ ที่จ่าย'
     : needsVatFields
@@ -1301,8 +1336,16 @@ function ApprovalPage() {
         ? 'กรุณากรอกอัตราหัก ณ ที่จ่าย'
         : whtRateError,
     },
-    paymentReference: requiredField(needsPaymentFields, editor.payment_reference, 'จำเป็นก่อน Mark Paid'),
-    paymentDate: requiredField(needsPaymentFields && flowAccountEnabled, editor.payment_date, 'จำเป็นก่อน Mark Paid'),
+    paymentReference: requiredField(
+      needsPaymentFields,
+      editor.payment_reference,
+      isIncomeRequest ? 'จำเป็นก่อนบันทึกรับเงิน' : 'จำเป็นก่อนบันทึกจ่ายเงิน'
+    ),
+    paymentDate: requiredField(
+      needsPaymentFields && (isIncomeRequest || flowAccountEnabled),
+      editor.payment_date,
+      isIncomeRequest ? 'จำเป็นก่อนบันทึกรับเงิน' : 'จำเป็นก่อนบันทึกจ่ายเงิน'
+    ),
   };
   const primaryActions = [
     {
@@ -1329,10 +1372,14 @@ function ApprovalPage() {
       variant: 'danger',
     },
     {
-      label: busyAction === 'mark-paid' ? 'Marking Paid...' : 'Mark Paid',
+      label: busyAction === 'mark-paid'
+        ? (isIncomeRequest ? 'กำลังบันทึกรับเงิน...' : 'กำลังบันทึกจ่ายเงิน...')
+        : (isIncomeRequest ? 'บันทึกว่ารับเงินแล้ว' : 'บันทึกว่าจ่ายแล้ว'),
       onClick: openMarkPaidDialog,
       disabled: !!busyAction || !canMarkPaid,
-      disabledReason: 'Payment can be marked after approval and payment details are ready.',
+      disabledReason: isIncomeRequest
+        ? 'ระบุวันที่รับเงินและเลขอ้างอิงหลังอนุมัติรายการ'
+        : 'ต้องอนุมัติและเตรียมข้อมูลการจ่ายเงินให้ครบก่อน',
       icon: approvalActionIcons.paid,
       variant: 'primary',
     },
@@ -1520,10 +1567,16 @@ function ApprovalPage() {
                       <ApprovalField label="หัก ณ ที่จ่าย (%)" {...approvalFieldRequirements.whtRate}>
                         <input className="approval-input amount" type="number" min="0" max="100" step="0.01" value={editor.accounting_wht_rate} onChange={handleEditorChange('accounting_wht_rate')} disabled={!canEdit} />
                       </ApprovalField>
-                      <ApprovalField label="เลขอ้างอิงการจ่าย" {...approvalFieldRequirements.paymentReference}>
+                      <ApprovalField
+                        label={isIncomeRequest ? 'เลขอ้างอิงการรับเงิน' : 'เลขอ้างอิงการจ่าย'}
+                        {...approvalFieldRequirements.paymentReference}
+                      >
                         <input className="approval-input" value={editor.payment_reference} onChange={handleEditorChange('payment_reference')} disabled={!canSaveMetadata} />
                       </ApprovalField>
-                      <ApprovalField label="วันที่จ่าย" {...approvalFieldRequirements.paymentDate}>
+                      <ApprovalField
+                        label={isIncomeRequest ? 'วันที่รับเงิน' : 'วันที่จ่าย'}
+                        {...approvalFieldRequirements.paymentDate}
+                      >
                         <input className="approval-input" type="date" value={editor.payment_date} onChange={handleEditorChange('payment_date')} disabled={!canMutateApprovals} />
                       </ApprovalField>
                     </div>

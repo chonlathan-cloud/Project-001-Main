@@ -215,6 +215,62 @@ class SettingsCustomerTests(unittest.TestCase):
         self.assertEqual([item.id for item in response.data], ["customer-1"])
         self.assertEqual(response.data[0].assigned_project_ids, ["project-visible"])
 
+    def test_admin_can_reopen_accidentally_rejected_access_request(self):
+        request = identity_service.upsert_access_request(
+            provider="line",
+            line_uid="line-reopen-1",
+            requested_account_type="subcontractor",
+            company_name="Original Contractor",
+        )
+        identity_service.reject_access_request(
+            request.id,
+            reason="Rejected by mistake",
+            decided_by=self.owner.email,
+        )
+
+        response = asyncio.run(
+            settings_api.reopen_rejected_access_request(request.id, self.owner)
+        )
+
+        self.assertEqual(response.data.status, "pending")
+        self.assertIsNone(response.data.rejection_reason)
+        reopened = identity_service.get_access_request(request.id)
+        self.assertEqual(
+            [event["action"] for event in reopened.review_history],
+            ["rejected", "reopened"],
+        )
+
+    def test_applicant_resubmission_returns_rejected_request_to_pending(self):
+        request = identity_service.upsert_access_request(
+            provider="line",
+            line_uid="line-resubmit-1",
+            requested_account_type="subcontractor",
+            company_name="Old Contractor Name",
+            kyc_gcs_path="gs://private/kyc.jpg",
+        )
+        identity_service.reject_access_request(
+            request.id,
+            reason="Please correct the company name",
+            decided_by=self.owner.email,
+        )
+
+        resubmitted = identity_service.upsert_access_request(
+            provider="line",
+            line_uid="line-resubmit-1",
+            requested_account_type="subcontractor",
+            company_name="Correct Contractor Name",
+            kyc_gcs_path=None,
+        )
+
+        self.assertEqual(resubmitted.status, "pending")
+        self.assertEqual(resubmitted.company_name, "Correct Contractor Name")
+        self.assertEqual(resubmitted.kyc_gcs_path, "gs://private/kyc.jpg")
+        self.assertIsNone(resubmitted.rejection_reason)
+        self.assertEqual(
+            [event["action"] for event in resubmitted.review_history],
+            ["rejected", "resubmitted"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

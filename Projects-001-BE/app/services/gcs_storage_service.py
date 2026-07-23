@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import re
+import threading
 import unicodedata
 from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
@@ -15,8 +16,14 @@ from typing import BinaryIO
 from uuid import UUID, uuid4
 
 try:
+    from google.auth import default as google_auth_default
+    from google.auth import credentials as google_auth_credentials
+    from google.auth.transport.requests import Request as GoogleAuthRequest
     from google.cloud import storage
 except ImportError as exc:  # pragma: no cover - runtime dependency guard
+    google_auth_default = None  # type: ignore[assignment]
+    google_auth_credentials = None  # type: ignore[assignment]
+    GoogleAuthRequest = None  # type: ignore[assignment,misc]
     storage = None  # type: ignore[assignment]
     _STORAGE_IMPORT_ERROR = exc
 else:
@@ -39,8 +46,11 @@ _INSPECTION_BUCKET = _settings.inspection_gcs_bucket or _settings.gcs_bucket_nam
 _INSPECTION_PREFIX = _settings.inspection_gcs_prefix.strip().strip("/")
 _DAILY_REPORT_BUCKET = _settings.daily_report_gcs_bucket or _settings.gcs_bucket_name
 _DAILY_REPORT_PREFIX = _settings.daily_report_gcs_prefix.strip().strip("/")
+_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 _storage_client = None
+_iam_signing_credentials = None
+_iam_signing_credentials_lock = threading.Lock()
 logger = logging.getLogger(__name__)
 
 
@@ -405,6 +415,69 @@ async def move_input_receipt_to_perm_storage(
     )
 
 
+def _keyless_signed_url_credential_kwargs() -> dict[str, str]:
+    """Return an IAM-capable access token for keyless Cloud Run signing."""
+    global _iam_signing_credentials
+
+    if google_auth_default is None or GoogleAuthRequest is None:
+        raise RuntimeError(
+            "Google authentication dependencies are unavailable for GCS signed URLs."
+        ) from _STORAGE_IMPORT_ERROR
+
+    with _iam_signing_credentials_lock:
+        if _iam_signing_credentials is None:
+            _iam_signing_credentials, _ = google_auth_default(
+                scopes=[_CLOUD_PLATFORM_SCOPE]
+            )
+
+        credentials = _iam_signing_credentials
+        service_account_email = str(
+            getattr(credentials, "service_account_email", "") or ""
+        ).strip()
+        access_token = getattr(credentials, "token", None)
+        needs_refresh = (
+            not bool(getattr(credentials, "valid", False))
+            or not access_token
+            or not service_account_email
+            or service_account_email == "default"
+        )
+        if needs_refresh:
+            credentials.refresh(GoogleAuthRequest())
+            service_account_email = str(
+                getattr(credentials, "service_account_email", "") or ""
+            ).strip()
+            access_token = getattr(credentials, "token", None)
+
+    if (
+        not service_account_email
+        or service_account_email == "default"
+        or not access_token
+    ):
+        raise RuntimeError(
+            "Application Default Credentials cannot sign GCS URLs. Attach a service "
+            "account with iam.serviceAccounts.signBlob permission."
+        )
+
+    return {
+        "service_account_email": service_account_email,
+        "access_token": access_token,
+    }
+
+
+def _signed_url_credential_kwargs(client) -> dict[str, str]:
+    """Use local signing keys when available, otherwise use keyless IAM signing."""
+    credentials = client._credentials
+    if google_auth_credentials is None:
+        raise RuntimeError(
+            "Google authentication dependencies are unavailable for GCS signed URLs."
+        ) from _STORAGE_IMPORT_ERROR
+
+    if isinstance(credentials, google_auth_credentials.Signing):
+        return {}
+
+    return _keyless_signed_url_credential_kwargs()
+
+
 def _generate_signed_url_for_storage_key_sync(
     *,
     storage_key: str,
@@ -414,11 +487,13 @@ def _generate_signed_url_for_storage_key_sync(
     client = _require_storage_client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(object_name)
+    signing_kwargs = _signed_url_credential_kwargs(client)
 
     return blob.generate_signed_url(
         version="v4",
         expiration=timedelta(minutes=expires_in_minutes),
         method="GET",
+        **signing_kwargs,
     )
 
 

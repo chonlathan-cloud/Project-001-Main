@@ -119,7 +119,7 @@ const CustomerManagementSection = ({
                 meta={(
                   <>
                     <SettingsBadge tone={item.line_uid ? 'success' : 'warning'}>
-                      {item.line_uid ? 'LINE Connected' : 'LINE Pending'}
+                      {item.line_uid ? 'LINE Connected' : 'LINE Not Connected'}
                     </SettingsBadge>
                     <SettingsBadge tone={item.is_active !== false ? 'success' : 'neutral'}>
                       {item.is_active !== false ? 'Active' : 'Inactive'}

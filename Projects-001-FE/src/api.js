@@ -1731,6 +1731,12 @@ export async function rejectSettingAccessRequest(requestId, payload) {
   });
 }
 
+export async function reopenSettingAccessRequest(requestId) {
+  return apiRequest(`/api/v1/settings/access-requests/${requestId}/reopen`, {
+    method: 'POST',
+  });
+}
+
 export async function getDailyReportProjects() {
   const data = await apiRequest('/api/v1/daily-reports/me/projects');
   return Array.isArray(data) ? data : [];

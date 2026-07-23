@@ -8,7 +8,7 @@ Provides:
   - request listing for review/debugging
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -78,6 +78,7 @@ COMPANY_PROJECT_NAME = "โครงการบริษัท"
 COMPANY_PROJECT_TYPE = "INTERNAL"
 OPTION_TYPE_TAG = "TAG"
 OPTION_TYPE_WORK_TYPE = "WORK_TYPE"
+THAILAND_TIMEZONE = timezone(timedelta(hours=7))
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -111,6 +112,35 @@ def _decimal_money(value: object) -> Decimal:
     return Decimal(str(round(_money_value(value), 2)))
 
 
+def _requires_flowaccount_payment(input_request: InputRequest) -> bool:
+    return (
+        str(input_request.entry_type or "").upper() == "EXPENSE"
+        and is_flowaccount_configured()
+    )
+
+
+def _payment_completion_timestamp(
+    *,
+    entry_type: str,
+    payment_date: date | None,
+    completed_at: datetime,
+) -> datetime:
+    if str(entry_type or "").upper() != "INCOME":
+        return completed_at
+    if payment_date is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="payment_date is required before marking income as received.",
+        )
+
+    # Store the selected Thailand calendar date without risking a UTC month shift.
+    return datetime.combine(
+        payment_date,
+        time(hour=12),
+        tzinfo=THAILAND_TIMEZONE,
+    ).astimezone(timezone.utc)
+
+
 def _clean_unique_text_values(values: list[str] | None) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -141,6 +171,18 @@ def _validate_request_business_rules(*, entry_type: str, request_type: str | Non
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="ค่าเบิกล่วงหน้า ใช้ได้เฉพาะรายการรายจ่ายเท่านั้น.",
+        )
+
+
+def _validate_entry_type_for_user(
+    *,
+    user: AuthenticatedUser,
+    entry_type: str,
+) -> None:
+    if user.role == "subcontractor" and entry_type != "EXPENSE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="บัญชีผู้รับเหมาส่งคำขอได้เฉพาะรายการรายจ่ายเท่านั้น.",
         )
 
 
@@ -822,6 +864,8 @@ async def create_input_request(
 ):
     """Create an input request from the frontend form and persist it to Postgres."""
     try:
+        _validate_entry_type_for_user(user=user, entry_type=request.entry_type)
+
         project = (
             await db.execute(
                 select(Project).options(noload("*")).filter_by(id=request.project_id)
@@ -1638,7 +1682,13 @@ async def mark_paid_admin_input_request(
         if request.review_note is not None:
             input_request.review_note = _clean_optional_text(request.review_note)
 
-        if is_flowaccount_configured():
+        paid_at = _payment_completion_timestamp(
+            entry_type=input_request.entry_type,
+            payment_date=request.payment_date,
+            completed_at=now,
+        )
+
+        if _requires_flowaccount_payment(input_request):
             if not request.payment_date:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -1676,7 +1726,7 @@ async def mark_paid_admin_input_request(
                 raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
         input_request.status = "PAID"
-        input_request.paid_at = now
+        input_request.paid_at = paid_at
         input_request.reviewed_at = now
 
         await db.commit()

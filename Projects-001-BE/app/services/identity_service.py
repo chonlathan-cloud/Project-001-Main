@@ -237,6 +237,7 @@ class AccessRequest:
     created_at: datetime | None
     updated_at: datetime | None
     decided_at: datetime | None
+    review_history: list[dict[str, Any]]
 
 
 def _subcontractor_from_dict(doc_id: str, payload: dict[str, Any]) -> SubcontractorProfile:
@@ -333,6 +334,11 @@ def _access_request_from_dict(doc_id: str, payload: dict[str, Any]) -> AccessReq
         created_at=_datetime_value(payload.get("created_at")),
         updated_at=_datetime_value(payload.get("updated_at")),
         decided_at=_datetime_value(payload.get("decided_at")),
+        review_history=[
+            dict(item)
+            for item in (payload.get("review_history") or [])
+            if isinstance(item, dict)
+        ],
     )
 
 
@@ -743,6 +749,12 @@ def upsert_access_request(
     now = _now_utc()
     existing_payload = snapshot.to_dict() or {} if snapshot.exists else {}
     existing_status = _normalize_access_status(existing_payload.get("status"))
+    is_resubmission = snapshot.exists and existing_status == "rejected"
+    review_history = [
+        dict(item)
+        for item in (existing_payload.get("review_history") or [])
+        if isinstance(item, dict)
+    ][-48:]
     payload = {
         "provider": normalized_provider,
         "email": normalized_email,
@@ -757,10 +769,48 @@ def upsert_access_request(
         "phone": _normalize_optional_text(phone),
         "tax_id": _normalize_optional_text(tax_id),
         "bank_account": _normalized_bank_account_payload(bank_account),
-        "kyc_gcs_path": _normalize_optional_text(kyc_gcs_path),
-        "status": existing_status if snapshot.exists else "pending",
+        "kyc_gcs_path": (
+            _normalize_optional_text(kyc_gcs_path)
+            or _normalize_optional_text(existing_payload.get("kyc_gcs_path"))
+        ),
+        "status": "pending" if is_resubmission else existing_status if snapshot.exists else "pending",
         "updated_at": now,
     }
+    if is_resubmission:
+        if not any(item.get("action") == "rejected" for item in review_history):
+            review_history.append(
+                {
+                    "action": "rejected",
+                    "reason": _normalize_optional_text(existing_payload.get("rejection_reason")),
+                    "actor": _normalize_optional_text(existing_payload.get("decided_by")),
+                    "at": (
+                        _datetime_value(existing_payload.get("decided_at"))
+                        or _datetime_value(existing_payload.get("updated_at"))
+                        or now
+                    ),
+                }
+            )
+        review_history.append(
+            {
+                "action": "resubmitted",
+                "actor_type": "applicant",
+                "at": now,
+            }
+        )
+        payload.update(
+            {
+                "decided_account_type": None,
+                "decided_role": None,
+                "decided_roles": [],
+                "target_admin_id": None,
+                "target_subcontractor_id": None,
+                "target_customer_id": None,
+                "rejection_reason": None,
+                "decided_by": None,
+                "decided_at": None,
+                "review_history": review_history,
+            }
+        )
     if not snapshot.exists:
         payload["created_at"] = now
     ref.set(payload, merge=True)
@@ -823,13 +873,67 @@ def reject_access_request(
     reason: str | None,
     decided_by: str | None,
 ) -> AccessRequest:
+    current = get_access_request(request_id)
+    rejected_at = _now_utc()
+    history = list(current.review_history[-49:])
+    history.append(
+        {
+            "action": "rejected",
+            "reason": _normalize_optional_text(reason),
+            "actor": _normalize_optional_text(decided_by),
+            "at": rejected_at,
+        }
+    )
     return update_access_request(
         request_id,
         updates={
             "status": "rejected",
             "rejection_reason": _normalize_optional_text(reason),
             "decided_by": _normalize_optional_text(decided_by),
-            "decided_at": _now_utc(),
+            "decided_at": rejected_at,
+            "review_history": history,
+        },
+    )
+
+
+def reopen_access_request(
+    request_id: str,
+    *,
+    reopened_by: str | None,
+) -> AccessRequest:
+    current = get_access_request(request_id)
+    if current.status != "rejected":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only rejected access requests can be reopened.",
+        )
+
+    reopened_at = _now_utc()
+    history = list(current.review_history[-48:])
+    if not any(item.get("action") == "rejected" for item in history):
+        history.append(
+            {
+                "action": "rejected",
+                "reason": current.rejection_reason,
+                "actor": current.decided_by,
+                "at": current.decided_at or current.updated_at or reopened_at,
+            }
+        )
+    history.append(
+        {
+            "action": "reopened",
+            "actor": _normalize_optional_text(reopened_by),
+            "at": reopened_at,
+        }
+    )
+    return update_access_request(
+        request_id,
+        updates={
+            "status": "pending",
+            "rejection_reason": None,
+            "decided_by": None,
+            "decided_at": None,
+            "review_history": history,
         },
     )
 

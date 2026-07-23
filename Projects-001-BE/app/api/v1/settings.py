@@ -58,6 +58,7 @@ from app.services.identity_service import (
     get_subcontractor,
     get_kyc_storage_key,
     reject_access_request,
+    reopen_access_request,
     reset_customer_line_binding,
     reset_subcontractor_line_binding,
     subcontractor_doc_id_for_identity,
@@ -675,12 +676,30 @@ async def reject_pending_access_request(
     request: RejectAccessRequestRequest,
     user: AuthenticatedUser = Depends(require_admin_user),
 ):
+    access_request = get_access_request(request_id)
+    if access_request.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending access requests can be rejected.",
+        )
     rejected = reject_access_request(
         request_id,
         reason=request.reason or "Access request rejected by admin.",
         decided_by=user.email or user.subject,
     )
     return StandardResponse(data=_access_request_item(rejected))
+
+
+@router.post("/access-requests/{request_id}/reopen", response_model=StandardResponse[AccessRequestItem])
+async def reopen_rejected_access_request(
+    request_id: str,
+    user: AuthenticatedUser = Depends(require_admin_user),
+):
+    reopened = reopen_access_request(
+        request_id,
+        reopened_by=user.email or user.subject,
+    )
+    return StandardResponse(data=_access_request_item(reopened))
 
 
 @router.get("/integrations", response_model=StandardResponse[SettingsIntegrationsResponse])
