@@ -10,7 +10,7 @@ import os
 import re
 import threading
 import unicodedata
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import PurePosixPath
 from typing import BinaryIO
 from uuid import UUID, uuid4
@@ -120,6 +120,51 @@ def _build_perm_receipt_object_name(request_id: UUID, source_object_name: str) -
     now = datetime.now(UTC)
     safe_name = _sanitize_filename(PurePosixPath(source_object_name).name)
     return f"{_PERM_BILLS_PREFIX}/{now:%Y/%m/%d}/{request_id}-{safe_name}"
+
+
+def _paid_document_prefix(payment_date: date, internal_reference: str) -> str:
+    safe_reference = re.sub(r"[^A-Za-z0-9_-]+", "-", internal_reference).strip("-")
+    if not safe_reference:
+        raise ValueError("Payment reference is required for paid-document storage.")
+    return (
+        f"{_PERM_BILLS_PREFIX}/paid/{payment_date:%Y/%m/%d}/"
+        f"{safe_reference}"
+    )
+
+
+def paid_document_storage_prefix(payment_date: date, internal_reference: str) -> str:
+    """Return the private GCS prefix shared by accounting payment documents."""
+
+    return f"gs://{get_default_bucket_name()}/{_paid_document_prefix(payment_date, internal_reference)}"
+
+
+def _build_paid_original_object_name(
+    *,
+    request_id: UUID,
+    source_object_name: str,
+    payment_date: date,
+    internal_reference: str,
+) -> str:
+    safe_name = _sanitize_filename(PurePosixPath(source_object_name).name)
+    return (
+        f"{_paid_document_prefix(payment_date, internal_reference)}/"
+        f"original/{request_id}-{safe_name}"
+    )
+
+
+def _build_payment_confirmation_object_name(
+    *,
+    payment_date: date,
+    internal_reference: str,
+    confirmation_id: UUID,
+    version: int,
+    file_name: str | None,
+) -> str:
+    safe_name = _sanitize_filename(file_name or f"confirmation-{confirmation_id}")
+    return (
+        f"{_paid_document_prefix(payment_date, internal_reference)}/"
+        f"payment_confirmation/v{version}-{confirmation_id}-{safe_name}"
+    )
 
 
 def _build_kyc_object_name(file_name: str | None, entity_key: str) -> str:
@@ -412,6 +457,101 @@ async def move_input_receipt_to_perm_storage(
         _move_input_receipt_to_perm_storage_sync,
         storage_key=storage_key,
         request_id=request_id,
+    )
+
+
+def _organize_input_receipt_in_paid_storage_sync(
+    *,
+    storage_key: str,
+    request_id: UUID,
+    payment_date: date,
+    internal_reference: str,
+) -> str:
+    bucket_name = get_default_bucket_name()
+    source_bucket_name, source_object_name = _parse_gs_storage_key(storage_key)
+    if source_bucket_name != bucket_name:
+        raise ValueError(
+            f"Unexpected receipt bucket '{source_bucket_name}'. Expected '{bucket_name}'."
+        )
+
+    target_object_name = _build_paid_original_object_name(
+        request_id=request_id,
+        source_object_name=source_object_name,
+        payment_date=payment_date,
+        internal_reference=internal_reference,
+    )
+    if source_object_name == target_object_name:
+        return storage_key
+    if not source_object_name.startswith(f"{_PERM_BILLS_PREFIX}/"):
+        raise ValueError(
+            f"Unexpected approved receipt prefix '{source_object_name}'. "
+            f"Expected '{_PERM_BILLS_PREFIX}/...'."
+        )
+
+    client = _require_storage_client()
+    bucket = client.bucket(bucket_name)
+    source_blob = bucket.blob(source_object_name)
+    target_blob = bucket.blob(target_object_name)
+    target_exists = target_blob.exists(client)
+    source_exists = source_blob.exists(client)
+
+    if target_exists:
+        return f"gs://{bucket_name}/{target_object_name}"
+    if not source_exists:
+        raise FileNotFoundError(f"Approved receipt object not found in GCS: {storage_key}")
+
+    bucket.copy_blob(source_blob, bucket, target_object_name)
+    return f"gs://{bucket_name}/{target_object_name}"
+
+
+async def organize_input_receipt_in_paid_storage(
+    *,
+    storage_key: str | None,
+    request_id: UUID,
+    payment_date: date,
+    internal_reference: str,
+) -> str | None:
+    """Copy an approved receipt into its paid folder without deleting the source.
+
+    The caller should commit the database payment record first, then remove the
+    old object. Keeping the source until commit provides a recoverable boundary
+    between GCS and the database transaction.
+    """
+
+    if not storage_key:
+        return None
+    return await asyncio.to_thread(
+        _organize_input_receipt_in_paid_storage_sync,
+        storage_key=storage_key,
+        request_id=request_id,
+        payment_date=payment_date,
+        internal_reference=internal_reference,
+    )
+
+
+async def upload_payment_confirmation_to_storage(
+    *,
+    file_bytes: bytes,
+    file_name: str | None,
+    content_type: str | None,
+    payment_date: date,
+    internal_reference: str,
+    confirmation_id: UUID,
+    version: int,
+) -> str:
+    object_name = _build_payment_confirmation_object_name(
+        payment_date=payment_date,
+        internal_reference=internal_reference,
+        confirmation_id=confirmation_id,
+        version=version,
+        file_name=file_name,
+    )
+    return await asyncio.to_thread(
+        _upload_bytes_to_bucket_sync,
+        bucket_name=get_default_bucket_name(),
+        object_name=object_name,
+        file_bytes=file_bytes,
+        content_type=content_type,
     )
 
 

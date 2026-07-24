@@ -832,14 +832,160 @@ def get_media(media_id: str) -> dict[str, Any]:
     return _get_doc(MEDIA_COLLECTION, media_id, "Daily report media")
 
 
-def list_media(*, submission_ids: list[str] | None = None) -> list[dict[str, Any]]:
-    ids = set(submission_ids or [])
+def list_media(
+    *,
+    submission_ids: list[str] | None = None,
+    report_id: str | None = None,
+    media_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    submission_id_set = set(submission_ids or [])
+    media_id_set = set(media_ids or [])
     items = _stream_collection(MEDIA_COLLECTION)
     return [
         item
         for item in items
-        if not ids or item.get("submission_id") in ids
+        if (not submission_id_set or item.get("submission_id") in submission_id_set)
+        and (not report_id or item.get("report_id") == report_id)
+        and (not media_id_set or item.get("id") in media_id_set)
     ]
+
+
+def record_supplemental_media(
+    *,
+    media_id: str,
+    report_id: str,
+    project_id: str,
+    owner_id: str,
+    uploader_name: str | None,
+    media_type: str,
+    file_name: str,
+    content_type: str,
+    size_bytes: int,
+    storage_key: str,
+) -> dict[str, Any]:
+    report = get_report(report_id, include_sources=False)
+    if report.get("project_id") != project_id:
+        raise _bad_request("Supplemental evidence does not match this report project.")
+    if report.get("status") not in REVIEWABLE_REPORT_STATUSES:
+        raise _conflict("Start a correction before adding evidence to a published report.")
+    payload = {
+        "id": media_id,
+        "submission_id": None,
+        "report_id": report_id,
+        "project_id": project_id,
+        "owner_id": owner_id,
+        "uploader_name": _optional_text(uploader_name),
+        "source_type": "ADMIN_SUPPLEMENTAL",
+        "media_type": _clean_text(media_type).upper(),
+        "file_name": file_name,
+        "content_type": content_type,
+        "size_bytes": size_bytes,
+        "storage_key": storage_key,
+        "status": "READY",
+        "created_at": _now_utc(),
+    }
+    _client().collection(MEDIA_COLLECTION).document(media_id).set(payload)
+    _event(
+        project_id=project_id,
+        report_id=report_id,
+        event_type="REPORT_SUPPLEMENTAL_MEDIA_ADDED",
+        actor_id=owner_id,
+        actor_role="staff",
+        detail={"media_id": media_id},
+    )
+    return payload
+
+
+def _available_report_media(report: dict[str, Any]) -> list[dict[str, Any]]:
+    media_by_id: dict[str, dict[str, Any]] = {}
+    source_submission_ids = list(report.get("source_submission_ids") or [])
+    if source_submission_ids:
+        for item in list_media(submission_ids=source_submission_ids):
+            media_by_id[item["id"]] = item
+    for item in list_media(report_id=report["id"]):
+        media_by_id[item["id"]] = item
+    return sorted(
+        media_by_id.values(),
+        key=lambda item: _sort_datetime(item.get("created_at")),
+    )
+
+
+def set_report_media_visibility(
+    *,
+    report_id: str,
+    media_id: str,
+    included: bool,
+    actor_id: str,
+    actor_role: str,
+) -> dict[str, Any]:
+    report = get_report(report_id, include_sources=False)
+    if report.get("status") not in REVIEWABLE_REPORT_STATUSES:
+        raise _conflict("Start a correction before changing published evidence.")
+    available_ids = {item["id"] for item in _available_report_media(report)}
+    if media_id not in available_ids:
+        raise _bad_request("This evidence does not belong to the selected report.")
+    excluded_ids = list(dict.fromkeys(report.get("excluded_media_ids") or []))
+    if included:
+        excluded_ids = [item for item in excluded_ids if item != media_id]
+    elif media_id not in excluded_ids:
+        excluded_ids.append(media_id)
+    updates = {
+        "excluded_media_ids": excluded_ids,
+        "updated_at": _now_utc(),
+        "updated_by": actor_id,
+    }
+    _client().collection(REPORTS_COLLECTION).document(report_id).set(updates, merge=True)
+    report.update(updates)
+    _event(
+        project_id=report["project_id"],
+        report_id=report_id,
+        event_type="REPORT_MEDIA_VISIBILITY_UPDATED",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        detail={"media_id": media_id, "included": included},
+    )
+    return report
+
+
+def remove_supplemental_media(
+    *,
+    report_id: str,
+    media_id: str,
+    actor_id: str,
+    actor_role: str,
+) -> dict[str, Any]:
+    report = get_report(report_id, include_sources=False)
+    if report.get("status") not in REVIEWABLE_REPORT_STATUSES:
+        raise _conflict("Start a correction before removing published evidence.")
+    media = get_media(media_id)
+    if (
+        media.get("report_id") != report_id
+        or media.get("source_type") != "ADMIN_SUPPLEMENTAL"
+    ):
+        raise _conflict("Original subcontractor evidence cannot be deleted.")
+    updates = {
+        "status": "REMOVED",
+        "removed_at": _now_utc(),
+        "removed_by": actor_id,
+    }
+    _client().collection(MEDIA_COLLECTION).document(media_id).set(updates, merge=True)
+    set_report_media_visibility(
+        report_id=report_id,
+        media_id=media_id,
+        included=False,
+        actor_id=actor_id,
+        actor_role=actor_role,
+    )
+    _event(
+        project_id=report["project_id"],
+        report_id=report_id,
+        event_type="REPORT_SUPPLEMENTAL_MEDIA_REMOVED",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        detail={"media_id": media_id},
+    )
+    media.update(updates)
+    return media
 
 
 def delete_media(*, media_id: str, owner_id: str) -> dict[str, Any]:
@@ -982,7 +1128,17 @@ def get_report(report_id: str, *, include_sources: bool = True) -> dict[str, Any
             get_submission(submission_id)
             for submission_id in submission_ids
         ]
-        report["media"] = list_media(submission_ids=submission_ids)
+        excluded_ids = set(report.get("excluded_media_ids") or [])
+        report["media"] = [
+            {
+                **item,
+                "source_type": item.get("source_type") or "SUBCONTRACTOR",
+                "included_in_customer_report": (
+                    item.get("status") == "READY" and item["id"] not in excluded_ids
+                ),
+            }
+            for item in _available_report_media(report)
+        ]
         report["acknowledgements"] = [
             item
             for item in _stream_collection(ACKNOWLEDGEMENTS_COLLECTION)
@@ -1082,6 +1238,7 @@ def rebuild_report(
         "tomorrow_plan": "\n".join(tomorrow_parts) or None,
         "customer_note": existing.get("customer_note"),
         "source_submission_ids": [item["id"] for item in submissions],
+        "excluded_media_ids": list(existing.get("excluded_media_ids") or []),
         "expected_subcontractor_ids": expected_subcontractor_ids,
         "missing_subcontractor_ids": missing_subcontractor_ids,
         "published_version": existing.get("published_version"),
@@ -1187,6 +1344,12 @@ def request_changes(
 
 
 def _publication_snapshot(report: dict[str, Any]) -> dict[str, Any]:
+    excluded_ids = set(report.get("excluded_media_ids") or [])
+    published_media_ids = [
+        item["id"]
+        for item in _available_report_media(report)
+        if item.get("status") == "READY" and item["id"] not in excluded_ids
+    ]
     return {
         "report_id": report["id"],
         "project_id": report["project_id"],
@@ -1199,6 +1362,8 @@ def _publication_snapshot(report: dict[str, Any]) -> dict[str, Any]:
         "issues": report.get("issues") or [],
         "tomorrow_plan": report.get("tomorrow_plan"),
         "customer_note": report.get("customer_note"),
+        "source_submission_ids": list(report.get("source_submission_ids") or []),
+        "published_media_ids": published_media_ids,
     }
 
 
@@ -1218,6 +1383,8 @@ def publish_report(
     version = int(report.get("published_version") or 0) + 1
     version_id = f"{report_id}-v{version}"
     snapshot = _publication_snapshot(report)
+    if not snapshot.get("published_media_ids"):
+        raise _bad_request("Select at least one customer-facing photo before publication.")
     version_payload = {
         "id": version_id,
         "report_id": report_id,
@@ -1316,6 +1483,15 @@ def get_customer_report(report_id: str) -> dict[str, Any]:
     version_id = f"{report_id}-v{published_version}"
     version = _get_doc(VERSIONS_COLLECTION, version_id, "Daily report version")
     snapshot = dict(version.get("snapshot") or {})
+    published_media_ids = list(snapshot.get("published_media_ids") or [])
+    published_media_by_id = (
+        {
+            item["id"]: item
+            for item in list_media(media_ids=published_media_ids)
+        }
+        if published_media_ids
+        else {}
+    )
     media = [
         {
             "id": item["id"],
@@ -1324,9 +1500,12 @@ def get_customer_report(report_id: str) -> dict[str, Any]:
             "content_type": item.get("content_type"),
             "size_bytes": item.get("size_bytes"),
             "created_at": item.get("created_at"),
+            "source_type": item.get("source_type") or "SUBCONTRACTOR",
+            "uploader_name": item.get("uploader_name"),
         }
-        for item in list_media(submission_ids=list(report.get("source_submission_ids") or []))
-        if item.get("status") == "READY"
+        for media_id in published_media_ids
+        if (item := published_media_by_id.get(media_id))
+        and item.get("status") in {"READY", "REMOVED"}
     ]
     return {
         **snapshot,
@@ -1344,6 +1523,14 @@ def get_customer_report(report_id: str) -> dict[str, Any]:
         "created_at": report.get("created_at"),
         "updated_at": version.get("published_at"),
     }
+
+
+def is_media_published(*, media_id: str, project_id: str) -> bool:
+    return any(
+        item.get("project_id") == project_id
+        and media_id in list((item.get("snapshot") or {}).get("published_media_ids") or [])
+        for item in _stream_collection(VERSIONS_COLLECTION)
+    )
 
 
 def list_customer_reports(*, project_ids: set[str]) -> list[dict[str, Any]]:
@@ -1446,17 +1633,37 @@ def update_line_destination(
     *,
     project_id: str,
     line_target_id: str | None,
-    target_type: str,
     is_active: bool,
     actor_id: str,
 ) -> dict[str, Any]:
     normalized_target_id = _optional_text(line_target_id)
     candidate = get_line_destination_candidate(normalized_target_id) if normalized_target_id else None
+    if is_active and not normalized_target_id:
+        raise _bad_request("Select a discovered LINE group before enabling delivery.")
+    if normalized_target_id and not candidate:
+        raise _bad_request("LINE destination must be selected from discovered groups.")
+    if candidate and _clean_text(candidate.get("target_type")).lower() != "group":
+        raise _bad_request("Daily Report delivery supports discovered LINE groups only.")
+    if is_active and normalized_target_id:
+        duplicate_project = next(
+            (
+                item.get("project_id")
+                for item in _stream_collection(DESTINATIONS_COLLECTION)
+                if item.get("project_id") != project_id
+                and item.get("line_target_id") == normalized_target_id
+                and _clean_text(item.get("status")).upper() == "ACTIVE"
+            ),
+            None,
+        )
+        if duplicate_project:
+            raise _conflict(
+                "This LINE group is already active for another project."
+            )
     payload = {
         "project_id": project_id,
         "line_target_id": normalized_target_id,
         "display_name": _optional_text((candidate or {}).get("display_name")),
-        "target_type": _clean_text(target_type).lower() or "group",
+        "target_type": "group",
         "status": "ACTIVE" if is_active and normalized_target_id else "INACTIVE",
         "updated_at": _now_utc(),
         "updated_by": actor_id,
@@ -1534,7 +1741,12 @@ def record_line_destination_candidate(
 
 def list_line_destination_candidates() -> list[dict[str, Any]]:
     return sorted(
-        _stream_collection(DESTINATION_CANDIDATES_COLLECTION),
+        [
+            item
+            for item in _stream_collection(DESTINATION_CANDIDATES_COLLECTION)
+            if _clean_text(item.get("target_type")).lower() == "group"
+            and _clean_text(item.get("status")).upper() == "DISCOVERED"
+        ],
         key=lambda item: _sort_datetime(item.get("last_seen_at")),
         reverse=True,
     )

@@ -70,6 +70,12 @@ export default function WorkspaceTopbar({ authUser, pathname }) {
   const isSubcontractor = isSubcontractorUser(authUser);
   const meta = useMemo(
     () => {
+      if (isSubcontractor && pathname.startsWith('/payment-confirmation')) {
+        return {
+          title: 'ยืนยันการรับเงิน',
+          description: 'ตรวจสอบยอดโอน แนบหลักฐาน และติดตามผลการตรวจสอบ',
+        };
+      }
       if (isSubcontractor && pathname.startsWith('/input')) {
         return {
           title: 'ส่งคำขอ',

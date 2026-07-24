@@ -10,6 +10,7 @@ import {
   isAdminPortalUser,
   isCustomerUser,
   isPendingAccessUser,
+  isSubcontractorUser,
   resolvePostLoginPath,
   subscribeToAuthChanges,
   syncStoredProfileUser,
@@ -45,12 +46,14 @@ const LineCallbackPage = lazy(() => import('./LineCallbackPage'))
 const PendingApprovalPage = lazy(() => import('./PendingApprovalPage'))
 const DailyReportsPage = lazy(() => import('./DailyReportsPage'))
 const ProjectReportsPage = lazy(() => import('./ProjectReportsPage'))
+const PaymentConfirmationPage = lazy(() => import('./PaymentConfirmationPage'))
 
 function ProtectedLayout({
   adminOnly = false,
   ownerOnly = false,
   pendingOnly = false,
   customerOnly = false,
+  subcontractorOnly = false,
   shell = true,
 }) {
   const location = useLocation()
@@ -104,7 +107,10 @@ function ProtectedLayout({
   }, [pendingOnly, sessionToken])
 
   if (!sessionToken) {
-    const isSubcontractorLineEntry = location.pathname === '/daily-reports/me'
+    const isSubcontractorLineEntry = (
+      location.pathname === '/daily-reports/me'
+      || location.pathname.startsWith('/payment-confirmation')
+    )
     const isLineEntry = customerOnly || isSubcontractorLineEntry
     const loginParams = new URLSearchParams()
 
@@ -136,6 +142,10 @@ function ProtectedLayout({
   }
 
   if (customerOnly && !isCustomerUser(authUser)) {
+    return <Navigate to={resolvePostLoginPath(authUser)} replace />
+  }
+
+  if (subcontractorOnly && !isSubcontractorUser(authUser)) {
     return <Navigate to={resolvePostLoginPath(authUser)} replace />
   }
 
@@ -221,6 +231,10 @@ function AppRoutes() {
 
       <Route element={<ProtectedLayout customerOnly shell={false} />}>
         <Route path="/project-reports" element={<ProjectReportsPage />} />
+      </Route>
+
+      <Route element={<ProtectedLayout subcontractorOnly />}>
+        <Route path="/payment-confirmation" element={<PaymentConfirmationPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

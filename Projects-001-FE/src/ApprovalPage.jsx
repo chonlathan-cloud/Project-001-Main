@@ -1,9 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import { CheckCheck, CircleDollarSign, OctagonX, Save, X } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import {
+  CheckCheck,
+  CircleDollarSign,
+  ClipboardCheck,
+  OctagonX,
+  ReceiptText,
+  Save,
+  X,
+} from 'lucide-react';
 import Loading from './components/Loading';
 import {
   approveAdminInputRequest,
+  getAdminPaymentConfirmations,
   getAdminInputReceiptUrl,
   getAdminInputRequests,
   getInputRequestAccountingReadiness,
@@ -30,6 +39,7 @@ import {
   ApprovalSummaryStrip,
 } from './components/ApprovalWorkspace';
 import InputLineItemsEditor from './components/InputLineItemsEditor';
+import PaymentConfirmationReviewWorkspace from './components/PaymentConfirmationReviewWorkspace';
 import { createEmptyLineItem, sumLineItems } from './components/inputLineItemsUtils';
 
 const STATUS_OPTIONS = [
@@ -182,7 +192,7 @@ const normalizeLineItemsForSave = (items = [], selectedRequest = null) =>
       request_type: selectedRequest?.entry_type === 'INCOME' ? null : cleanText(item.request_type) || null,
     }));
 
-function ApprovalPage() {
+function ApprovalRequestsWorkspace() {
   const location = useLocation();
   const deepLinkParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const deepLinkRequestId = deepLinkParams.get('request_id') || '';
@@ -279,8 +289,8 @@ function ApprovalPage() {
       amount: lineItemTotal || (request.approved_amount ?? request.amount ?? ''),
       line_items: lineItems,
       review_note: request.review_note || '',
-      payment_reference: request.payment_reference || '',
-      payment_date: request.paid_at ? String(request.paid_at).slice(0, 10) : new Date().toISOString().slice(0, 10),
+      payment_reference: request.bank_transfer_reference || request.payment_reference || '',
+      payment_date: request.payment_date || new Date().toISOString().slice(0, 10),
     });
   };
 
@@ -665,7 +675,9 @@ function ApprovalPage() {
       title: selectedRequest.is_duplicate_flag ? 'Confirm duplicate FlowAccount sync' : 'Confirm FlowAccount sync',
       description: selectedRequest.is_duplicate_flag
         ? 'This request is flagged as duplicate. Confirming will sync it to FlowAccount anyway.'
-        : 'This will create or update the expense document and related accounting lifecycle in FlowAccount.',
+        : selectedRequest.status === 'PAID'
+          ? 'This request is already paid internally. The system will now sync the expense, attachment, tax document, and payment steps that are ready.'
+          : 'This will create or update the expense document and related accounting lifecycle in FlowAccount.',
       confirmLabel: 'Confirm Sync',
       busyLabel: 'Syncing...',
       summary: [
@@ -690,12 +702,13 @@ function ApprovalPage() {
       title: isIncome ? 'ยืนยันการรับเงิน' : 'ยืนยันการจ่ายเงิน',
       description: isIncome
         ? 'ระบบจะบันทึกรายการนี้เป็นรับเงินจริงแล้ว โดยไม่ส่งข้อมูลไป FlowAccount'
-        : 'ยืนยันว่าจ่ายเงินเรียบร้อยแล้ว ระบบจะ Sync payment ไป FlowAccount ก่อนเปลี่ยนสถานะ',
+        : 'ระบบจะบันทึกว่าจ่ายแล้วทันทีและสร้างเลขอ้างอิงอัตโนมัติ การ Sync FlowAccount ทำภายหลังได้',
       confirmLabel: isIncome ? 'ยืนยันรับเงิน' : 'ยืนยันจ่ายเงิน',
       busyLabel: isIncome ? 'กำลังบันทึกรับเงิน...' : 'กำลังบันทึกจ่ายเงิน...',
       summary: [
         ...requestSummary(),
-        { label: isIncome ? 'เลขอ้างอิงการรับเงิน' : 'เลขอ้างอิงการจ่าย', value: editor.payment_reference || '-' },
+        { label: 'เลขอ้างอิงภายใน', value: 'ระบบสร้างให้อัตโนมัติ' },
+        { label: 'เลขอ้างอิงธนาคาร (ถ้ามี)', value: editor.payment_reference || '-' },
         { label: isIncome ? 'วันที่รับเงิน' : 'วันที่จ่าย', value: editor.payment_date || '-' },
       ],
     });
@@ -764,7 +777,10 @@ function ApprovalPage() {
       } else {
         await loadData({ keepSelection: false });
       }
-      setFlashMessage(isIncome ? 'บันทึกว่ารับเงินแล้วเรียบร้อย' : 'บันทึกว่าจ่ายเงินแล้วเรียบร้อย');
+      setFlashMessage(
+        `${isIncome ? 'บันทึกว่ารับเงินแล้ว' : 'บันทึกว่าจ่ายเงินแล้ว'} · `
+        + `เลขอ้างอิง ${paid.internal_payment_reference || 'สร้างเรียบร้อย'}`,
+      );
     } catch (error) {
       setActionError(
         error.message ||
@@ -867,7 +883,7 @@ function ApprovalPage() {
   const canEditTaxFilingFields =
     canMutateApprovals &&
     selectedRequest &&
-    selectedRequest.status === 'APPROVED' &&
+    ['APPROVED', 'PAID'].includes(selectedRequest.status) &&
     hasFlowAccountDocument &&
     selectedRequest.flowaccount_payment_status !== 'PAYMENT_SYNCED';
   const canSaveMetadata =
@@ -875,13 +891,13 @@ function ApprovalPage() {
     selectedRequest &&
     isEditableStatus(selectedRequest.status) &&
     selectedRequest.flowaccount_payment_status !== 'PAYMENT_SYNCED';
-  const canSaveChanges = canEdit || canSaveMetadata;
+  const canSaveChanges = canEdit || canSaveMetadata || canEditTaxFilingFields;
   const canApprove = canMutateApprovals && selectedRequest ? isReviewableStatus(selectedRequest.status) : false;
   const canReject = canApprove;
   const flowAccountEnabled = Boolean(accountingReadiness?.enabled);
   const canSyncFlowAccount =
     canMutateApprovals &&
-    selectedRequest?.status === 'APPROVED' &&
+    ['APPROVED', 'PAID'].includes(selectedRequest?.status) &&
     selectedRequest?.entry_type === 'EXPENSE' &&
     (accountingReadiness?.can_sync_expense || hasFlowAccountDocument);
   const canRetryAttachment =
@@ -896,37 +912,16 @@ function ApprovalPage() {
     accountingReadiness?.can_sync_supplier_invoice;
   const canLinkFlowAccount =
     canMutateApprovals &&
-    selectedRequest?.status === 'APPROVED' &&
+    ['APPROVED', 'PAID'].includes(selectedRequest?.status) &&
     selectedRequest?.entry_type === 'EXPENSE' &&
     !hasFlowAccountDocument;
   const readinessIssues = [
     ...(accountingReadiness?.missing_fields || []),
     ...(accountingReadiness?.errors || []),
   ].map((item) => String(item || ''));
-  const hasPaymentConfigBlocker = readinessIssues.some((item) =>
-    item === 'FLOWACCOUNT_CLIENT_ID' ||
-    item === 'FLOWACCOUNT_CLIENT_SECRET' ||
-    item === 'FLOWACCOUNT_DEFAULT_PAYMENT_METHOD=transfer' ||
-    item === 'FLOWACCOUNT_DEFAULT_BANK_ACCOUNT_ID' ||
-    item === 'FLOWACCOUNT_DEFAULT_BANK_ACCOUNT_ID numeric value'
-  );
-  const hasDraftPaymentInputs = Boolean(cleanText(editor.payment_reference)) && Boolean(cleanText(editor.payment_date));
-  const canMarkPaidWithDraftPayment =
-    flowAccountEnabled &&
-    Boolean(accountingReadiness) &&
-    hasFlowAccountDocument &&
-    hasDraftPaymentInputs &&
-    !hasPaymentConfigBlocker;
-  const canMarkIncomeReceived =
-    isIncomeRequest &&
-    hasDraftPaymentInputs;
-  const canMarkExpensePaid =
-    isExpenseRequest &&
-    (!flowAccountEnabled || accountingReadiness?.can_mark_paid || canMarkPaidWithDraftPayment);
   const canMarkPaid =
     canMutateApprovals &&
-    selectedRequest?.status === 'APPROVED' &&
-    (canMarkIncomeReceived || canMarkExpensePaid);
+    selectedRequest?.status === 'APPROVED';
   const inputVatNotReady =
     selectedRequest?.accounting_vat_mode &&
     selectedRequest.accounting_vat_mode !== 'no_vat' &&
@@ -1171,7 +1166,7 @@ function ApprovalPage() {
     {
       label: 'Payment',
       status: selectedRequest.flowaccount_payment_status || 'NOT_READY',
-      detail: selectedRequest.payment_reference || 'Payment reference not recorded',
+      detail: selectedRequest.internal_payment_reference || 'Internal reference not generated',
     },
   ] : [];
   const flowAccountMessages = shouldShowFlowAccountPanel ? [
@@ -1179,7 +1174,7 @@ function ApprovalPage() {
       tone: 'info',
       text: 'FlowAccount integration is disabled in backend config.',
     } : null,
-    !isPaidRequest && readinessIssues.length ? {
+    readinessIssues.length ? {
       tone: accountingReadiness?.errors?.length ? 'critical' : 'warning',
       text: readinessIssues.join(' | '),
     } : null,
@@ -1197,6 +1192,13 @@ function ApprovalPage() {
     } : null,
   ].filter(Boolean) : [];
   const paidFlowAccountActions = [
+    {
+      label: busyAction === 'sync-flowaccount' ? 'Syncing...' : 'Sync Accounting',
+      onClick: openSyncFlowAccountDialog,
+      disabled: !!busyAction || !canSyncFlowAccount,
+      disabledReason: 'Available when this paid expense has enough accounting information.',
+      variant: 'primary',
+    },
     canRetryAttachment ? {
       label: 'Retry Attachment',
       onClick: handleRetryAttachment,
@@ -1336,13 +1338,9 @@ function ApprovalPage() {
         ? 'กรุณากรอกอัตราหัก ณ ที่จ่าย'
         : whtRateError,
     },
-    paymentReference: requiredField(
-      needsPaymentFields,
-      editor.payment_reference,
-      isIncomeRequest ? 'จำเป็นก่อนบันทึกรับเงิน' : 'จำเป็นก่อนบันทึกจ่ายเงิน'
-    ),
+    paymentReference: requiredField(false, editor.payment_reference, ''),
     paymentDate: requiredField(
-      needsPaymentFields && (isIncomeRequest || flowAccountEnabled),
+      needsPaymentFields,
       editor.payment_date,
       isIncomeRequest ? 'จำเป็นก่อนบันทึกรับเงิน' : 'จำเป็นก่อนบันทึกจ่ายเงิน'
     ),
@@ -1377,9 +1375,7 @@ function ApprovalPage() {
         : (isIncomeRequest ? 'บันทึกว่ารับเงินแล้ว' : 'บันทึกว่าจ่ายแล้ว'),
       onClick: openMarkPaidDialog,
       disabled: !!busyAction || !canMarkPaid,
-      disabledReason: isIncomeRequest
-        ? 'ระบุวันที่รับเงินและเลขอ้างอิงหลังอนุมัติรายการ'
-        : 'ต้องอนุมัติและเตรียมข้อมูลการจ่ายเงินให้ครบก่อน',
+      disabledReason: 'รายการต้องมีสถานะ Approved ก่อนบันทึกการจ่ายหรือรับเงิน',
       icon: approvalActionIcons.paid,
       variant: 'primary',
     },
@@ -1568,11 +1564,21 @@ function ApprovalPage() {
                         <input className="approval-input amount" type="number" min="0" max="100" step="0.01" value={editor.accounting_wht_rate} onChange={handleEditorChange('accounting_wht_rate')} disabled={!canEdit} />
                       </ApprovalField>
                       <ApprovalField
-                        label={isIncomeRequest ? 'เลขอ้างอิงการรับเงิน' : 'เลขอ้างอิงการจ่าย'}
+                        label="เลขอ้างอิงธนาคาร (ไม่บังคับ)"
                         {...approvalFieldRequirements.paymentReference}
                       >
                         <input className="approval-input" value={editor.payment_reference} onChange={handleEditorChange('payment_reference')} disabled={!canSaveMetadata} />
                       </ApprovalField>
+                      {selectedRequest.internal_payment_reference ? (
+                        <ApprovalField label={isIncomeRequest ? 'เลขอ้างอิงการรับเงิน' : 'เลขอ้างอิงการจ่าย'}>
+                          <input
+                            className="approval-input"
+                            value={selectedRequest.internal_payment_reference}
+                            readOnly
+                            aria-label="Generated internal payment reference"
+                          />
+                        </ApprovalField>
+                      ) : null}
                       <ApprovalField
                         label={isIncomeRequest ? 'วันที่รับเงิน' : 'วันที่จ่าย'}
                         {...approvalFieldRequirements.paymentDate}
@@ -1813,6 +1819,86 @@ function ApprovalPage() {
           </section>
         </div>
       ) : null}
+    </>
+  );
+}
+
+function ApprovalPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialWorkspace = new URLSearchParams(location.search).get('workspace');
+  const [activeWorkspace, setActiveWorkspace] = useState(
+    initialWorkspace === 'payment-confirmations' ? 'payment-confirmations' : 'requests',
+  );
+  const [pendingConfirmationCount, setPendingConfirmationCount] = useState(0);
+
+  useEffect(() => {
+    let isActive = true;
+
+    getAdminPaymentConfirmations('SUBMITTED')
+      .then((items) => {
+        if (isActive) setPendingConfirmationCount(items.length);
+      })
+      .catch(() => {
+        if (isActive) setPendingConfirmationCount(0);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const handleWorkspaceChange = (workspace) => {
+    const params = new URLSearchParams(location.search);
+    if (workspace === 'payment-confirmations') {
+      params.set('workspace', 'payment-confirmations');
+    } else {
+      params.delete('workspace');
+    }
+    const query = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: query ? `?${query}` : '',
+      },
+      { replace: true },
+    );
+    setActiveWorkspace(workspace);
+  };
+
+  return (
+    <>
+      <nav className="approval-workspace-switcher" role="tablist" aria-label="Approval workspace">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeWorkspace === 'requests'}
+          className={`approval-workspace-tab${activeWorkspace === 'requests' ? ' active' : ''}`}
+          onClick={() => handleWorkspaceChange('requests')}
+        >
+          <ClipboardCheck size={17} />
+          คำขออนุมัติ
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeWorkspace === 'payment-confirmations'}
+          className={`approval-workspace-tab${activeWorkspace === 'payment-confirmations' ? ' active' : ''}`}
+          onClick={() => handleWorkspaceChange('payment-confirmations')}
+        >
+          <ReceiptText size={17} />
+          หลักฐานยืนยันการรับเงิน
+          {pendingConfirmationCount > 0 ? <strong>{pendingConfirmationCount}</strong> : null}
+        </button>
+      </nav>
+
+      {activeWorkspace === 'requests' ? (
+        <ApprovalRequestsWorkspace />
+      ) : (
+        <PaymentConfirmationReviewWorkspace
+          onPendingCountChange={setPendingConfirmationCount}
+        />
+      )}
     </>
   );
 }

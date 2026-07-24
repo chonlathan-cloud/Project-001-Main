@@ -49,6 +49,7 @@ class FlowAccountPaymentPayloadTest(unittest.IsolatedAsyncioTestCase):
             make_input_request(Decimal("0.00")),
             expense_id="EXP2026060001",
             payment_date=date(2026, 6, 26),
+            payment_reference="E00126062026",
         )
 
         self.assertEqual(service.last_payment_payload["withheldPercentage"], 0)
@@ -61,6 +62,7 @@ class FlowAccountPaymentPayloadTest(unittest.IsolatedAsyncioTestCase):
             make_input_request(Decimal("3.00")),
             expense_id="EXP2026060001",
             payment_date=date(2026, 6, 26),
+            payment_reference="E00126062026",
         )
 
         self.assertEqual(service.last_payment_payload["withheldPercentage"], 3)
@@ -74,6 +76,7 @@ class FlowAccountPaymentPayloadTest(unittest.IsolatedAsyncioTestCase):
                 make_input_request(Decimal("1.50")),
                 expense_id="EXP2026060001",
                 payment_date=date(2026, 6, 26),
+                payment_reference="E00126062026",
             )
 
 

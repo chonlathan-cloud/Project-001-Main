@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 from google.auth import credentials as google_auth_credentials
 
@@ -167,6 +169,67 @@ class GcsStorageServiceTests(unittest.TestCase):
         )
         self.assertEqual(iam_credentials.refresh_count, 0)
         self.assertEqual(blob.generate_signed_url.call_count, 2)
+
+    def test_paid_documents_share_reference_folder(self):
+        prefix = gcs_storage_service._paid_document_prefix(
+            date(2026, 6, 27),
+            "E00127062026",
+        )
+        original = gcs_storage_service._build_paid_original_object_name(
+            request_id=UUID("11111111-1111-1111-1111-111111111111"),
+            source_object_name="perm_bills/old/source-invoice.pdf",
+            payment_date=date(2026, 6, 27),
+            internal_reference="E00127062026",
+        )
+        confirmation = gcs_storage_service._build_payment_confirmation_object_name(
+            payment_date=date(2026, 6, 27),
+            internal_reference="E00127062026",
+            confirmation_id=UUID("22222222-2222-2222-2222-222222222222"),
+            version=1,
+            file_name="received.jpg",
+        )
+
+        self.assertEqual(prefix, "perm_bills/paid/2026/06/27/E00127062026")
+        self.assertTrue(original.startswith(f"{prefix}/original/"))
+        self.assertTrue(confirmation.startswith(f"{prefix}/payment_confirmation/"))
+
+    def test_paid_receipt_copy_keeps_source_until_database_commit(self):
+        source_blob = MagicMock()
+        source_blob.exists.return_value = True
+        target_blob = MagicMock()
+        target_blob.exists.return_value = False
+        bucket = MagicMock()
+        bucket.blob.side_effect = [source_blob, target_blob]
+        client = MagicMock()
+        client.bucket.return_value = bucket
+
+        with (
+            patch.object(
+                gcs_storage_service,
+                "get_default_bucket_name",
+                return_value="private-bucket",
+            ),
+            patch.object(
+                gcs_storage_service,
+                "_require_storage_client",
+                return_value=client,
+            ),
+        ):
+            result = gcs_storage_service._organize_input_receipt_in_paid_storage_sync(
+                storage_key="gs://private-bucket/perm_bills/2026/07/22/source.jpg",
+                request_id=UUID("11111111-1111-1111-1111-111111111111"),
+                payment_date=date(2026, 7, 24),
+                internal_reference="E00124072026",
+            )
+
+        self.assertTrue(
+            result.startswith(
+                "gs://private-bucket/perm_bills/paid/2026/07/24/"
+                "E00124072026/original/"
+            )
+        )
+        bucket.copy_blob.assert_called_once()
+        source_blob.delete.assert_not_called()
 
 
 if __name__ == "__main__":

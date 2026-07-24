@@ -389,6 +389,13 @@ class InputRequestItem(BaseModel):
     approved_at: datetime | None = None
     paid_at: datetime | None = None
     payment_reference: str | None = None
+    payment_id: UUID | None = None
+    internal_payment_reference: str | None = None
+    payment_date: date | None = None
+    bank_transfer_reference: str | None = None
+    paid_storage_prefix: str | None = None
+    payment_confirmation_status: str | None = None
+    latest_payment_confirmation_id: UUID | None = None
     accounting_ready: bool = False
     accounting_readiness_errors: list[str] = Field(default_factory=list)
     flowaccount_sync_status: str = "NOT_READY"
@@ -411,6 +418,94 @@ class InputRequestItem(BaseModel):
     flowaccount_duplicate_override_reason: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
+
+
+class InputPaymentAwaitingConfirmationItem(BaseModel):
+    payment_id: UUID
+    request_id: UUID
+    project_id: UUID
+    project_name: str
+    requester_name: str
+    request_type: str | None = None
+    amount: float
+    payment_date: date
+    internal_reference: str
+    confirmation_status: str
+    latest_confirmation_id: UUID | None = None
+
+
+class InputPaymentConfirmationSummaryItem(BaseModel):
+    payment_id: UUID
+    request_id: UUID
+    project_id: UUID
+    project_name: str
+    requester_name: str
+    request_type: str | None = None
+    amount: float
+    payment_date: date
+    internal_reference: str
+    confirmation_status: str
+    action_required: bool
+    latest_confirmation_id: UUID | None = None
+    latest_confirmation_version: int | None = None
+    latest_received_date: date | None = None
+    latest_received_full_amount: bool | None = None
+    latest_note: str | None = None
+    latest_file_name: str | None = None
+    latest_content_type: str | None = None
+    latest_submitted_at: datetime | None = None
+    latest_verified_at: datetime | None = None
+    latest_verification_note: str | None = None
+
+
+class InputPaymentConfirmationItem(BaseModel):
+    confirmation_id: UUID
+    payment_id: UUID
+    request_id: UUID
+    project_id: UUID
+    project_name: str
+    subcontractor_id: str
+    internal_reference: str
+    payment_date: date
+    amount: float
+    version: int
+    status: str
+    received_date: date
+    received_full_amount: bool
+    note: str | None = None
+    file_name: str
+    content_type: str
+    size_bytes: int
+    submitted_at: datetime
+    verified_at: datetime | None = None
+    verified_by: str | None = None
+    verification_note: str | None = None
+
+
+class InputPaymentConfirmationAccessResponse(BaseModel):
+    confirmation_id: UUID
+    url: str
+    expires_in_minutes: int
+    file_name: str
+    content_type: str
+
+
+class InputPaymentConfirmationReviewAction(BaseModel):
+    action: str
+    note: str | None = None
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def validate_action(cls, value: str) -> str:
+        normalized = str(value or "").strip().upper()
+        if normalized not in {"VERIFY", "REQUEST_CHANGES"}:
+            raise ValueError("action must be VERIFY or REQUEST_CHANGES.")
+        return normalized
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def clean_note(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value)
 
 
 class InputRequestStatusSummaryItem(BaseModel):

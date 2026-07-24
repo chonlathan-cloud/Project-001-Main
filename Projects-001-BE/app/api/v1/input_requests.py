@@ -8,12 +8,14 @@ Provides:
   - request listing for review/debugging
 """
 
-from datetime import date, datetime, time, timedelta, timezone
+import logging
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import or_, select
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
+from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
@@ -23,9 +25,17 @@ from app.api.deps.auth import (
     require_admin_user,
     require_owner_user,
 )
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.boq import Project
-from app.models.input_request import InputOptionSuggestion, InputRequest, InputRequestLineItem
+from app.models.input_request import (
+    InputOptionSuggestion,
+    InputPayment,
+    InputPaymentConfirmation,
+    InputPaymentReferenceCounter,
+    InputRequest,
+    InputRequestLineItem,
+)
 from app.schemas.input_schema import (
     BankAccountPayload,
     DEFAULT_WORK_TYPE_OPTIONS,
@@ -33,6 +43,11 @@ from app.schemas.input_schema import (
     FlowAccountReadinessResponse,
     FlowAccountSyncAction,
     InputDefaultValuesResponse,
+    InputPaymentAwaitingConfirmationItem,
+    InputPaymentConfirmationAccessResponse,
+    InputPaymentConfirmationItem,
+    InputPaymentConfirmationReviewAction,
+    InputPaymentConfirmationSummaryItem,
     InputRequestAdminSummaryResponse,
     InputRequestAdminUpdate,
     InputRequestApproveAction,
@@ -51,9 +66,13 @@ from app.schemas.input_schema import (
 )
 from app.schemas.responses import StandardResponse
 from app.services.gcs_storage_service import (
+    delete_storage_key,
     download_storage_key_bytes,
     generate_signed_url_for_storage_key,
     move_input_receipt_to_perm_storage,
+    organize_input_receipt_in_paid_storage,
+    paid_document_storage_prefix,
+    upload_payment_confirmation_to_storage,
     upload_input_receipt_to_temp_storage,
 )
 from app.services.ai_service import extract_receipt_data_with_gemini
@@ -67,18 +86,27 @@ from app.services.flowaccount_service import (
     flowaccount_external_document_id,
     flowaccount_readiness,
     flowaccount_record_id,
-    is_flowaccount_configured,
 )
 from app.services.identity_service import get_subcontractor
 from app.services.input_receipt_cleanup_service import cleanup_orphan_temp_receipts
 
 router = APIRouter(prefix="/input", tags=["Input Requests"])
+logger = logging.getLogger(__name__)
 
 COMPANY_PROJECT_NAME = "โครงการบริษัท"
 COMPANY_PROJECT_TYPE = "INTERNAL"
 OPTION_TYPE_TAG = "TAG"
 OPTION_TYPE_WORK_TYPE = "WORK_TYPE"
 THAILAND_TIMEZONE = timezone(timedelta(hours=7))
+PAYMENT_CONFIRMATION_CONTENT_TYPES = {
+    "application/pdf",
+    "image/heic",
+    "image/heif",
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+}
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -112,33 +140,107 @@ def _decimal_money(value: object) -> Decimal:
     return Decimal(str(round(_money_value(value), 2)))
 
 
-def _requires_flowaccount_payment(input_request: InputRequest) -> bool:
-    return (
-        str(input_request.entry_type or "").upper() == "EXPENSE"
-        and is_flowaccount_configured()
+def _format_payment_reference(entry_type: str, sequence: int, payment_date: date) -> str:
+    normalized_entry_type = str(entry_type or "").strip().upper()
+    if normalized_entry_type not in {"EXPENSE", "INCOME"}:
+        raise ValueError("Payment references support EXPENSE or INCOME entries only.")
+    prefix = "E" if normalized_entry_type == "EXPENSE" else "IN"
+    return f"{prefix}{sequence:03d}{payment_date:%d%m%Y}"
+
+
+async def _next_payment_reference(
+    db: AsyncSession,
+    *,
+    entry_type: str,
+    payment_date: date,
+) -> tuple[int, str]:
+    normalized_entry_type = str(entry_type or "").strip().upper()
+    counter_table = InputPaymentReferenceCounter.__table__
+    statement = (
+        postgresql_insert(counter_table)
+        .values(
+            reference_date=payment_date,
+            entry_type=normalized_entry_type,
+            last_sequence=1,
+        )
+        .on_conflict_do_update(
+            index_elements=[
+                counter_table.c.reference_date,
+                counter_table.c.entry_type,
+            ],
+            set_={
+                "last_sequence": counter_table.c.last_sequence + 1,
+                "updated_at": func.now(),
+            },
+        )
+        .returning(counter_table.c.last_sequence)
+    )
+    sequence = int((await db.execute(statement)).scalar_one())
+    return sequence, _format_payment_reference(
+        normalized_entry_type,
+        sequence,
+        payment_date,
     )
 
 
-def _payment_completion_timestamp(
-    *,
-    entry_type: str,
-    payment_date: date | None,
-    completed_at: datetime,
-) -> datetime:
-    if str(entry_type or "").upper() != "INCOME":
-        return completed_at
-    if payment_date is None:
+def _latest_payment_confirmation(
+    payment: InputPayment | None,
+) -> InputPaymentConfirmation | None:
+    if not payment:
+        return None
+    confirmations = list(payment.confirmations or [])
+    return confirmations[0] if confirmations else None
+
+
+def _confirmation_status(payment: InputPayment | None) -> str | None:
+    if not payment:
+        return None
+    latest = _latest_payment_confirmation(payment)
+    return latest.status if latest else "AWAITING_SUBMISSION"
+
+
+async def _read_payment_confirmation_upload(file: UploadFile) -> tuple[bytes, str]:
+    content_type = str(file.content_type or "application/octet-stream").lower().split(";", 1)[0]
+    if content_type not in PAYMENT_CONFIRMATION_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="payment_date is required before marking income as received.",
+            detail="Payment confirmation supports JPG, PNG, WEBP, HEIC, HEIF, or PDF files.",
         )
-
-    # Store the selected Thailand calendar date without risking a UTC month shift.
-    return datetime.combine(
-        payment_date,
-        time(hour=12),
-        tzinfo=THAILAND_TIMEZONE,
-    ).astimezone(timezone.utc)
+    max_bytes = get_settings().payment_confirmation_max_bytes
+    chunks: list[bytes] = []
+    total_bytes = 0
+    while chunk := await file.read(1024 * 1024):
+        total_bytes += len(chunk)
+        if total_bytes > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"Payment confirmation exceeds the {max_bytes // (1024 * 1024)}MB limit.",
+            )
+        chunks.append(chunk)
+    file_bytes = b"".join(chunks)
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded payment confirmation is empty.",
+        )
+    prefix = file_bytes[:32]
+    signature_valid = True
+    if content_type in {"image/jpeg", "image/jpg"}:
+        signature_valid = prefix.startswith(b"\xff\xd8\xff")
+    elif content_type == "image/png":
+        signature_valid = prefix.startswith(b"\x89PNG\r\n\x1a\n")
+    elif content_type == "image/webp":
+        signature_valid = prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP"
+    elif content_type in {"image/heic", "image/heif"}:
+        signature_valid = prefix[4:8] == b"ftyp"
+    elif content_type == "application/pdf":
+        signature_valid = prefix.startswith(b"%PDF-")
+    if not signature_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded payment confirmation does not match its declared file type.",
+        )
+    return file_bytes, content_type
 
 
 def _clean_unique_text_values(values: list[str] | None) -> list[str]:
@@ -230,6 +332,8 @@ def _serialize_line_item(item: InputRequestLineItem) -> InputRequestLineItemItem
 
 
 def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequestItem:
+    payment = item.payment
+    latest_confirmation = _latest_payment_confirmation(payment)
     return InputRequestItem(
         request_id=item.id,
         project_id=item.project_id,
@@ -279,6 +383,13 @@ def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequ
         approved_at=item.approved_at,
         paid_at=item.paid_at,
         payment_reference=item.payment_reference,
+        payment_id=payment.id if payment else None,
+        internal_payment_reference=payment.internal_reference if payment else None,
+        payment_date=payment.payment_date if payment else None,
+        bank_transfer_reference=payment.bank_transfer_reference if payment else None,
+        paid_storage_prefix=payment.paid_storage_prefix if payment else None,
+        payment_confirmation_status=_confirmation_status(payment),
+        latest_payment_confirmation_id=latest_confirmation.id if latest_confirmation else None,
         accounting_ready=bool(item.accounting_ready),
         accounting_readiness_errors=item.accounting_readiness_errors or [],
         flowaccount_sync_status=item.flowaccount_sync_status or "NOT_READY",
@@ -382,6 +493,15 @@ def _resolve_subcontractor_id_for_create(
         return user.subcontractor_id
 
     return _clean_optional_text(request.subcontractor_id)
+
+
+def _require_subcontractor_identity(user: AuthenticatedUser) -> str:
+    if not user.has_role("subcontractor") or not user.subcontractor_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A verified subcontractor session is required.",
+        )
+    return user.subcontractor_id
 
 
 def _assigned_project_ids_for_subcontractor(user: AuthenticatedUser) -> set[UUID]:
@@ -830,6 +950,430 @@ async def get_admin_input_request_receipt_url(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate receipt signed URL: {exc}",
         ) from exc
+
+
+async def _get_payment_context(
+    db: AsyncSession,
+    payment_id: UUID,
+) -> tuple[InputPayment, InputRequest, str]:
+    row = (
+        await db.execute(
+            select(InputPayment, InputRequest, Project.name)
+            .join(InputRequest, InputRequest.id == InputPayment.input_request_id)
+            .join(Project, Project.id == InputRequest.project_id)
+            .options(selectinload(InputPayment.confirmations))
+            .where(InputPayment.id == payment_id)
+        )
+    ).one_or_none()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found.",
+        )
+    return row[0], row[1], row[2]
+
+
+async def _get_confirmation_context(
+    db: AsyncSession,
+    confirmation_id: UUID,
+) -> tuple[InputPaymentConfirmation, InputPayment, InputRequest, str]:
+    row = (
+        await db.execute(
+            select(
+                InputPaymentConfirmation,
+                InputPayment,
+                InputRequest,
+                Project.name,
+            )
+            .join(InputPayment, InputPayment.id == InputPaymentConfirmation.payment_id)
+            .join(InputRequest, InputRequest.id == InputPayment.input_request_id)
+            .join(Project, Project.id == InputRequest.project_id)
+            .where(InputPaymentConfirmation.id == confirmation_id)
+        )
+    ).one_or_none()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment confirmation not found.",
+        )
+    return row[0], row[1], row[2], row[3]
+
+
+def _serialize_payment_confirmation(
+    confirmation: InputPaymentConfirmation,
+    payment: InputPayment,
+    input_request: InputRequest,
+    project_name: str,
+) -> InputPaymentConfirmationItem:
+    return InputPaymentConfirmationItem(
+        confirmation_id=confirmation.id,
+        payment_id=payment.id,
+        request_id=input_request.id,
+        project_id=input_request.project_id,
+        project_name=project_name,
+        subcontractor_id=confirmation.subcontractor_id,
+        internal_reference=payment.internal_reference,
+        payment_date=payment.payment_date,
+        amount=float(payment.amount or 0),
+        version=confirmation.version,
+        status=confirmation.status,
+        received_date=confirmation.received_date,
+        received_full_amount=bool(confirmation.received_full_amount),
+        note=confirmation.note,
+        file_name=confirmation.file_name,
+        content_type=confirmation.content_type,
+        size_bytes=confirmation.size_bytes,
+        submitted_at=confirmation.submitted_at,
+        verified_at=confirmation.verified_at,
+        verified_by=confirmation.verified_by,
+        verification_note=confirmation.verification_note,
+    )
+
+
+@router.get(
+    "/me/payments/awaiting-confirmation",
+    response_model=StandardResponse[list[InputPaymentAwaitingConfirmationItem]],
+)
+async def list_my_payments_awaiting_confirmation(
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    subcontractor_id = _require_subcontractor_identity(user)
+    rows = (
+        await db.execute(
+            select(InputPayment, InputRequest, Project.name)
+            .join(InputRequest, InputRequest.id == InputPayment.input_request_id)
+            .join(Project, Project.id == InputRequest.project_id)
+            .options(selectinload(InputPayment.confirmations))
+            .where(
+                InputRequest.subcontractor_id == subcontractor_id,
+                InputRequest.entry_type == "EXPENSE",
+                InputRequest.status == "PAID",
+            )
+            .order_by(InputPayment.payment_date.desc(), InputPayment.recorded_at.desc())
+        )
+    ).all()
+    items: list[InputPaymentAwaitingConfirmationItem] = []
+    for payment, input_request, project_name in rows:
+        latest = _latest_payment_confirmation(payment)
+        confirmation_status = latest.status if latest else "AWAITING_SUBMISSION"
+        if confirmation_status not in {"AWAITING_SUBMISSION", "CHANGES_REQUESTED"}:
+            continue
+        items.append(
+            InputPaymentAwaitingConfirmationItem(
+                payment_id=payment.id,
+                request_id=input_request.id,
+                project_id=input_request.project_id,
+                project_name=project_name,
+                requester_name=input_request.requester_name,
+                request_type=input_request.request_type,
+                amount=float(payment.amount or 0),
+                payment_date=payment.payment_date,
+                internal_reference=payment.internal_reference,
+                confirmation_status=confirmation_status,
+                latest_confirmation_id=latest.id if latest else None,
+            )
+        )
+    return StandardResponse(data=items)
+
+
+@router.get(
+    "/me/payments/payment-confirmations",
+    response_model=StandardResponse[list[InputPaymentConfirmationSummaryItem]],
+)
+async def list_my_payment_confirmation_statuses(
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return paid expenses with their latest technician confirmation state."""
+
+    subcontractor_id = _require_subcontractor_identity(user)
+    rows = (
+        await db.execute(
+            select(InputPayment, InputRequest, Project.name)
+            .join(InputRequest, InputRequest.id == InputPayment.input_request_id)
+            .join(Project, Project.id == InputRequest.project_id)
+            .options(selectinload(InputPayment.confirmations))
+            .where(
+                InputRequest.subcontractor_id == subcontractor_id,
+                InputRequest.entry_type == "EXPENSE",
+                InputRequest.status == "PAID",
+            )
+            .order_by(InputPayment.payment_date.desc(), InputPayment.recorded_at.desc())
+        )
+    ).all()
+
+    items: list[InputPaymentConfirmationSummaryItem] = []
+    for payment, input_request, project_name in rows:
+        latest = _latest_payment_confirmation(payment)
+        confirmation_status = latest.status if latest else "AWAITING_SUBMISSION"
+        items.append(
+            InputPaymentConfirmationSummaryItem(
+                payment_id=payment.id,
+                request_id=input_request.id,
+                project_id=input_request.project_id,
+                project_name=project_name,
+                requester_name=input_request.requester_name,
+                request_type=input_request.request_type,
+                amount=float(payment.amount or 0),
+                payment_date=payment.payment_date,
+                internal_reference=payment.internal_reference,
+                confirmation_status=confirmation_status,
+                action_required=confirmation_status
+                in {"AWAITING_SUBMISSION", "CHANGES_REQUESTED"},
+                latest_confirmation_id=latest.id if latest else None,
+                latest_confirmation_version=latest.version if latest else None,
+                latest_received_date=latest.received_date if latest else None,
+                latest_received_full_amount=(
+                    bool(latest.received_full_amount) if latest else None
+                ),
+                latest_note=latest.note if latest else None,
+                latest_file_name=latest.file_name if latest else None,
+                latest_content_type=latest.content_type if latest else None,
+                latest_submitted_at=latest.submitted_at if latest else None,
+                latest_verified_at=latest.verified_at if latest else None,
+                latest_verification_note=(
+                    latest.verification_note if latest else None
+                ),
+            )
+        )
+    return StandardResponse(data=items)
+
+
+@router.post(
+    "/me/payments/{payment_id}/confirmation",
+    response_model=StandardResponse[InputPaymentConfirmationItem],
+)
+async def submit_my_payment_confirmation(
+    payment_id: UUID,
+    file: UploadFile = File(...),
+    received_date: date = Form(...),
+    received_full_amount: bool = Form(True),
+    note: str | None = Form(default=None),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    subcontractor_id = _require_subcontractor_identity(user)
+    payment, input_request, project_name = await _get_payment_context(db, payment_id)
+    if (
+        input_request.subcontractor_id != subcontractor_id
+        or input_request.entry_type != "EXPENSE"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This payment does not belong to the current subcontractor.",
+        )
+    if input_request.status != "PAID":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Payment confirmation can be submitted only after the request is paid.",
+        )
+
+    normalized_idempotency_key = _clean_optional_text(idempotency_key)
+    if normalized_idempotency_key and len(normalized_idempotency_key) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Idempotency-Key must not exceed 200 characters.",
+        )
+    if normalized_idempotency_key:
+        existing = (
+            await db.execute(
+                select(InputPaymentConfirmation).where(
+                    InputPaymentConfirmation.payment_id == payment_id,
+                    InputPaymentConfirmation.idempotency_key == normalized_idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            return StandardResponse(
+                data=_serialize_payment_confirmation(
+                    existing,
+                    payment,
+                    input_request,
+                    project_name,
+                )
+            )
+
+    latest = _latest_payment_confirmation(payment)
+    if latest and latest.status in {"SUBMITTED", "VERIFIED"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A payment confirmation is already awaiting review."
+                if latest.status == "SUBMITTED"
+                else "This payment confirmation has already been verified."
+            ),
+        )
+
+    file_bytes, content_type = await _read_payment_confirmation_upload(file)
+    version = max([item.version for item in payment.confirmations or []] or [0]) + 1
+    confirmation_id = uuid4()
+    storage_key: str | None = None
+    committed = False
+    try:
+        storage_key = await upload_payment_confirmation_to_storage(
+            file_bytes=file_bytes,
+            file_name=file.filename,
+            content_type=content_type,
+            payment_date=payment.payment_date,
+            internal_reference=payment.internal_reference,
+            confirmation_id=confirmation_id,
+            version=version,
+        )
+        now = datetime.now(timezone.utc)
+        if latest:
+            latest.status = "SUPERSEDED"
+            latest.superseded_at = now
+        confirmation = InputPaymentConfirmation(
+            id=confirmation_id,
+            payment_id=payment.id,
+            subcontractor_id=subcontractor_id,
+            idempotency_key=normalized_idempotency_key,
+            version=version,
+            status="SUBMITTED",
+            received_date=received_date,
+            received_full_amount=received_full_amount,
+            note=_clean_optional_text(note),
+            file_name=file.filename or f"payment-confirmation-{confirmation_id}",
+            content_type=content_type,
+            size_bytes=len(file_bytes),
+            storage_key=storage_key,
+            submitted_at=now,
+        )
+        db.add(confirmation)
+        await db.commit()
+        committed = True
+        await db.refresh(confirmation)
+        return StandardResponse(
+            data=_serialize_payment_confirmation(
+                confirmation,
+                payment,
+                input_request,
+                project_name,
+            )
+        )
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        if storage_key and not committed:
+            await delete_storage_key(storage_key)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit payment confirmation: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/payment-confirmations/{confirmation_id}/signed-url",
+    response_model=StandardResponse[InputPaymentConfirmationAccessResponse],
+)
+async def get_payment_confirmation_signed_url(
+    confirmation_id: UUID,
+    expires_in_minutes: int = Query(default=15, ge=1, le=60),
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    confirmation, _payment, input_request, _project_name = await _get_confirmation_context(
+        db,
+        confirmation_id,
+    )
+    is_owner = (
+        user.has_role("subcontractor")
+        and input_request.subcontractor_id == user.subcontractor_id
+    )
+    if not is_owner and not user.has_any_role({"admin", "owner"}):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Payment confirmation access is not allowed.",
+        )
+    signed_url = await generate_signed_url_for_storage_key(
+        storage_key=confirmation.storage_key,
+        expires_in_minutes=expires_in_minutes,
+    )
+    return StandardResponse(
+        data=InputPaymentConfirmationAccessResponse(
+            confirmation_id=confirmation.id,
+            url=signed_url,
+            expires_in_minutes=expires_in_minutes,
+            file_name=confirmation.file_name,
+            content_type=confirmation.content_type,
+        )
+    )
+
+
+@router.get(
+    "/admin/payment-confirmations",
+    response_model=StandardResponse[list[InputPaymentConfirmationItem]],
+)
+async def list_admin_payment_confirmations(
+    confirmation_status: str | None = Query(default=None, alias="status"),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    statement = (
+        select(InputPaymentConfirmation, InputPayment, InputRequest, Project.name)
+        .join(InputPayment, InputPayment.id == InputPaymentConfirmation.payment_id)
+        .join(InputRequest, InputRequest.id == InputPayment.input_request_id)
+        .join(Project, Project.id == InputRequest.project_id)
+        .order_by(InputPaymentConfirmation.submitted_at.desc())
+    )
+    if confirmation_status:
+        statement = statement.where(
+            InputPaymentConfirmation.status == confirmation_status.strip().upper()
+        )
+    rows = (await db.execute(statement)).all()
+    return StandardResponse(
+        data=[
+            _serialize_payment_confirmation(
+                confirmation,
+                payment,
+                input_request,
+                project_name,
+            )
+            for confirmation, payment, input_request, project_name in rows
+        ]
+    )
+
+
+@router.post(
+    "/admin/payment-confirmations/{confirmation_id}/review",
+    response_model=StandardResponse[InputPaymentConfirmationItem],
+)
+async def review_payment_confirmation(
+    confirmation_id: UUID,
+    request: InputPaymentConfirmationReviewAction,
+    user: AuthenticatedUser = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    confirmation, payment, input_request, project_name = await _get_confirmation_context(
+        db,
+        confirmation_id,
+    )
+    if confirmation.status != "SUBMITTED":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only submitted payment confirmations can be reviewed.",
+        )
+    now = datetime.now(timezone.utc)
+    confirmation.status = (
+        "VERIFIED" if request.action == "VERIFY" else "CHANGES_REQUESTED"
+    )
+    confirmation.verified_at = now if request.action == "VERIFY" else None
+    confirmation.verified_by = user.subject if request.action == "VERIFY" else None
+    confirmation.verification_note = request.note
+    await db.commit()
+    await db.refresh(confirmation)
+    return StandardResponse(
+        data=_serialize_payment_confirmation(
+            confirmation,
+            payment,
+            input_request,
+            project_name,
+        )
+    )
 
 
 @router.post(
@@ -1488,6 +2032,32 @@ async def sync_input_request_to_flowaccount(
             input_request.flowaccount_supplier_invoice_status = "NOT_REQUIRED"
             input_request.flowaccount_supplier_invoice_error = None
 
+        readiness = await _refresh_accounting_readiness(db, input_request, project_name)
+        payment = input_request.payment
+        if (
+            input_request.status == "PAID"
+            and payment
+            and input_request.flowaccount_payment_status != "PAYMENT_SYNCED"
+        ):
+            if readiness.can_mark_paid:
+                input_request.flowaccount_payment_status = "SYNCING"
+                input_request.flowaccount_payment_error = None
+                await db.flush()
+                try:
+                    await service.create_expense_payment(
+                        input_request,
+                        expense_id=_expense_id_from_request(input_request),
+                        payment_date=payment.payment_date,
+                        payment_reference=payment.internal_reference,
+                    )
+                    input_request.flowaccount_payment_status = "PAYMENT_SYNCED"
+                    input_request.flowaccount_payment_synced_at = now
+                except FlowAccountError as exc:
+                    input_request.flowaccount_payment_status = "PAYMENT_FAILED"
+                    input_request.flowaccount_payment_error = str(exc)
+            else:
+                input_request.flowaccount_payment_status = "NOT_READY"
+
         await _refresh_accounting_readiness(db, input_request, project_name)
         await db.commit()
         await db.refresh(input_request)
@@ -1622,10 +2192,10 @@ async def link_existing_flowaccount_document(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Only expense input requests can be linked to FlowAccount documents.",
             )
-        if input_request.status != "APPROVED":
+        if input_request.status not in {"APPROVED", "PAID"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only approved requests can be linked to FlowAccount documents.",
+                detail="Only approved or paid requests can be linked to FlowAccount documents.",
             )
 
         input_request.flowaccount_expense_id = request.expense_id
@@ -1658,10 +2228,13 @@ async def link_existing_flowaccount_document(
 async def mark_paid_admin_input_request(
     request_id: UUID,
     request: InputRequestMarkPaidAction,
-    _user: AuthenticatedUser = Depends(require_owner_user),
+    user: AuthenticatedUser = Depends(require_owner_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Move an approved input request into paid state after transfer is completed."""
+    """Record an internal payment independently from external accounting sync."""
+    original_receipt_storage_key: str | None = None
+    paid_receipt_storage_key: str | None = None
+    committed = False
     try:
         input_request, project_name = await _get_input_request_with_project(db, request_id)
 
@@ -1671,75 +2244,117 @@ async def mark_paid_admin_input_request(
                 detail=f"Only approved input requests can be marked paid. Current status: '{input_request.status}'.",
             )
 
-        now = datetime.now(timezone.utc)
-        payment_reference = _clean_optional_text(request.payment_reference)
-        if not payment_reference:
+        if input_request.payment:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="payment_reference is required before marking paid.",
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This input request already has a recorded payment.",
             )
-        input_request.payment_reference = payment_reference
+
+        now = datetime.now(timezone.utc)
+        payment_date = request.payment_date or datetime.now(THAILAND_TIMEZONE).date()
+        sequence, internal_reference = await _next_payment_reference(
+            db,
+            entry_type=input_request.entry_type,
+            payment_date=payment_date,
+        )
+        bank_transfer_reference = _clean_optional_text(request.payment_reference)
+        input_request.payment_reference = bank_transfer_reference
         if request.review_note is not None:
             input_request.review_note = _clean_optional_text(request.review_note)
 
-        paid_at = _payment_completion_timestamp(
-            entry_type=input_request.entry_type,
-            payment_date=request.payment_date,
-            completed_at=now,
+        original_receipt_storage_key = input_request.receipt_storage_key
+        paid_receipt_storage_key = await organize_input_receipt_in_paid_storage(
+            storage_key=original_receipt_storage_key,
+            request_id=input_request.id,
+            payment_date=payment_date,
+            internal_reference=internal_reference,
         )
+        input_request.receipt_storage_key = paid_receipt_storage_key
 
-        if _requires_flowaccount_payment(input_request):
-            if not request.payment_date:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="payment_date is required before FlowAccount payment sync.",
-                )
-            if not _clean_optional_text(input_request.flowaccount_expense_id):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Sync FlowAccount expense before marking paid.",
-                )
-            readiness = await _refresh_accounting_readiness(db, input_request, project_name)
-            if not readiness.can_mark_paid:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="FlowAccount payment is not ready: " + "; ".join(readiness.missing_fields + readiness.errors),
-                )
-
-            input_request.flowaccount_payment_status = "SYNCING"
-            input_request.flowaccount_payment_error = None
-            await db.flush()
-            try:
-                service = FlowAccountService()
-                await service.create_expense_payment(
-                    input_request,
-                    expense_id=_expense_id_from_request(input_request),
-                    payment_date=request.payment_date,
-                )
-                input_request.flowaccount_payment_status = "PAYMENT_SYNCED"
-                input_request.flowaccount_payment_synced_at = now
-                input_request.flowaccount_payment_error = None
-            except FlowAccountError as exc:
-                input_request.flowaccount_payment_status = "PAYMENT_FAILED"
-                input_request.flowaccount_payment_error = str(exc)
-                await db.commit()
-                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        payment = InputPayment(
+            input_request=input_request,
+            internal_reference=internal_reference,
+            sequence_number=sequence,
+            payment_date=payment_date,
+            amount=(
+                input_request.approved_amount
+                if input_request.approved_amount is not None
+                else input_request.amount
+            ),
+            bank_transfer_reference=bank_transfer_reference,
+            paid_storage_prefix=paid_document_storage_prefix(
+                payment_date,
+                internal_reference,
+            ),
+            recorded_by=user.subject,
+            recorded_at=now,
+        )
+        db.add(payment)
 
         input_request.status = "PAID"
-        input_request.paid_at = paid_at
+        input_request.paid_at = now
         input_request.reviewed_at = now
+        input_request.flowaccount_payment_status = (
+            "NOT_SYNCED" if input_request.entry_type == "EXPENSE" else "NOT_REQUIRED"
+        )
+        input_request.flowaccount_payment_error = None
 
+        await db.flush()
+        await _refresh_accounting_readiness(db, input_request, project_name)
         await db.commit()
+        committed = True
         await db.refresh(input_request)
 
-        return StandardResponse(data=_serialize_input_request(input_request, project_name))
+        response = StandardResponse(data=_serialize_input_request(input_request, project_name))
 
     except HTTPException:
         await db.rollback()
+        if (
+            not committed
+            and paid_receipt_storage_key
+            and paid_receipt_storage_key != original_receipt_storage_key
+        ):
+            try:
+                await delete_storage_key(paid_receipt_storage_key)
+            except Exception:
+                logger.warning(
+                    "Failed to remove uncommitted paid receipt copy %s",
+                    paid_receipt_storage_key,
+                    exc_info=True,
+                )
         raise
     except Exception as exc:
         await db.rollback()
+        if (
+            not committed
+            and paid_receipt_storage_key
+            and paid_receipt_storage_key != original_receipt_storage_key
+        ):
+            try:
+                await delete_storage_key(paid_receipt_storage_key)
+            except Exception:
+                logger.warning(
+                    "Failed to remove uncommitted paid receipt copy %s",
+                    paid_receipt_storage_key,
+                    exc_info=True,
+                )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to mark input request as paid: {exc}",
         ) from exc
+
+    if (
+        original_receipt_storage_key
+        and paid_receipt_storage_key
+        and original_receipt_storage_key != paid_receipt_storage_key
+    ):
+        try:
+            await delete_storage_key(original_receipt_storage_key)
+        except Exception:
+            logger.warning(
+                "Payment committed but the previous receipt copy could not be removed: %s",
+                original_receipt_storage_key,
+                exc_info=True,
+            )
+
+    return response

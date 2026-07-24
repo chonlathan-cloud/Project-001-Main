@@ -178,14 +178,18 @@ class DailyReportSubmissionItem(BaseModel):
 class DailyReportMediaItem(BaseModel):
     id: str
     project_id: str
-    submission_id: str
+    submission_id: str | None = None
+    report_id: str | None = None
     owner_id: str
+    source_type: str = "SUBCONTRACTOR"
+    uploader_name: str | None = None
     media_type: str
     file_name: str
     content_type: str
     size_bytes: int
     status: str
     storage_key: str | None = None
+    included_in_customer_report: bool = True
     created_at: datetime | None = None
 
 
@@ -203,6 +207,10 @@ class DailyReportDraftUpdate(BaseModel):
     issues: list[dict[str, Any]] | None = None
     tomorrow_plan: str | None = None
     customer_note: str | None = None
+
+
+class DailyReportMediaVisibilityUpdate(BaseModel):
+    included: bool
 
 
 class DailyReportChangeRequest(BaseModel):
@@ -228,6 +236,7 @@ class DailyReportItem(BaseModel):
     tomorrow_plan: str | None = None
     customer_note: str | None = None
     source_submission_ids: list[str] = Field(default_factory=list)
+    excluded_media_ids: list[str] = Field(default_factory=list)
     expected_subcontractor_ids: list[str] = Field(default_factory=list)
     missing_subcontractor_ids: list[str] = Field(default_factory=list)
     submissions: list[dict[str, Any]] = Field(default_factory=list)
@@ -310,13 +319,4 @@ class DailyReportLineDestinationItem(BaseModel):
 
 class DailyReportLineDestinationUpdate(BaseModel):
     line_target_id: str | None = None
-    target_type: str = "group"
     is_active: bool = True
-
-    @field_validator("target_type", mode="before")
-    @classmethod
-    def validate_target_type(cls, value: str | None) -> str:
-        normalized = str(value or "group").strip().lower()
-        if normalized not in {"group", "user", "room"}:
-            raise ValueError("target_type must be group, room, or user.")
-        return normalized

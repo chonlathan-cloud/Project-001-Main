@@ -38,6 +38,7 @@ from app.schemas.daily_report_schema import (
     DailyReportLineDestinationUpdate,
     DailyReportMediaAccessResponse,
     DailyReportMediaItem,
+    DailyReportMediaVisibilityUpdate,
     DailyReportMembershipUpsert,
     DailyReportNoWorkDayCreate,
     DailyReportNoWorkDayItem,
@@ -779,12 +780,9 @@ async def get_daily_report_media_url(
         _assert_staff_project_access(user, media["project_id"])
     elif user.has_role("customer"):
         _assert_customer_project_access(user, media["project_id"])
-        visible = any(
-            media.get("submission_id") in (report.get("source_submission_ids") or [])
-            for report in daily_report_service.list_reports(
-                project_ids={media["project_id"]},
-            )
-            if int(report.get("published_version") or 0) > 0
+        visible = daily_report_service.is_media_published(
+            media_id=media_id,
+            project_id=media["project_id"],
         )
         if not visible:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Published report media not found.")
@@ -862,6 +860,101 @@ async def update_report_for_review(
             actor_role=user.role,
         )
     )
+
+
+@router.post(
+    "/reports/{report_id}/media",
+    response_model=StandardResponse[DailyReportMediaItem],
+)
+async def upload_report_supplemental_media(
+    report_id: str,
+    file: UploadFile = File(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _require_staff(user)
+    report = daily_report_service.get_report(report_id, include_sources=False)
+    _assert_staff_project_access(user, report["project_id"])
+    content_type = str(file.content_type or "application/octet-stream").lower().split(";", 1)[0]
+    if content_type not in _PHOTO_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Supplemental customer evidence must be an image.",
+        )
+    max_bytes = get_settings().daily_report_photo_max_bytes
+    size_bytes, signature_prefix = await _inspect_upload_with_limit(file, max_bytes)
+    _validate_media_signature(signature_prefix, content_type)
+    media_id = daily_report_service.new_media_id()
+    storage_key = await upload_daily_report_media_to_storage(
+        project_id=report["project_id"],
+        report_date=report["report_date"],
+        submission_id=f"staff-{report_id}",
+        media_id=media_id,
+        file_obj=file.file,
+        size_bytes=size_bytes,
+        file_name=file.filename,
+        content_type=content_type,
+    )
+    try:
+        media = daily_report_service.record_supplemental_media(
+            media_id=media_id,
+            report_id=report_id,
+            project_id=report["project_id"],
+            owner_id=_actor_id(user),
+            uploader_name=user.display_name or user.email,
+            media_type="PHOTO",
+            file_name=file.filename or media_id,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            storage_key=storage_key,
+        )
+    except Exception:
+        await delete_daily_report_media_storage(storage_key)
+        raise
+    return StandardResponse(data={**media, "included_in_customer_report": True})
+
+
+@router.patch(
+    "/reports/{report_id}/media/{media_id}/visibility",
+    response_model=StandardResponse[DailyReportItem],
+)
+async def update_report_media_visibility(
+    report_id: str,
+    media_id: str,
+    request: DailyReportMediaVisibilityUpdate,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _require_staff(user)
+    current = daily_report_service.get_report(report_id, include_sources=False)
+    _assert_staff_project_access(user, current["project_id"])
+    daily_report_service.set_report_media_visibility(
+        report_id=report_id,
+        media_id=media_id,
+        included=request.included,
+        actor_id=_actor_id(user),
+        actor_role=user.role,
+    )
+    return StandardResponse(data=daily_report_service.get_report(report_id))
+
+
+@router.delete(
+    "/reports/{report_id}/media/{media_id}",
+    response_model=StandardResponse[DailyReportItem],
+)
+async def remove_report_supplemental_media(
+    report_id: str,
+    media_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _require_staff(user)
+    current = daily_report_service.get_report(report_id, include_sources=False)
+    _assert_staff_project_access(user, current["project_id"])
+    daily_report_service.remove_supplemental_media(
+        report_id=report_id,
+        media_id=media_id,
+        actor_id=_actor_id(user),
+        actor_role=user.role,
+    )
+    return StandardResponse(data=daily_report_service.get_report(report_id))
 
 
 @router.post("/reports/{report_id}/request-changes", response_model=StandardResponse[DailyReportItem])
@@ -1144,7 +1237,6 @@ async def update_daily_report_line_destination(
         data=daily_report_service.update_line_destination(
             project_id=project_id,
             line_target_id=request.line_target_id,
-            target_type=request.target_type,
             is_active=request.is_active,
             actor_id=_actor_id(user),
         )

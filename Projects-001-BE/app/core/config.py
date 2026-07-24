@@ -119,6 +119,10 @@ class Settings(BaseSettings):
     gcs_profile_prefix: str = Field(default="profile_images", alias="GCS_PROFILE_PREFIX")
     gcs_temp_bills_prefix: str = Field(default="temp_bills", alias="GCS_TEMP_BILLS_PREFIX")
     gcs_perm_bills_prefix: str = Field(default="perm_bills", alias="GCS_PERM_BILLS_PREFIX")
+    payment_confirmation_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        alias="PAYMENT_CONFIRMATION_MAX_BYTES",
+    )
     inspection_gcs_bucket: str | None = Field(default=None, alias="INSPECTION_GCS_BUCKET")
     inspection_gcs_prefix: str = Field(default="inspection", alias="INSPECTION_GCS_PREFIX")
     inspection_photo_max_bytes: int = Field(default=10 * 1024 * 1024, alias="INSPECTION_PHOTO_MAX_BYTES")

@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
+
 from app.services import daily_report_service
 from app.services import daily_report_notification_service
 
@@ -243,12 +245,86 @@ class DailyReportServiceTests(unittest.TestCase):
         destination = daily_report_service.update_line_destination(
             project_id="project-1",
             line_target_id="Cgroup1234567890",
-            target_type="group",
             is_active=True,
             actor_id="owner@example.com",
         )
         self.assertEqual(destination["display_name"], "โครงการบ้านคุณสมชาย")
         self.assertEqual(destination["status"], "ACTIVE")
+
+    def test_line_destination_rejects_undiscovered_or_non_group_target(self):
+        with self.assertRaises(HTTPException):
+            daily_report_service.update_line_destination(
+                project_id="project-1",
+                line_target_id="Cnot-discovered",
+                is_active=True,
+                actor_id="owner@example.com",
+            )
+
+        daily_report_service.record_line_destination_candidate(
+            line_target_id="Ucustomer",
+            target_type="user",
+            event_type="message",
+        )
+        with self.assertRaises(HTTPException):
+            daily_report_service.update_line_destination(
+                project_id="project-1",
+                line_target_id="Ucustomer",
+                is_active=True,
+                actor_id="owner@example.com",
+            )
+
+    def test_customer_publication_pins_curated_media(self):
+        self._submitted_source()
+        report = daily_report_service.list_reports(project_ids={"project-1"})[0]
+        source_media = daily_report_service.get_report(report["id"])["media"][0]
+        daily_report_service.set_report_media_visibility(
+            report_id=report["id"],
+            media_id=source_media["id"],
+            included=False,
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+        supplemental = daily_report_service.record_supplemental_media(
+            media_id="admin-photo-1",
+            report_id=report["id"],
+            project_id="project-1",
+            owner_id="admin@example.com",
+            uploader_name="Site Admin",
+            media_type="PHOTO",
+            file_name="reassurance.jpg",
+            content_type="image/jpeg",
+            size_bytes=512,
+            storage_key="gs://private/reassurance.jpg",
+        )
+        self.assertEqual(supplemental["source_type"], "ADMIN_SUPPLEMENTAL")
+
+        daily_report_service.publish_report(
+            report_id=report["id"],
+            publication_note=None,
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+        version = daily_report_service.list_versions(report["id"])[0]
+        self.assertEqual(version["snapshot"]["published_media_ids"], ["admin-photo-1"])
+        customer_report = daily_report_service.get_customer_report(report["id"])
+        self.assertEqual([item["id"] for item in customer_report["media"]], ["admin-photo-1"])
+
+        daily_report_service.start_correction(
+            report_id=report["id"],
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+        daily_report_service.remove_supplemental_media(
+            report_id=report["id"],
+            media_id="admin-photo-1",
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+        historical_customer_report = daily_report_service.get_customer_report(report["id"])
+        self.assertEqual(
+            [item["id"] for item in historical_customer_report["media"]],
+            ["admin-photo-1"],
+        )
 
     def test_global_staff_alert_is_visible_to_every_admin_scope(self):
         project_alert = daily_report_service.ensure_staff_notification(

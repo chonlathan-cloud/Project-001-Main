@@ -12,6 +12,7 @@ import {
   LogOut,
   Menu,
   Plus,
+  ReceiptText,
   Settings,
   TrendingUp,
   UserRound,
@@ -188,6 +189,7 @@ function SidebarUserAvatar({ user }) {
 }
 
 function getSubcontractorRouteTitle(pathname) {
+  if (pathname.startsWith('/payment-confirmation')) return 'ยืนยันการรับเงิน';
   if (pathname.startsWith('/daily-reports')) return 'รายงานประจำวัน';
   if (pathname.startsWith('/inspection')) return 'งานตรวจแก้';
   if (pathname.startsWith('/profile')) return 'โปรไฟล์ของฉัน';
@@ -353,6 +355,7 @@ const Sidebar = ({ collapsed = false, onToggleCollapsed }) => {
 
     return [
       { name: 'ส่งคำขอ', icon: ClipboardList, path: '/input' },
+      { name: 'ยืนยันการรับเงิน', icon: ReceiptText, path: '/payment-confirmation' },
       { name: 'รายงานประจำวัน', icon: FileCheck2, path: '/daily-reports/me' },
       { name: 'งานตรวจแก้', icon: ClipboardCheck, path: '/inspection/tasks', badge: navBadges.inspectionTasks },
       { name: 'โปรไฟล์', icon: UserRound, path: '/profile/me' },

@@ -1,10 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  ArrowUpRight,
   BellRing,
   CalendarDays,
-  Camera,
   CheckCircle2,
   ChevronRight,
   FileCheck2,
@@ -15,12 +13,10 @@ import {
   Send,
   Settings2,
   Users,
-  X,
 } from 'lucide-react';
 
 import {
   getDailyReport,
-  getDailyReportMediaUrl,
   getDailyReportLineDestination,
   getDailyReportLineDestinationCandidates,
   getDailyReportNotifications,
@@ -43,37 +39,8 @@ import {
   DailyReportStatusBadge,
 } from './dailyReportUi';
 import { formatReportDate } from './dailyReportUtils';
-
-const WORKING_DAY_OPTIONS = [
-  { value: 1, label: 'จ.' },
-  { value: 2, label: 'อ.' },
-  { value: 3, label: 'พ.' },
-  { value: 4, label: 'พฤ.' },
-  { value: 5, label: 'ศ.' },
-  { value: 6, label: 'ส.' },
-  { value: 7, label: 'อา.' },
-];
-
-const LINE_TARGET_TYPE_LABELS = {
-  group: 'กลุ่ม LINE',
-  room: 'ห้องสนทนา LINE',
-  user: 'ผู้ใช้ LINE',
-};
-
-function compactLineTargetId(value) {
-  const targetId = String(value || '').trim();
-  if (targetId.length <= 14) return targetId;
-  return `${targetId.slice(0, 6)}…${targetId.slice(-4)}`;
-}
-
-function lineDestinationCandidateLabel(candidate) {
-  const displayName = String(candidate?.display_name || '').trim();
-  const typeLabel = LINE_TARGET_TYPE_LABELS[candidate?.target_type] || 'ปลายทาง LINE';
-  const compactId = compactLineTargetId(candidate?.line_target_id);
-  return displayName
-    ? `${displayName} · ${typeLabel} · ${compactId}`
-    : `${typeLabel} (ยังไม่พบชื่อ) · ${compactId}`;
-}
+import DailyReportSettingsDialog from './DailyReportSettingsDialog';
+import DailyReportEvidenceGallery from './DailyReportEvidenceGallery';
 
 function draftFromReport(report) {
   return {
@@ -104,11 +71,17 @@ export default function DailyReportReviewWorkspace() {
   const [projectSettings, setProjectSettings] = useState(null);
   const [lineDestination, setLineDestination] = useState(null);
   const [lineDestinationCandidates, setLineDestinationCandidates] = useState([]);
+  const [settingsBaseline, setSettingsBaseline] = useState('');
   const [notifications, setNotifications] = useState([]);
   const [notificationsLoading, setNotificationsLoading] = useState(true);
 
   const editable = ['PENDING_REVIEW', 'CHANGES_REQUESTED', 'CORRECTION_DRAFT'].includes(report?.status);
   const issueCount = useMemo(() => draft.issues.filter((issue) => issue?.title).length, [draft.issues]);
+  const settingsSnapshot = useMemo(
+    () => JSON.stringify({ projectSettings, lineDestination }),
+    [lineDestination, projectSettings],
+  );
+  const settingsDirty = Boolean(settingsBaseline && settingsSnapshot !== settingsBaseline);
 
   const loadQueue = useCallback(async ({ preserveSelection = true } = {}) => {
     setLoading(true);
@@ -299,18 +272,6 @@ export default function DailyReportReviewWorkspace() {
     }
   };
 
-  const openMedia = async (mediaId) => {
-    setBusy(`media-${mediaId}`);
-    try {
-      const access = await getDailyReportMediaUrl(mediaId);
-      window.open(access.url, '_blank', 'noopener,noreferrer');
-    } catch (error) {
-      setNotice({ tone: 'danger', message: error.message || 'Unable to open evidence.' });
-    } finally {
-      setBusy('');
-    }
-  };
-
   const loadProjectSettings = async (projectId) => {
     if (!projectId) return;
     setBusy('settings-load');
@@ -323,6 +284,7 @@ export default function DailyReportReviewWorkspace() {
       setProjectSettings(settings);
       setLineDestination(destination);
       setLineDestinationCandidates(candidates);
+      setSettingsBaseline(JSON.stringify({ projectSettings: settings, lineDestination: destination }));
     } catch (error) {
       setNotice({ tone: 'danger', message: error.message || 'Unable to load project settings.' });
     } finally {
@@ -347,6 +309,7 @@ export default function DailyReportReviewWorkspace() {
         setProjectSettings(settings);
         setLineDestination(destination);
         setLineDestinationCandidates(candidates);
+        setSettingsBaseline(JSON.stringify({ projectSettings: settings, lineDestination: destination }));
       }
     } catch (error) {
       setNotice({ tone: 'danger', message: error.message || 'Unable to load project settings.' });
@@ -373,12 +336,15 @@ export default function DailyReportReviewWorkspace() {
         }),
         updateDailyReportLineDestination(settingsProjectId, {
           line_target_id: lineDestination?.line_target_id || null,
-          target_type: lineDestination?.target_type || 'group',
           is_active: lineDestination?.status === 'ACTIVE',
         }),
       ]);
       setProjectSettings(updated);
       setLineDestination(updatedDestination);
+      setSettingsBaseline(JSON.stringify({
+        projectSettings: updated,
+        lineDestination: updatedDestination,
+      }));
       setNotice({ tone: 'success', message: 'Daily Report deadline settings saved.' });
       setShowSettings(false);
     } catch (error) {
@@ -386,6 +352,17 @@ export default function DailyReportReviewWorkspace() {
     } finally {
       setBusy('');
     }
+  };
+
+  const closeProjectSettings = () => {
+    if (settingsDirty && !window.confirm('Discard unsaved Deadline & LINE setting changes?')) return;
+    setShowSettings(false);
+  };
+
+  const changeSettingsProject = (projectId) => {
+    if (settingsDirty && !window.confirm('Discard changes and open another project?')) return;
+    setSettingsProjectId(projectId);
+    loadProjectSettings(projectId);
   };
 
   return (
@@ -399,7 +376,7 @@ export default function DailyReportReviewWorkspace() {
         <div className="dr-hero-actions">
           {owner ? (
             <button type="button" className="dr-button secondary" onClick={openProjectSettings}>
-              <Settings2 /> Deadlines
+              <Settings2 /> Deadline &amp; LINE
             </button>
           ) : null}
           <button type="button" className="dr-button secondary" onClick={refreshCurrent} disabled={loading}>
@@ -461,217 +438,20 @@ export default function DailyReportReviewWorkspace() {
       </section>
 
       {showSettings ? (
-        <section className="dr-card dr-settings-panel">
-          <header>
-            <div><span className="dr-eyebrow">OWNER CONFIGURATION</span><h3>Report deadlines and reminders</h3></div>
-            <button type="button" onClick={() => setShowSettings(false)} aria-label="Close settings"><X /></button>
-          </header>
-          <div className="dr-form-grid">
-            <label className="dr-field">
-              <span>Project</span>
-              <select
-                value={settingsProjectId}
-                onChange={(event) => {
-                  setSettingsProjectId(event.target.value);
-                  loadProjectSettings(event.target.value);
-                }}
-              >
-                {settingsProjects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-            <label className="dr-field">
-              <span>Timezone</span>
-              <input
-                value={projectSettings?.timezone || 'Asia/Bangkok'}
-                onChange={(event) => setProjectSettings((current) => ({ ...current, timezone: event.target.value }))}
-                disabled={!projectSettings}
-              />
-            </label>
-            <label className="dr-field">
-              <span>สร้างรอบรายงาน</span>
-              <input
-                type="time"
-                value={projectSettings?.cycle_creation_time || '06:00'}
-                onChange={(event) => setProjectSettings((current) => ({
-                  ...current,
-                  cycle_creation_time: event.target.value,
-                }))}
-                disabled={!projectSettings}
-              />
-            </label>
-            <label className="dr-field">
-              <span>แจ้งเตือนครั้งแรก</span>
-              <input
-                type="time"
-                value={projectSettings?.first_reminder_time || '16:00'}
-                onChange={(event) => setProjectSettings((current) => ({
-                  ...current,
-                  first_reminder_time: event.target.value,
-                }))}
-                disabled={!projectSettings}
-              />
-            </label>
-            <label className="dr-field">
-              <span>Subcontractor deadline</span>
-              <input
-                type="time"
-                value={projectSettings?.submission_due_time || '17:00'}
-                onChange={(event) => setProjectSettings((current) => ({ ...current, submission_due_time: event.target.value }))}
-                disabled={!projectSettings}
-              />
-            </label>
-            <label className="dr-field">
-              <span>แจ้งว่าส่งช้า หลังครบกำหนด (นาที)</span>
-              <input
-                type="number"
-                min="0"
-                max="1440"
-                value={projectSettings?.overdue_grace_minutes ?? 15}
-                onChange={(event) => setProjectSettings((current) => ({
-                  ...current,
-                  overdue_grace_minutes: Number(event.target.value),
-                }))}
-                disabled={!projectSettings}
-              />
-            </label>
-            <label className="dr-field">
-              <span>สร้างร่างสรุป</span>
-              <input
-                type="time"
-                value={projectSettings?.draft_time || '18:00'}
-                onChange={(event) => setProjectSettings((current) => ({
-                  ...current,
-                  draft_time: event.target.value,
-                }))}
-                disabled={!projectSettings}
-              />
-            </label>
-            <label className="dr-field">
-              <span>Review target</span>
-              <input
-                type="time"
-                value={projectSettings?.review_target_time || '19:00'}
-                onChange={(event) => setProjectSettings((current) => ({ ...current, review_target_time: event.target.value }))}
-                disabled={!projectSettings}
-              />
-            </label>
-            <label className="dr-field">
-              <span>Reminder minutes before deadline</span>
-              <input
-                value={(projectSettings?.reminder_minutes_before || [60]).join(', ')}
-                onChange={(event) => setProjectSettings((current) => ({
-                  ...current,
-                  reminder_minutes_before: event.target.value
-                    .split(',')
-                    .map((item) => Number(item.trim()))
-                    .filter((item) => Number.isFinite(item) && item >= 0),
-                }))}
-                disabled={!projectSettings}
-              />
-            </label>
-            <fieldset className="dr-field dr-working-days">
-              <legend>วันทำงานของโครงการ</legend>
-              <div>
-                {WORKING_DAY_OPTIONS.map((day) => {
-                  const selectedDays = projectSettings?.working_days || [1, 2, 3, 4, 5, 6];
-                  const checked = selectedDays.includes(day.value);
-                  return (
-                    <label key={day.value} className={checked ? 'selected' : ''}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => setProjectSettings((current) => {
-                          const currentDays = current?.working_days || [1, 2, 3, 4, 5, 6];
-                          const nextDays = checked
-                            ? currentDays.filter((value) => value !== day.value)
-                            : [...currentDays, day.value].sort((left, right) => left - right);
-                          return { ...current, working_days: nextDays };
-                        })}
-                        disabled={!projectSettings}
-                      />
-                      <span>{day.label}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </fieldset>
-            <label className="dr-settings-toggle">
-              <input
-                type="checkbox"
-                checked={projectSettings?.enabled !== false}
-                onChange={(event) => setProjectSettings((current) => ({ ...current, enabled: event.target.checked }))}
-                disabled={!projectSettings}
-              />
-              <span><strong>Daily reporting enabled</strong>Create cycles and send configured reminders.</span>
-            </label>
-            <label className="dr-field">
-              <span>Customer LINE target ID</span>
-              <input
-                value={lineDestination?.line_target_id || ''}
-                onChange={(event) => setLineDestination((current) => ({ ...current, line_target_id: event.target.value }))}
-                disabled={!lineDestination}
-                placeholder="C… group ID, R… room ID, or U… user ID"
-              />
-            </label>
-            <label className="dr-field">
-              <span>กลุ่ม LINE ที่ค้นพบ</span>
-              <select
-                value=""
-                onChange={(event) => {
-                  const candidate = lineDestinationCandidates.find(
-                    (item) => item.line_target_id === event.target.value,
-                  );
-                  if (candidate) {
-                    setLineDestination((current) => ({
-                      ...current,
-                      line_target_id: candidate.line_target_id,
-                      display_name: candidate.display_name || null,
-                      target_type: candidate.target_type,
-                    }));
-                  }
-                }}
-                disabled={lineDestinationCandidates.length === 0}
-              >
-                <option value="">เลือกกลุ่ม LINE ที่ระบบค้นพบ</option>
-                {lineDestinationCandidates.map((item) => (
-                  <option key={item.line_target_id} value={item.line_target_id}>
-                    {lineDestinationCandidateLabel(item)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="dr-field">
-              <span>LINE destination type</span>
-              <select
-                value={lineDestination?.target_type || 'group'}
-                onChange={(event) => setLineDestination((current) => ({ ...current, target_type: event.target.value }))}
-                disabled={!lineDestination}
-              >
-                <option value="group">Project group</option>
-                <option value="room">Multi-person room</option>
-                <option value="user">Individual customer</option>
-              </select>
-            </label>
-            <label className="dr-settings-toggle">
-              <input
-                type="checkbox"
-                checked={lineDestination?.status === 'ACTIVE'}
-                onChange={(event) => setLineDestination((current) => ({
-                  ...current,
-                  status: event.target.checked ? 'ACTIVE' : 'INACTIVE',
-                }))}
-                disabled={!lineDestination}
-              />
-              <span><strong>LINE delivery active</strong>Send the approved Flex summary to this destination.</span>
-            </label>
-          </div>
-          <footer>
-            <span>Cloud Scheduler should call the protected deadline tick endpoint at a short interval.</span>
-            <button type="button" className="dr-button primary" onClick={saveProjectSettings} disabled={!projectSettings || busy === 'settings-save'}>
-              {busy === 'settings-save' ? <LoaderCircle className="spin" /> : <Save />} Save settings
-            </button>
-          </footer>
-        </section>
+        <DailyReportSettingsDialog
+          projects={settingsProjects}
+          projectId={settingsProjectId}
+          settings={projectSettings}
+          destination={lineDestination}
+          candidates={lineDestinationCandidates}
+          busy={busy}
+          dirty={settingsDirty}
+          onProjectChange={changeSettingsProject}
+          onSettingsChange={(updates) => setProjectSettings((current) => ({ ...current, ...updates }))}
+          onDestinationChange={(updates) => setLineDestination((current) => ({ ...current, ...updates }))}
+          onClose={closeProjectSettings}
+          onSave={saveProjectSettings}
+        />
       ) : null}
 
       <div className="dr-review-layout">
@@ -748,22 +528,14 @@ export default function DailyReportReviewWorkspace() {
                 </DailyReportNotice>
               ) : null}
 
-              <section className="dr-source-grid">
-                <div className="dr-card">
-                  <div className="dr-inline-heading"><h3>Source evidence</h3><span>Private signed access</span></div>
-                  <div className="dr-media-grid">
-                    {(report.media || []).map((media, index) => (
-                      <button type="button" key={media.id} onClick={() => openMedia(media.id)}>
-                        {busy === `media-${media.id}` ? <LoaderCircle className="spin" /> : <Camera />}
-                        <span>Evidence {index + 1}</span>
-                        <small>{media.media_type} · {(media.size_bytes / 1024 / 1024).toFixed(1)} MB</small>
-                        <ArrowUpRight />
-                      </button>
-                    ))}
-                  </div>
-                  {(report.media || []).length === 0 ? <p className="dr-empty-copy">No evidence attached.</p> : null}
-                </div>
+              <DailyReportEvidenceGallery
+                report={report}
+                editable={editable}
+                onReportChange={(updated) => setReport(updated)}
+                onNotice={setNotice}
+              />
 
+              <section className="dr-source-grid dr-source-grid-single">
                 <div className="dr-card">
                   <div className="dr-inline-heading"><h3>Source submissions</h3><span>{report.submissions?.length || 0}</span></div>
                   <div className="dr-source-list">

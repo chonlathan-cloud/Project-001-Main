@@ -1435,6 +1435,71 @@ export async function markPaidAdminInputRequest(requestId, payload = {}) {
   });
 }
 
+export async function getMyPaymentConfirmationPayments() {
+  const data = await apiRequest('/api/v1/input/me/payments/payment-confirmations');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function submitMyPaymentConfirmation(paymentId, {
+  file,
+  receivedDate,
+  receivedFullAmount = true,
+  note = '',
+  idempotencyKey = '',
+}) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('received_date', receivedDate);
+  formData.append('received_full_amount', String(Boolean(receivedFullAmount)));
+  if (String(note || '').trim()) {
+    formData.append('note', String(note).trim());
+  }
+
+  return apiRequest(`/api/v1/input/me/payments/${paymentId}/confirmation`, {
+    method: 'POST',
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
+    body: formData,
+    timeoutMs: 120000,
+  });
+}
+
+export async function getPaymentConfirmationSignedUrl(
+  confirmationId,
+  expiresInMinutes = 15,
+) {
+  return apiRequest(
+    `/api/v1/input/payment-confirmations/${confirmationId}/signed-url?expires_in_minutes=${expiresInMinutes}`,
+  );
+}
+
+export async function getAdminPaymentConfirmations(status = '') {
+  const params = new URLSearchParams();
+  if (String(status || '').trim()) {
+    params.set('status', String(status).trim().toUpperCase());
+  }
+  const query = params.toString();
+  const data = await apiRequest(
+    `/api/v1/input/admin/payment-confirmations${query ? `?${query}` : ''}`,
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function reviewAdminPaymentConfirmation(
+  confirmationId,
+  { action, note = '' },
+) {
+  return apiRequest(
+    `/api/v1/input/admin/payment-confirmations/${confirmationId}/review`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        action: String(action || '').trim().toUpperCase(),
+        note: String(note || '').trim() || null,
+      }),
+    },
+  );
+}
+
 export async function getInputRequestAccountingReadiness(requestId) {
   return apiRequest(`/api/v1/input/admin/requests/${requestId}/accounting-readiness`);
 }
@@ -1841,6 +1906,30 @@ export async function updateDailyReportDraft(reportId, payload) {
   return apiRequest(`/api/v1/daily-reports/reports/${reportId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  });
+}
+
+export async function uploadDailyReportSupplementalMedia(reportId, file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiRequest(`/api/v1/daily-reports/reports/${reportId}/media`, {
+    method: 'POST',
+    headers: {},
+    body: formData,
+    timeoutMs: 120000,
+  });
+}
+
+export async function updateDailyReportMediaVisibility(reportId, mediaId, included) {
+  return apiRequest(`/api/v1/daily-reports/reports/${reportId}/media/${mediaId}/visibility`, {
+    method: 'PATCH',
+    body: JSON.stringify({ included }),
+  });
+}
+
+export async function removeDailyReportSupplementalMedia(reportId, mediaId) {
+  return apiRequest(`/api/v1/daily-reports/reports/${reportId}/media/${mediaId}`, {
+    method: 'DELETE',
   });
 }
 

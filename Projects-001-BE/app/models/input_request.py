@@ -7,7 +7,20 @@ general income/expense requests without forcing them into the approval model.
 
 import uuid
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -100,6 +113,13 @@ class InputRequest(Base):
         lazy="selectin",
         order_by="InputRequestLineItem.line_no",
     )
+    payment = relationship(
+        "InputPayment",
+        back_populates="input_request",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        uselist=False,
+    )
 
 
 class InputRequestLineItem(Base):
@@ -128,6 +148,110 @@ class InputRequestLineItem(Base):
     )
 
     input_request = relationship("InputRequest", back_populates="line_items")
+
+
+class InputPaymentReferenceCounter(Base):
+    """Atomic daily sequence used by human-readable payment references."""
+
+    __tablename__ = "input_payment_reference_counters"
+
+    reference_date = Column(Date, primary_key=True)
+    entry_type = Column(String, primary_key=True)  # EXPENSE | INCOME
+    last_sequence = Column(Integer, nullable=False, default=0)
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class InputPayment(Base):
+    """One full settlement for an approved Input request in the beta workflow."""
+
+    __tablename__ = "input_payments"
+    __table_args__ = (
+        UniqueConstraint("input_request_id", name="uq_input_payments_input_request_id"),
+        UniqueConstraint("internal_reference", name="uq_input_payments_internal_reference"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    input_request_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("input_requests.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    internal_reference = Column(String, nullable=False, index=True)
+    sequence_number = Column(Integer, nullable=False)
+    payment_date = Column(Date, nullable=False, index=True)
+    amount = Column(Numeric(15, 2), nullable=False)
+    bank_transfer_reference = Column(String, nullable=True)
+    paid_storage_prefix = Column(String, nullable=False)
+    recorded_by = Column(String, nullable=False)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    input_request = relationship("InputRequest", back_populates="payment")
+    confirmations = relationship(
+        "InputPaymentConfirmation",
+        back_populates="payment",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="InputPaymentConfirmation.created_at.desc()",
+    )
+
+
+class InputPaymentConfirmation(Base):
+    """Subcontractor evidence confirming that a payment was received."""
+
+    __tablename__ = "input_payment_confirmations"
+    __table_args__ = (
+        UniqueConstraint(
+            "payment_id",
+            "idempotency_key",
+            name="uq_input_payment_confirmations_idempotency",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    payment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("input_payments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    subcontractor_id = Column(String, nullable=False, index=True)
+    idempotency_key = Column(String, nullable=True)
+    version = Column(Integer, nullable=False, default=1)
+    status = Column(String, nullable=False, default="SUBMITTED")
+    received_date = Column(Date, nullable=False)
+    received_full_amount = Column(Boolean, nullable=False, default=True)
+    note = Column(Text, nullable=True)
+    file_name = Column(String, nullable=False)
+    content_type = Column(String, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    storage_key = Column(String, nullable=False)
+    submitted_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    verified_by = Column(String, nullable=True)
+    verification_note = Column(Text, nullable=True)
+    superseded_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    payment = relationship("InputPayment", back_populates="confirmations")
 
 
 class InputOptionSuggestion(Base):

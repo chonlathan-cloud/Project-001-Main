@@ -250,8 +250,8 @@ def flowaccount_readiness(
 
     if input_request.entry_type != "EXPENSE":
         expense_errors.append("FlowAccount sync is not enabled for income requests yet.")
-    if input_request.status != "APPROVED":
-        expense_errors.append("Request must be APPROVED before syncing to FlowAccount.")
+    if input_request.status not in {"APPROVED", "PAID"}:
+        expense_errors.append("Request must be APPROVED or PAID before syncing to FlowAccount.")
 
     amount = _money(input_request.approved_amount if input_request.approved_amount is not None else input_request.amount)
     if amount <= 0:
@@ -339,13 +339,24 @@ def flowaccount_readiness(
         payment_missing.append("FLOWACCOUNT_DEFAULT_BANK_ACCOUNT_ID")
     elif not str(settings.flowaccount_default_bank_account_id).strip().isdigit():
         payment_missing.append("FLOWACCOUNT_DEFAULT_BANK_ACCOUNT_ID numeric value")
-    if not _clean_text(input_request.payment_reference):
-        payment_missing.append("payment_reference")
+    payment = getattr(input_request, "payment", None)
+    internal_payment_reference = _clean_text(
+        getattr(payment, "internal_reference", None)
+    )
+    payment_date = getattr(payment, "payment_date", None)
+    if input_request.status == "PAID":
+        if payment is None:
+            payment_missing.append("internal_payment")
+        if not internal_payment_reference:
+            payment_missing.append("internal_payment_reference")
+        if not payment_date:
+            payment_missing.append("payment_date")
 
     can_mark_paid = (
         settings.flowaccount_enabled
         and has_flowaccount_credentials
-        and input_request.status == "APPROVED"
+        and input_request.status == "PAID"
+        and payment is not None
         and expense_exists
         and not payment_missing
         and not payment_errors
@@ -674,6 +685,7 @@ class FlowAccountService:
         *,
         expense_id: str,
         payment_date: date,
+        payment_reference: str,
     ) -> dict[str, Any]:
         if self.settings.flowaccount_default_payment_method != "transfer":
             raise FlowAccountError("Only transfer FlowAccount payment is supported in this phase.")
@@ -686,7 +698,7 @@ class FlowAccountService:
             "collected": _format_amount(amounts["net_amount"]),
             "withheldPercentage": withheld_percentage,
             "withheldAmount": _format_amount(amounts["wht_amount"]),
-            "paymentRemarks": input_request.payment_reference or "",
+            "paymentRemarks": payment_reference,
             "remainingCollectedType": 0,
             "remainingCollected": 0,
         }

@@ -91,6 +91,9 @@ export function resolveLineEntryPortal(currentLocation = window.location) {
   if (candidatePath.startsWith('/daily-reports/me')) {
     return 'subcontractor';
   }
+  if (candidatePath.startsWith('/payment-confirmation')) {
+    return 'subcontractor';
+  }
   if (
     hasLiffState &&
     (candidatePath === '/input' ||
@@ -124,6 +127,9 @@ export function resolveLineEntryTarget(currentLocation = window.location) {
   }
   if (candidatePath.startsWith('/daily-reports/me')) {
     return '/daily-reports/me';
+  }
+  if (candidatePath.startsWith('/payment-confirmation')) {
+    return '/payment-confirmation';
   }
   if (candidatePath === '/input') {
     return '/input';
