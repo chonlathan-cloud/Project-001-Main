@@ -46,6 +46,7 @@ const LineCallbackPage = lazy(() => import('./LineCallbackPage'))
 const PendingApprovalPage = lazy(() => import('./PendingApprovalPage'))
 const DailyReportsPage = lazy(() => import('./DailyReportsPage'))
 const ProjectReportsPage = lazy(() => import('./ProjectReportsPage'))
+const SharedProjectReportsPage = lazy(() => import('./SharedProjectReportsPage'))
 const PaymentConfirmationPage = lazy(() => import('./PaymentConfirmationPage'))
 
 function ProtectedLayout({
@@ -197,6 +198,14 @@ function AppRoutes() {
         element={(
           <Suspense fallback={<Loading />}>
             <LineCallbackPage />
+          </Suspense>
+        )}
+      />
+      <Route
+        path="/shared/project-reports"
+        element={(
+          <Suspense fallback={<Loading />}>
+            <SharedProjectReportsPage />
           </Suspense>
         )}
       />

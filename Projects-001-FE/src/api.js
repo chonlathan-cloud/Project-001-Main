@@ -612,11 +612,16 @@ async function enrichProjectCard(project) {
 }
 
 async function apiRequest(path, options = {}) {
-  const { timeoutMs = 30000, headers, ...fetchOptions } = options;
+  const {
+    timeoutMs = 30000,
+    headers,
+    skipAuth = false,
+    ...fetchOptions
+  } = options;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
-  const sessionToken = getStoredSessionToken();
+  const sessionToken = skipAuth ? '' : getStoredSessionToken();
   const authHeaders = sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {};
 
   let response;
@@ -1893,6 +1898,17 @@ export async function updateDailyReportLineDestination(projectId, payload) {
   });
 }
 
+export async function getDailyReportShareLink(projectId) {
+  return apiRequest(`/api/v1/daily-reports/projects/${projectId}/share-link`);
+}
+
+export async function updateDailyReportShareLink(projectId, payload) {
+  return apiRequest(`/api/v1/daily-reports/projects/${projectId}/share-link`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function getDailyReportLineDestinationCandidates() {
   const data = await apiRequest('/api/v1/daily-reports/line/destination-candidates');
   return Array.isArray(data) ? data : [];
@@ -1981,6 +1997,32 @@ export async function askCustomerDailyReportQuestion(reportId, question) {
   return apiRequest(`/api/v1/daily-reports/customer/reports/${reportId}/questions`, {
     method: 'POST',
     body: JSON.stringify({ question }),
+  });
+}
+
+const customerShareHeaders = (shareToken) => ({
+  'X-Customer-Report-Share': String(shareToken || ''),
+});
+
+export async function getSharedCustomerDailyReports(shareToken) {
+  const data = await apiRequest('/api/v1/daily-reports/public/reports', {
+    headers: customerShareHeaders(shareToken),
+    skipAuth: true,
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getSharedCustomerDailyReport(shareToken, reportId) {
+  return apiRequest(`/api/v1/daily-reports/public/reports/${reportId}`, {
+    headers: customerShareHeaders(shareToken),
+    skipAuth: true,
+  });
+}
+
+export async function getSharedDailyReportMediaUrl(shareToken, mediaId) {
+  return apiRequest(`/api/v1/daily-reports/public/media/${mediaId}/signed-url`, {
+    headers: customerShareHeaders(shareToken),
+    skipAuth: true,
   });
 }
 

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowLeft,
+  Building2,
   CalendarDays,
   Camera,
   Check,
@@ -13,6 +14,7 @@ import {
   LogOut,
   MessageCircleQuestion,
   Send,
+  ShieldCheck,
 } from 'lucide-react';
 
 import {
@@ -21,6 +23,9 @@ import {
   getCustomerDailyReport,
   getCustomerDailyReports,
   getDailyReportMediaUrl,
+  getSharedCustomerDailyReport,
+  getSharedCustomerDailyReports,
+  getSharedDailyReportMediaUrl,
 } from '../../api';
 import { clearAuthSession, getStoredAuthUser } from '../../auth';
 import { logoutLineClient } from '../../liffClient';
@@ -32,7 +37,12 @@ import {
 import { formatReportDate } from './dailyReportUtils';
 import CustomerPhotoLightbox from './CustomerPhotoLightbox';
 
-export default function CustomerReportWorkspace() {
+export default function CustomerReportWorkspace({
+  publicAccess = false,
+  shareToken = '',
+  selectedReportId = '',
+  onSelectedReportChange = null,
+}) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const authUser = useMemo(() => getStoredAuthUser(), []);
@@ -47,7 +57,15 @@ export default function CustomerReportWorkspace() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState(null);
-  const selectedId = searchParams.get('report') || '';
+  const [accessError, setAccessError] = useState('');
+  const selectedId = publicAccess ? selectedReportId : (searchParams.get('report') || '');
+  const selectReport = (reportId) => {
+    if (publicAccess) {
+      onSelectedReportChange?.(reportId);
+      return;
+    }
+    setSearchParams(reportId ? { report: reportId } : {});
+  };
   const photos = useMemo(
     () => (report?.media || [])
       .map((media) => {
@@ -71,25 +89,42 @@ export default function CustomerReportWorkspace() {
 
   useEffect(() => {
     let active = true;
+    setAccessError('');
+    if (publicAccess && !shareToken) {
+      setReports([]);
+      setReport(null);
+      setLoading(false);
+      setAccessError('ลิงก์รายงานนี้ไม่สมบูรณ์ กรุณาเปิดลิงก์ล่าสุดจากกลุ่ม LINE ของโครงการ');
+      return () => { active = false; };
+    }
     setLoading(true);
-    getCustomerDailyReports()
+    const request = publicAccess
+      ? getSharedCustomerDailyReports(shareToken)
+      : getCustomerDailyReports();
+    request
       .then((items) => {
         if (!active) return;
         setReports(items);
         if (!selectedId && items[0]?.id && !didAutoSelectRef.current) {
           didAutoSelectRef.current = true;
-          setSearchParams({ report: items[0].id }, { replace: true });
+          if (publicAccess) onSelectedReportChange?.(items[0].id);
+          else setSearchParams({ report: items[0].id }, { replace: true });
         }
       })
       .catch((error) => {
         console.error('Unable to load customer project reports.', error);
-        if (active) setNotice({ tone: 'danger', message: 'ไม่สามารถโหลดรายงานโครงการได้ กรุณาลองใหม่อีกครั้ง' });
+        if (!active) return;
+        if (publicAccess && [401, 403, 404].includes(error?.status)) {
+          setAccessError('ลิงก์นี้หมดอายุหรือถูกปิดใช้งานแล้ว กรุณาเปิดลิงก์ล่าสุดจากกลุ่ม LINE ของโครงการ');
+        } else {
+          setNotice({ tone: 'danger', message: 'ไม่สามารถโหลดรายงานโครงการได้ กรุณาลองใหม่อีกครั้ง' });
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [selectedId, setSearchParams]);
+  }, [onSelectedReportChange, publicAccess, selectedId, setSearchParams, shareToken]);
 
   useEffect(() => {
     setActivePhotoIndex(null);
@@ -101,7 +136,10 @@ export default function CustomerReportWorkspace() {
     }
     let active = true;
     setLoading(true);
-    getCustomerDailyReport(selectedId)
+    const request = publicAccess
+      ? getSharedCustomerDailyReport(shareToken, selectedId)
+      : getCustomerDailyReport(selectedId);
+    request
       .then(async (item) => {
         if (!active) return;
         setReport(item);
@@ -109,7 +147,9 @@ export default function CustomerReportWorkspace() {
         const urlEntries = await Promise.all(
           photoMedia.slice(0, 8).map(async (media) => {
             try {
-              const access = await getDailyReportMediaUrl(media.id);
+              const access = publicAccess
+                ? await getSharedDailyReportMediaUrl(shareToken, media.id)
+                : await getDailyReportMediaUrl(media.id);
               return [media.id, access];
             } catch {
               return [media.id, ''];
@@ -126,7 +166,7 @@ export default function CustomerReportWorkspace() {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [selectedId]);
+  }, [publicAccess, selectedId, shareToken]);
 
   useEffect(() => {
     if (activePhotoIndex !== null && activePhotoIndex >= photos.length) {
@@ -193,15 +233,30 @@ export default function CustomerReportWorkspace() {
     <div className="dr-customer-shell" lang="th">
       <header className="dr-customer-header">
         <img src={logoImage} alt="RAYADEE" />
-        <div><strong>ความคืบหน้าโครงการ</strong><span>{authUser?.display_name || 'ลูกค้า'}</span></div>
-        <button type="button" onClick={signOut} aria-label="ออกจากระบบ" title="ออกจากระบบ"><LogOut /></button>
+        <div>
+          <strong>ความคืบหน้าโครงการ</strong>
+          <span>{publicAccess ? 'รายงานสำหรับลูกค้า' : (authUser?.display_name || 'ลูกค้า')}</span>
+        </div>
+        {publicAccess ? (
+          <span className="dr-customer-access-badge"><ShieldCheck /> เปิดผ่านลิงก์โครงการ</span>
+        ) : (
+          <button type="button" onClick={signOut} aria-label="ออกจากระบบ" title="ออกจากระบบ"><LogOut /></button>
+        )}
       </header>
 
       <main className="dr-customer-main">
         <DailyReportNotice tone={notice?.tone}>{notice?.message}</DailyReportNotice>
         {loading ? <div className="dr-card dr-loading"><LoaderCircle className="spin" /> กำลังโหลดรายงาน…</div> : null}
 
-        {!loading && reports.length === 0 ? (
+        {!loading && accessError ? (
+          <section className="dr-card dr-shared-link-error" role="alert">
+            <ShieldCheck />
+            <strong>ไม่สามารถเปิดรายงานจากลิงก์นี้ได้</strong>
+            <span>{accessError}</span>
+          </section>
+        ) : null}
+
+        {!loading && !accessError && reports.length === 0 ? (
           <section className="dr-card dr-empty-state large">
             <HardHat />
             <strong>ยังไม่มีรายงานที่เผยแพร่</strong>
@@ -211,7 +266,7 @@ export default function CustomerReportWorkspace() {
 
         {!loading && report ? (
           <>
-            <button type="button" className="dr-customer-back" onClick={() => setSearchParams({})}>
+            <button type="button" className="dr-customer-back" onClick={() => selectReport('')}>
               <ArrowLeft /> รายงานประจำวันทั้งหมด
             </button>
             <section className="dr-card dr-customer-report">
@@ -229,6 +284,16 @@ export default function CustomerReportWorkspace() {
                 <div><span>ทีมงานหน้างาน</span><strong>{report.manpower_total || 0}</strong><small>คน</small></div>
                 <div><span>เรื่องที่ต้องติดตาม</span><strong>{report.issues?.length || 0}</strong></div>
               </div>
+
+              {report.reporting_company_name ? (
+                <div className="dr-customer-company">
+                  <Building2 />
+                  <span>
+                    <small>บริษัทผู้จัดทำรายงาน</small>
+                    <strong>{report.reporting_company_name}</strong>
+                  </span>
+                </div>
+              ) : null}
 
               <article className="dr-customer-section">
                 <div className="dr-customer-section-icon"><HardHat /></div>
@@ -314,36 +379,46 @@ export default function CustomerReportWorkspace() {
                 </section>
               ) : null}
 
-              <footer className="dr-customer-actions">
-                <div>
-                  <Check />
-                  <span><strong>รับทราบรายงาน</strong>เป็นการยืนยันว่าได้รับข้อมูลแล้ว ไม่ใช่การอนุมัติงานหรือเปลี่ยนแปลงสัญญา</span>
-                  <button type="button" className="dr-button primary" onClick={acknowledge} disabled={Boolean(busy)}>
-                    {busy === 'ack' ? <LoaderCircle className="spin" /> : <CheckCircle2 />} ยืนยันว่าได้รับรายงานแล้ว
-                  </button>
-                </div>
-                <div>
+              {publicAccess ? (
+                <footer className="dr-customer-line-help">
                   <MessageCircleQuestion />
-                  <span><strong>สอบถามทีมงานโครงการ</strong>ทีมงานจะเห็นว่าคำถามนี้เกี่ยวกับรายงานฉบับนี้</span>
-                  <textarea
-                    rows="3"
-                    value={question}
-                    onChange={(event) => setQuestion(event.target.value)}
-                    placeholder="พิมพ์คำถามเกี่ยวกับรายงานนี้…"
-                    aria-label="คำถามถึงทีมงานโครงการ"
-                  />
-                  <button type="button" className="dr-button secondary" onClick={askQuestion} disabled={Boolean(busy)}>
-                    {busy === 'question' ? <LoaderCircle className="spin" /> : <Send />} ส่งคำถาม
-                  </button>
-                </div>
-              </footer>
+                  <span>
+                    <strong>มีคำถามเกี่ยวกับรายงาน?</strong>
+                    กลับไปสอบถามทีมงานในกลุ่ม LINE ของโครงการ เพื่อให้ทุกคนเห็นบริบทเดียวกัน
+                  </span>
+                </footer>
+              ) : (
+                <footer className="dr-customer-actions">
+                  <div>
+                    <Check />
+                    <span><strong>รับทราบรายงาน</strong>เป็นการยืนยันว่าได้รับข้อมูลแล้ว ไม่ใช่การอนุมัติงานหรือเปลี่ยนแปลงสัญญา</span>
+                    <button type="button" className="dr-button primary" onClick={acknowledge} disabled={Boolean(busy)}>
+                      {busy === 'ack' ? <LoaderCircle className="spin" /> : <CheckCircle2 />} ยืนยันว่าได้รับรายงานแล้ว
+                    </button>
+                  </div>
+                  <div>
+                    <MessageCircleQuestion />
+                    <span><strong>สอบถามทีมงานโครงการ</strong>ทีมงานจะเห็นว่าคำถามนี้เกี่ยวกับรายงานฉบับนี้</span>
+                    <textarea
+                      rows="3"
+                      value={question}
+                      onChange={(event) => setQuestion(event.target.value)}
+                      placeholder="พิมพ์คำถามเกี่ยวกับรายงานนี้…"
+                      aria-label="คำถามถึงทีมงานโครงการ"
+                    />
+                    <button type="button" className="dr-button secondary" onClick={askQuestion} disabled={Boolean(busy)}>
+                      {busy === 'question' ? <LoaderCircle className="spin" /> : <Send />} ส่งคำถาม
+                    </button>
+                  </div>
+                </footer>
+              )}
             </section>
 
             {reports.length > 1 ? (
               <section className="dr-card dr-customer-history">
                 <div className="dr-inline-heading"><h2>รายงานก่อนหน้า</h2><span>{reports.length} ฉบับ</span></div>
                 {reports.filter((item) => item.id !== report.id).slice(0, 6).map((item) => (
-                  <button type="button" key={item.id} onClick={() => setSearchParams({ report: item.id })}>
+                  <button type="button" key={item.id} onClick={() => selectReport(item.id)}>
                     <span><strong>{item.project_name || item.project_id}</strong>{formatReportDate(item.report_date, 'th-TH')}</span>
                     <ChevronRight />
                   </button>
@@ -357,7 +432,7 @@ export default function CustomerReportWorkspace() {
           <section className="dr-card dr-customer-history">
             <div className="dr-inline-heading"><h2>รายงานที่อนุมัติแล้ว</h2><span>{reports.length} ฉบับ</span></div>
             {reports.map((item) => (
-              <button type="button" key={item.id} onClick={() => setSearchParams({ report: item.id })}>
+              <button type="button" key={item.id} onClick={() => selectReport(item.id)}>
                 <span><strong>{item.project_name || item.project_id}</strong>{formatReportDate(item.report_date, 'th-TH')}</span>
                 <div><DailyReportStatusBadge status={item.status} locale="th" /><ChevronRight /></div>
               </button>

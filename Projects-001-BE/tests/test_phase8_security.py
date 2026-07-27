@@ -19,7 +19,12 @@ from app.api.v1.daily_reports import (
 from app.core.rate_limit import FixedWindowRateLimiter, daily_report_rate_limit_rules
 from app.core.rate_limit import RateLimitMiddleware, RateLimitRule
 from app.core.observability import JsonLogFormatter
-from app.core.security import issue_access_request_token, verify_access_request_token
+from app.core.security import (
+    issue_access_request_token,
+    issue_customer_report_share_token,
+    verify_access_request_token,
+    verify_customer_report_share_token,
+)
 
 
 class FakeUpload:
@@ -114,6 +119,29 @@ class Phase8SecurityTests(unittest.TestCase):
             verify_access_request_token(token)
 
         self.assertEqual(context.exception.status_code, 401)
+
+    def test_customer_report_share_token_is_stable_and_rejects_tampering(self):
+        first = issue_customer_report_share_token(
+            project_id="project-1",
+            token_version=3,
+        )
+        second = issue_customer_report_share_token(
+            project_id="project-1",
+            token_version=3,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(
+            verify_customer_report_share_token(first)["project_id"],
+            "project-1",
+        )
+
+        encoded_header, encoded_payload, signature = first.split(".", 2)
+        replacement = "A" if signature[-1] != "A" else "B"
+        with self.assertRaises(HTTPException) as context:
+            verify_customer_report_share_token(
+                f"{encoded_header}.{encoded_payload}.{signature[:-1]}{replacement}"
+            )
+        self.assertEqual(context.exception.status_code, 404)
 
     def test_access_request_rejects_uid_that_does_not_match_verified_login(self):
         token = issue_access_request_token(provider="line", line_uid="U-verified")
@@ -329,6 +357,7 @@ class Phase8SecurityTests(unittest.TestCase):
             rate_limit_upload_per_minute=30,
             rate_limit_question_per_minute=10,
             rate_limit_webhook_per_minute=180,
+            rate_limit_public_report_per_minute=120,
         )
         rules = {rule.name: rule for rule in daily_report_rate_limit_rules(settings)}
 
@@ -350,6 +379,11 @@ class Phase8SecurityTests(unittest.TestCase):
         self.assertTrue(
             rules["line_customer_webhook"].path_pattern.fullmatch(
                 "/api/v1/daily-reports/line/customer/webhook"
+            )
+        )
+        self.assertTrue(
+            rules["public_customer_reports"].path_pattern.fullmatch(
+                "/api/v1/daily-reports/public/reports/report-1"
             )
         )
 

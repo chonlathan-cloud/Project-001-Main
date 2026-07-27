@@ -7,6 +7,7 @@ from itertools import count
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import HTTPException
 
@@ -88,7 +89,29 @@ class DailyReportServiceTests(unittest.TestCase):
     def tearDown(self):
         self.client_patch.stop()
 
+    def test_customer_text_strips_only_known_subcontractor_labels(self):
+        text = (
+            "THAMES PHUBORDEE: สสสสสxcvxcv\n\n"
+            "Pao: testing\n\n"
+            "พื้นที่: ชั้น 2"
+        )
+
+        cleaned = daily_report_service._strip_known_source_labels(
+            text,
+            {"THAMES PHUBORDEE", "Pao"},
+        )
+
+        self.assertEqual(
+            cleaned,
+            "สสสสสxcvxcv\n\ntesting\n\nพื้นที่: ชั้น 2",
+        )
+
     def _submitted_source(self):
+        daily_report_service.update_project_settings(
+            project_id="project-1",
+            updates={"reporting_company_name": "RAYADEE Construction Co., Ltd."},
+            actor_id="owner@example.com",
+        )
         submission = daily_report_service.create_submission(
             project_id="project-1",
             project_name="Riverside Residence",
@@ -137,6 +160,15 @@ class DailyReportServiceTests(unittest.TestCase):
         report = reports[0]
         self.assertEqual(report["status"], "PENDING_REVIEW")
         self.assertEqual(report["manpower_total"], 8)
+        self.assertEqual(report["reporting_company_name"], "RAYADEE Construction Co., Ltd.")
+        self.assertEqual(
+            report["summary"],
+            "Installed ceiling framing in the east wing.",
+        )
+        self.assertEqual(
+            report["tomorrow_plan"],
+            "Continue framing after MEP coordination.",
+        )
 
         daily_report_service.update_report_draft(
             report_id=report["id"],
@@ -162,6 +194,15 @@ class DailyReportServiceTests(unittest.TestCase):
         self.assertEqual(customer_snapshot["published_version"], 1)
         self.assertEqual(customer_snapshot["status"], "PUBLISHED")
         self.assertEqual(customer_snapshot["submissions"], [])
+        self.assertEqual(
+            customer_snapshot["reporting_company_name"],
+            "RAYADEE Construction Co., Ltd.",
+        )
+        daily_report_service.update_project_settings(
+            project_id="project-1",
+            updates={"reporting_company_name": "RAYADEE Group Co., Ltd."},
+            actor_id="owner@example.com",
+        )
         daily_report_service.update_report_draft(
             report_id=report["id"],
             updates={"summary": "Corrected approved progress summary."},
@@ -181,6 +222,86 @@ class DailyReportServiceTests(unittest.TestCase):
         self.assertNotEqual(
             versions[0]["snapshot"]["summary"],
             versions[1]["snapshot"]["summary"],
+        )
+        self.assertEqual(
+            [item["snapshot"]["reporting_company_name"] for item in versions],
+            ["RAYADEE Group Co., Ltd.", "RAYADEE Construction Co., Ltd."],
+        )
+
+    def test_publish_requires_project_or_staff_reporting_company(self):
+        self._submitted_source()
+        report = daily_report_service.list_reports(project_ids={"project-1"})[0]
+        daily_report_service.update_project_settings(
+            project_id="project-1",
+            updates={"reporting_company_name": None},
+            actor_id="owner@example.com",
+        )
+
+        with self.assertRaises(HTTPException) as error:
+            daily_report_service.publish_report(
+                report_id=report["id"],
+                publication_note=None,
+                actor_id="owner@example.com",
+                actor_role="owner",
+            )
+
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertIn("reporting company name", error.exception.detail)
+
+    def test_publish_migrates_untouched_legacy_subcontractor_labels(self):
+        self._submitted_source()
+        report = daily_report_service.list_reports(project_ids={"project-1"})[0]
+        daily_report_service.update_report_draft(
+            report_id=report["id"],
+            updates={
+                "summary": "ABC Construction: Installed ceiling framing in the east wing.",
+                "tomorrow_plan": "ABC Construction: Continue framing after MEP coordination.",
+            },
+            actor_id="owner@example.com",
+            actor_role="owner",
+        )
+
+        daily_report_service.publish_report(
+            report_id=report["id"],
+            publication_note=None,
+            actor_id="owner@example.com",
+            actor_role="owner",
+        )
+
+        snapshot = daily_report_service.list_versions(report["id"])[0]["snapshot"]
+        self.assertEqual(
+            snapshot["summary"],
+            "Installed ceiling framing in the east wing.",
+        )
+        self.assertEqual(
+            snapshot["tomorrow_plan"],
+            "Continue framing after MEP coordination.",
+        )
+
+    def test_customer_view_hides_source_label_from_existing_published_snapshot(self):
+        self._submitted_source()
+        report = daily_report_service.list_reports(project_ids={"project-1"})[0]
+        daily_report_service.publish_report(
+            report_id=report["id"],
+            publication_note=None,
+            actor_id="owner@example.com",
+            actor_role="owner",
+        )
+        version_id = f"{report['id']}-v1"
+        stored_version = self.firestore.data[daily_report_service.VERSIONS_COLLECTION][version_id]
+        stored_version["snapshot"]["summary"] = (
+            "ABC Construction: Installed ceiling framing in the east wing."
+        )
+
+        customer_report = daily_report_service.get_customer_report(report["id"])
+
+        self.assertEqual(
+            customer_report["summary"],
+            "Installed ceiling framing in the east wing.",
+        )
+        self.assertEqual(
+            stored_version["snapshot"]["summary"],
+            "ABC Construction: Installed ceiling framing in the east wing.",
         )
 
     def test_change_request_returns_submission_to_editable_state(self):
@@ -220,6 +341,84 @@ class DailyReportServiceTests(unittest.TestCase):
                 principal_id="customer-1",
             )
         )
+
+    def test_customer_share_link_is_project_scoped_rotatable_and_revocable(self):
+        runtime_settings = SimpleNamespace(
+            frontend_base_url="https://app.example.test",
+            customer_report_public_share_enabled=True,
+        )
+        with patch.object(
+            daily_report_service,
+            "get_settings",
+            return_value=runtime_settings,
+        ):
+            created = daily_report_service.update_customer_share_link(
+                project_id="project-1",
+                enabled=True,
+                rotate=False,
+                actor_id="admin@example.com",
+                actor_role="admin",
+            )
+            first_token = parse_qs(urlsplit(created["link_url"]).fragment)["access"][0]
+            self.assertEqual(
+                daily_report_service.resolve_customer_share_project(first_token),
+                "project-1",
+            )
+
+            rotated = daily_report_service.update_customer_share_link(
+                project_id="project-1",
+                enabled=True,
+                rotate=True,
+                actor_id="owner@example.com",
+                actor_role="owner",
+            )
+            second_token = parse_qs(urlsplit(rotated["link_url"]).fragment)["access"][0]
+            self.assertNotEqual(first_token, second_token)
+            with self.assertRaises(HTTPException):
+                daily_report_service.resolve_customer_share_project(first_token)
+            self.assertEqual(
+                daily_report_service.resolve_customer_share_project(second_token),
+                "project-1",
+            )
+
+            daily_report_service.update_customer_share_link(
+                project_id="project-1",
+                enabled=False,
+                rotate=False,
+                actor_id="owner@example.com",
+                actor_role="owner",
+            )
+            with self.assertRaises(HTTPException):
+                daily_report_service.resolve_customer_share_project(second_token)
+
+    def test_public_customer_report_excludes_internal_fields(self):
+        self._submitted_source()
+        report = daily_report_service.list_reports(project_ids={"project-1"})[0]
+        daily_report_service.publish_report(
+            report_id=report["id"],
+            publication_note=None,
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+
+        public_report = daily_report_service.get_public_customer_report(
+            project_id="project-1",
+            report_id=report["id"],
+        )
+
+        self.assertNotIn("published_by", public_report)
+        self.assertNotIn("delivery_status", public_report)
+        self.assertNotIn("source_submission_ids", public_report)
+        self.assertNotIn("uploader_name", public_report["media"][0])
+        self.assertEqual(
+            public_report["reporting_company_name"],
+            "RAYADEE Construction Co., Ltd.",
+        )
+        with self.assertRaises(HTTPException):
+            daily_report_service.get_public_customer_report(
+                project_id="project-2",
+                report_id=report["id"],
+            )
 
     def test_line_destination_uses_discovered_group_name(self):
         daily_report_service.record_line_destination_candidate(

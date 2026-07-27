@@ -9,13 +9,20 @@ snapshot in ``daily_report_versions``.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import HTTPException, status
 from google.api_core.exceptions import AlreadyExists
 
 from app.core.google_clients import get_firestore_client
+from app.core.config import get_settings
+from app.core.security import (
+    issue_customer_report_share_token,
+    verify_customer_report_share_token,
+)
 
 SETTINGS_COLLECTION = "daily_report_project_settings"
 CYCLES_COLLECTION = "daily_report_cycles"
@@ -32,6 +39,7 @@ DELIVERY_JOBS_COLLECTION = "daily_report_delivery_jobs"
 ACKNOWLEDGEMENTS_COLLECTION = "daily_report_acknowledgements"
 QUESTIONS_COLLECTION = "daily_report_questions"
 NOTIFICATIONS_COLLECTION = "daily_report_notifications"
+CUSTOMER_SHARE_LINKS_COLLECTION = "daily_report_customer_share_links"
 
 EDITABLE_SUBMISSION_STATUSES = {"DRAFT", "CHANGES_REQUESTED"}
 CONSOLIDATABLE_SUBMISSION_STATUSES = {
@@ -48,6 +56,7 @@ RECEIVED_SUBMISSION_STATUSES = {
     "CHANGES_REQUESTED",
 }
 DEFAULT_PROJECT_SETTINGS = {
+    "reporting_company_name": None,
     "enabled": True,
     "timezone": "Asia/Bangkok",
     "working_days": [1, 2, 3, 4, 5, 6],
@@ -190,6 +199,7 @@ def update_project_settings(
 ) -> dict[str, Any]:
     current = get_project_settings(project_id)
     allowed = {
+        "reporting_company_name",
         "enabled",
         "timezone",
         "working_days",
@@ -203,6 +213,8 @@ def update_project_settings(
         "expected_subcontractor_ids",
     }
     payload = {key: value for key, value in updates.items() if key in allowed}
+    if "reporting_company_name" in payload:
+        payload["reporting_company_name"] = _optional_text(payload["reporting_company_name"])
     if "working_days" in payload:
         payload["working_days"] = sorted(
             {
@@ -237,6 +249,141 @@ def update_project_settings(
         detail={"changed_fields": sorted(updates)},
     )
     return current
+
+
+def get_customer_share_link_config(project_id: str) -> dict[str, Any]:
+    ref = _client().collection(CUSTOMER_SHARE_LINKS_COLLECTION).document(project_id)
+    snapshot = ref.get()
+    if not snapshot.exists:
+        return {
+            "project_id": project_id,
+            "enabled": False,
+            "token_version": 0,
+            "created_at": None,
+            "updated_at": None,
+            "updated_by": None,
+        }
+    payload = _public(snapshot)
+    payload.setdefault("project_id", project_id)
+    payload.setdefault("enabled", False)
+    payload.setdefault("token_version", 0)
+    return payload
+
+
+def _customer_share_link_url(
+    *,
+    project_id: str,
+    token_version: int,
+    report_id: str | None = None,
+) -> str:
+    settings = get_settings()
+    token = issue_customer_report_share_token(
+        project_id=project_id,
+        token_version=token_version,
+    )
+    fragment_values = {"access": token}
+    if report_id:
+        fragment_values["report"] = report_id
+    fragment = urlencode(fragment_values)
+    return f"{settings.frontend_base_url}/shared/project-reports#{fragment}"
+
+
+def get_customer_share_link_details(project_id: str) -> dict[str, Any]:
+    settings = get_settings()
+    config = get_customer_share_link_config(project_id)
+    enabled = bool(config.get("enabled")) and int(config.get("token_version") or 0) >= 1
+    return {
+        **config,
+        "enabled": enabled,
+        "rollout_enabled": settings.customer_report_public_share_enabled,
+        "link_url": (
+            _customer_share_link_url(
+                project_id=project_id,
+                token_version=int(config["token_version"]),
+            )
+            if enabled
+            else None
+        ),
+    }
+
+
+def update_customer_share_link(
+    *,
+    project_id: str,
+    enabled: bool,
+    rotate: bool,
+    actor_id: str,
+    actor_role: str,
+) -> dict[str, Any]:
+    current = get_customer_share_link_config(project_id)
+    was_enabled = bool(current.get("enabled"))
+    version = max(0, int(current.get("token_version") or 0))
+    now = _now_utc()
+
+    if enabled:
+        if not was_enabled or rotate or version < 1:
+            version += 1
+        event_type = "CUSTOMER_SHARE_LINK_ROTATED" if was_enabled and rotate else "CUSTOMER_SHARE_LINK_ENABLED"
+    else:
+        if was_enabled or version < 1:
+            version += 1
+        event_type = "CUSTOMER_SHARE_LINK_DISABLED"
+
+    payload = {
+        "project_id": project_id,
+        "enabled": bool(enabled),
+        "token_version": version,
+        "created_at": current.get("created_at") or now,
+        "updated_at": now,
+        "updated_by": actor_id,
+    }
+    _client().collection(CUSTOMER_SHARE_LINKS_COLLECTION).document(project_id).set(payload)
+    _event(
+        project_id=project_id,
+        event_type=event_type,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        detail={"enabled": bool(enabled), "token_version": version},
+    )
+    return get_customer_share_link_details(project_id)
+
+
+def ensure_customer_share_link(project_id: str) -> dict[str, Any]:
+    """Initialize a link for rollout, but never re-enable a link an operator disabled."""
+    current = get_customer_share_link_config(project_id)
+    if int(current.get("token_version") or 0) > 0:
+        return get_customer_share_link_details(project_id)
+    return update_customer_share_link(
+        project_id=project_id,
+        enabled=True,
+        rotate=False,
+        actor_id="daily-report-delivery",
+        actor_role="system",
+    )
+
+
+def get_customer_share_report_url(*, project_id: str, report_id: str) -> str | None:
+    details = get_customer_share_link_details(project_id)
+    if not details.get("enabled"):
+        return None
+    return _customer_share_link_url(
+        project_id=project_id,
+        token_version=int(details["token_version"]),
+        report_id=report_id,
+    )
+
+
+def resolve_customer_share_project(share_token: str) -> str:
+    settings = get_settings()
+    if not settings.customer_report_public_share_enabled:
+        raise _not_found("Shared report link", "")
+    claims = verify_customer_report_share_token(share_token)
+    project_id = _clean_text(claims.get("project_id"))
+    token_version = int(claims.get("token_version") or 0)
+    config = get_customer_share_link_config(project_id)
+    if not config.get("enabled") or token_version != int(config.get("token_version") or 0):
+        raise _not_found("Shared report link", "")
+    return project_id
 
 
 def ensure_daily_cycle(
@@ -1177,15 +1324,16 @@ def rebuild_report(
         raise _bad_request("No submitted subcontractor reports are available to consolidate.")
 
     summaries = [
-        f"{item.get('subcontractor_name') or 'Subcontractor'}: {_clean_text(item.get('work_summary'))}"
+        _clean_text(item.get("work_summary"))
         for item in submissions
         if _optional_text(item.get("work_summary"))
     ]
     tomorrow_parts = [
-        f"{item.get('subcontractor_name') or 'Subcontractor'}: {_clean_text(item.get('tomorrow_plan'))}"
+        _clean_text(item.get("tomorrow_plan"))
         for item in submissions
         if _optional_text(item.get("tomorrow_plan"))
     ]
+    project_settings = get_project_settings(project_id)
     issues: list[dict[str, Any]] = []
     for item in submissions:
         for issue in item.get("issues") or []:
@@ -1207,7 +1355,7 @@ def rebuild_report(
         )
     else:
         expected_subcontractor_ids = list(
-            get_project_settings(project_id).get("expected_subcontractor_ids") or []
+            project_settings.get("expected_subcontractor_ids") or []
         )
     received_subcontractor_ids = {
         _clean_text(item.get("subcontractor_id"))
@@ -1231,6 +1379,10 @@ def rebuild_report(
         "report_date": normalized_date,
         "status": next_status,
         "title": existing.get("title") or f"Daily progress report — {project_name}",
+        "reporting_company_name": (
+            _optional_text(project_settings.get("reporting_company_name"))
+            or _optional_text(existing.get("reporting_company_name"))
+        ),
         "summary": "\n\n".join(summaries),
         "progress_percent": round(sum(progress_values) / len(progress_values), 1) if progress_values else None,
         "manpower_total": sum(int(item.get("manpower_total") or 0) for item in submissions),
@@ -1356,6 +1508,7 @@ def _publication_snapshot(report: dict[str, Any]) -> dict[str, Any]:
         "project_name": report.get("project_name"),
         "report_date": report["report_date"],
         "title": report.get("title"),
+        "reporting_company_name": report.get("reporting_company_name"),
         "summary": report.get("summary"),
         "progress_percent": report.get("progress_percent"),
         "manpower_total": report.get("manpower_total"),
@@ -1373,18 +1526,61 @@ def publish_report(
     publication_note: str | None,
     actor_id: str,
     actor_role: str,
+    reporting_company_name: str | None = None,
 ) -> dict[str, Any]:
     report = get_report(report_id, include_sources=False)
     if report.get("status") not in {"PENDING_REVIEW", "CORRECTION_DRAFT"}:
         raise _conflict("Only a reviewed draft or correction draft can be published.")
     if not _optional_text(report.get("summary")):
         raise _bad_request("Customer-facing summary is required before publication.")
+    resolved_company_name = (
+        _optional_text(reporting_company_name)
+        or _optional_text(get_project_settings(report["project_id"]).get("reporting_company_name"))
+    )
+    if not resolved_company_name:
+        raise _bad_request(
+            "Set the project reporting company name before publishing the customer report."
+        )
+
+    source_submissions = [
+        get_submission(submission_id)
+        for submission_id in report.get("source_submission_ids") or []
+    ]
+    approved_summary = _clean_text(report.get("summary"))
+    legacy_summary = "\n\n".join(
+        f"{item.get('subcontractor_name') or 'Subcontractor'}: {_clean_text(item.get('work_summary'))}"
+        for item in source_submissions
+        if _optional_text(item.get("work_summary"))
+    )
+    consolidated_summary = "\n\n".join(
+        _clean_text(item.get("work_summary"))
+        for item in source_submissions
+        if _optional_text(item.get("work_summary"))
+    )
+    approved_tomorrow_plan = _clean_text(report.get("tomorrow_plan"))
+    legacy_tomorrow_plan = "\n".join(
+        f"{item.get('subcontractor_name') or 'Subcontractor'}: {_clean_text(item.get('tomorrow_plan'))}"
+        for item in source_submissions
+        if _optional_text(item.get("tomorrow_plan"))
+    )
+    consolidated_tomorrow_plan = "\n".join(
+        _clean_text(item.get("tomorrow_plan"))
+        for item in source_submissions
+        if _optional_text(item.get("tomorrow_plan"))
+    )
+    report_updates = {"reporting_company_name": resolved_company_name}
+    if approved_summary and approved_summary == legacy_summary:
+        report_updates["summary"] = consolidated_summary
+    if approved_tomorrow_plan and approved_tomorrow_plan == legacy_tomorrow_plan:
+        report_updates["tomorrow_plan"] = consolidated_tomorrow_plan or None
+    report.update(report_updates)
     now = _now_utc()
     version = int(report.get("published_version") or 0) + 1
     version_id = f"{report_id}-v{version}"
     snapshot = _publication_snapshot(report)
     if not snapshot.get("published_media_ids"):
         raise _bad_request("Select at least one customer-facing photo before publication.")
+    _client().collection(REPORTS_COLLECTION).document(report_id).set(report_updates, merge=True)
     version_payload = {
         "id": version_id,
         "report_id": report_id,
@@ -1468,6 +1664,26 @@ def list_versions(report_id: str) -> list[dict[str, Any]]:
     return sorted(items, key=lambda item: int(item.get("version") or 0), reverse=True)
 
 
+def _strip_known_source_labels(value: object, source_names: set[str]) -> str | None:
+    text = _optional_text(value)
+    normalized_names = sorted(
+        {_clean_text(name) for name in source_names if _clean_text(name)},
+        key=len,
+        reverse=True,
+    )
+    if not text or not normalized_names:
+        return text
+
+    source_prefix = re.compile(
+        rf"^\s*(?:{'|'.join(re.escape(name) for name in normalized_names)})\s*:\s*",
+        flags=re.IGNORECASE,
+    )
+    return "\n".join(
+        source_prefix.sub("", line, count=1)
+        for line in text.splitlines()
+    ).strip()
+
+
 def get_customer_report(report_id: str) -> dict[str, Any]:
     """
     Return only the latest immutable published snapshot and approved media metadata.
@@ -1483,6 +1699,20 @@ def get_customer_report(report_id: str) -> dict[str, Any]:
     version_id = f"{report_id}-v{published_version}"
     version = _get_doc(VERSIONS_COLLECTION, version_id, "Daily report version")
     snapshot = dict(version.get("snapshot") or {})
+    source_names: set[str] = set()
+    for submission_id in snapshot.get("source_submission_ids") or []:
+        try:
+            source_submission = get_submission(submission_id)
+        except HTTPException:
+            continue
+        for field in ("subcontractor_name", "subcontractor_company_name"):
+            if source_name := _optional_text(source_submission.get(field)):
+                source_names.add(source_name)
+    snapshot["summary"] = _strip_known_source_labels(snapshot.get("summary"), source_names)
+    snapshot["tomorrow_plan"] = _strip_known_source_labels(
+        snapshot.get("tomorrow_plan"),
+        source_names,
+    )
     published_media_ids = list(snapshot.get("published_media_ids") or [])
     published_media_by_id = (
         {
@@ -1545,6 +1775,54 @@ def list_customer_reports(*, project_ids: set[str]) -> list[dict[str, Any]]:
         key=lambda item: (_clean_text(item.get("report_date")), _sort_datetime(item.get("published_at"))),
         reverse=True,
     )
+
+
+def get_public_customer_report(*, project_id: str, report_id: str) -> dict[str, Any]:
+    report = get_customer_report(report_id)
+    if report.get("project_id") != project_id:
+        raise _not_found("Published daily report", report_id)
+    public_media = [
+        {
+            key: item.get(key)
+            for key in (
+                "id",
+                "media_type",
+                "file_name",
+                "content_type",
+                "size_bytes",
+                "created_at",
+            )
+        }
+        for item in report.get("media") or []
+    ]
+    return {
+        key: report.get(key)
+        for key in (
+            "id",
+            "project_id",
+            "project_name",
+            "report_date",
+            "status",
+            "title",
+            "reporting_company_name",
+            "summary",
+            "progress_percent",
+            "manpower_total",
+            "issues",
+            "tomorrow_plan",
+            "customer_note",
+            "published_version",
+            "published_at",
+        )
+    } | {"media": public_media}
+
+
+def list_public_customer_reports(*, project_id: str) -> list[dict[str, Any]]:
+    reports = list_customer_reports(project_ids={project_id})
+    return [
+        get_public_customer_report(project_id=project_id, report_id=report["id"])
+        for report in reports
+    ]
 
 
 def list_events(report_id: str) -> list[dict[str, Any]]:

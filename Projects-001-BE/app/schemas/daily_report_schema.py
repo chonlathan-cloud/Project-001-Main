@@ -18,6 +18,7 @@ class DailyReportProjectItem(BaseModel):
 
 class DailyReportProjectSettingsItem(BaseModel):
     project_id: str
+    reporting_company_name: str | None = None
     enabled: bool = True
     timezone: str = "Asia/Bangkok"
     working_days: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5, 6])
@@ -34,6 +35,7 @@ class DailyReportProjectSettingsItem(BaseModel):
 
 
 class DailyReportProjectSettingsUpdate(BaseModel):
+    reporting_company_name: str | None = Field(default=None, max_length=200)
     enabled: bool | None = None
     timezone: str | None = None
     working_days: list[int] | None = None
@@ -200,6 +202,25 @@ class DailyReportMediaAccessResponse(BaseModel):
     expires_in_minutes: int
 
 
+class PublicDailyReportItem(BaseModel):
+    id: str
+    project_id: str
+    project_name: str | None = None
+    report_date: str
+    status: str = "PUBLISHED"
+    title: str
+    reporting_company_name: str | None = None
+    summary: str
+    progress_percent: float | None = None
+    manpower_total: int = 0
+    issues: list[dict[str, Any]] = Field(default_factory=list)
+    tomorrow_plan: str | None = None
+    customer_note: str | None = None
+    media: list[dict[str, Any]] = Field(default_factory=list)
+    published_version: int
+    published_at: datetime | None = None
+
+
 class DailyReportDraftUpdate(BaseModel):
     title: str | None = None
     summary: str | None = None
@@ -229,6 +250,7 @@ class DailyReportItem(BaseModel):
     report_date: str
     status: str
     title: str
+    reporting_company_name: str | None = None
     summary: str
     progress_percent: float | None = None
     manpower_total: int = 0
@@ -320,3 +342,19 @@ class DailyReportLineDestinationItem(BaseModel):
 class DailyReportLineDestinationUpdate(BaseModel):
     line_target_id: str | None = None
     is_active: bool = True
+
+
+class DailyReportShareLinkItem(BaseModel):
+    project_id: str
+    enabled: bool = False
+    rollout_enabled: bool = False
+    link_url: str | None = None
+    token_version: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class DailyReportShareLinkUpdate(BaseModel):
+    enabled: bool
+    rotate: bool = False

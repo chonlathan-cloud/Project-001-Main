@@ -47,11 +47,14 @@ from app.schemas.daily_report_schema import (
     DailyReportProjectSettingsUpdate,
     DailyReportPublishRequest,
     DailyReportQuestionCreate,
+    DailyReportShareLinkItem,
+    DailyReportShareLinkUpdate,
     DailyReportSubmissionCreate,
     DailyReportSubmissionItem,
     DailyReportSubmissionUpdate,
     DailyReportStaffNotificationItem,
     DailyReportVersionItem,
+    PublicDailyReportItem,
 )
 from app.schemas.responses import StandardResponse
 from app.services import daily_report_service
@@ -74,7 +77,7 @@ from app.services.gcs_storage_service import (
 from app.services.daily_report_thumbnail_service import (
     daily_report_thumbnail_storage_key,
 )
-from app.services.identity_service import get_subcontractor, list_subcontractors
+from app.services.identity_service import get_admin_by_email, get_subcontractor, list_subcontractors
 
 router = APIRouter(prefix="/daily-reports", tags=["Daily Reports"])
 internal_router = APIRouter(prefix="/internal/daily-reports", tags=["Daily Report Tasks"])
@@ -110,6 +113,23 @@ _VOICE_CONTENT_TYPES = {
 
 def _actor_id(user: AuthenticatedUser) -> str:
     return user.email or user.subcontractor_id or user.customer_id or user.subject
+
+
+def _primary_role(user: AuthenticatedUser) -> str:
+    if user.has_role("owner"):
+        return "owner"
+    if user.has_role("admin"):
+        return "admin"
+    return str(user.role or "user")
+
+
+def _staff_company_name(user: AuthenticatedUser) -> str | None:
+    if not user.email:
+        return None
+    profile = get_admin_by_email(user.email)
+    if profile is None:
+        return None
+    return str(profile.company or "").strip() or None
 
 
 def _require_staff(user: AuthenticatedUser) -> None:
@@ -194,6 +214,34 @@ async def _visible_projects(
         and (not active_only or str(project.status or "").upper() not in {"COMPLETED", "ARCHIVED"})
     ]
     return sorted(items, key=lambda item: item.name.lower())
+
+
+async def _signed_daily_report_media_access(media: dict) -> DailyReportMediaAccessResponse:
+    settings = get_settings()
+    original_url_task = generate_signed_url_for_storage_key(
+        storage_key=media["storage_key"],
+        expires_in_minutes=settings.signed_url_expires_minutes,
+    )
+    thumbnail_url_task = None
+    if str(media.get("content_type") or "").startswith("image/"):
+        thumbnail_url_task = generate_signed_url_for_storage_key(
+            storage_key=daily_report_thumbnail_storage_key(media["storage_key"]),
+            expires_in_minutes=settings.signed_url_expires_minutes,
+        )
+    if thumbnail_url_task is None:
+        original_url = await original_url_task
+        thumbnail_url = None
+    else:
+        original_url, thumbnail_url = await asyncio.gather(
+            original_url_task,
+            thumbnail_url_task,
+        )
+    return DailyReportMediaAccessResponse(
+        media_id=media["id"],
+        url=original_url,
+        thumbnail_url=thumbnail_url,
+        expires_in_minutes=settings.signed_url_expires_minutes,
+    )
 
 
 def _require_internal_task_auth(
@@ -788,33 +836,7 @@ async def get_daily_report_media_url(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Published report media not found.")
     else:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Daily Report media access is required.")
-    settings = get_settings()
-    original_url_task = generate_signed_url_for_storage_key(
-        storage_key=media["storage_key"],
-        expires_in_minutes=settings.signed_url_expires_minutes,
-    )
-    thumbnail_url_task = None
-    if str(media.get("content_type") or "").startswith("image/"):
-        thumbnail_url_task = generate_signed_url_for_storage_key(
-            storage_key=daily_report_thumbnail_storage_key(media["storage_key"]),
-            expires_in_minutes=settings.signed_url_expires_minutes,
-        )
-    if thumbnail_url_task is None:
-        original_url = await original_url_task
-        thumbnail_url = None
-    else:
-        original_url, thumbnail_url = await asyncio.gather(
-            original_url_task,
-            thumbnail_url_task,
-        )
-    return StandardResponse(
-        data=DailyReportMediaAccessResponse(
-            media_id=media_id,
-            url=original_url,
-            thumbnail_url=thumbnail_url,
-            expires_in_minutes=settings.signed_url_expires_minutes,
-        )
-    )
+    return StandardResponse(data=await _signed_daily_report_media_access(media))
 
 
 @router.get("/queue", response_model=StandardResponse[list[DailyReportItem]])
@@ -996,11 +1018,23 @@ async def publish_daily_report(
     _require_staff(user)
     current = daily_report_service.get_report(report_id, include_sources=False)
     _assert_staff_project_access(user, current["project_id"])
+    project_settings = daily_report_service.get_project_settings(current["project_id"])
+    configured_company_name = str(
+        project_settings.get("reporting_company_name") or ""
+    ).strip()
+    reporting_company_name = configured_company_name or _staff_company_name(user)
+    if reporting_company_name and not configured_company_name:
+        daily_report_service.update_project_settings(
+            project_id=current["project_id"],
+            updates={"reporting_company_name": reporting_company_name},
+            actor_id=_actor_id(user),
+        )
     published = daily_report_service.publish_report(
         report_id=report_id,
         publication_note=request.publication_note,
         actor_id=_actor_id(user),
         actor_role=user.role,
+        reporting_company_name=reporting_company_name,
     )
     delivery_status = await deliver_published_report(published)
     await asyncio.gather(
@@ -1078,7 +1112,13 @@ async def get_daily_report_project_settings(
     _require_staff(user)
     await _project(db, project_id)
     _assert_staff_project_access(user, project_id)
-    return StandardResponse(data=daily_report_service.get_project_settings(project_id))
+    settings = daily_report_service.get_project_settings(project_id)
+    if not settings.get("reporting_company_name"):
+        settings = {
+            **settings,
+            "reporting_company_name": _staff_company_name(user),
+        }
+    return StandardResponse(data=settings)
 
 
 @router.put("/projects/{project_id}/settings", response_model=StandardResponse[DailyReportProjectSettingsItem])
@@ -1094,6 +1134,47 @@ async def update_daily_report_project_settings(
             project_id=project_id,
             updates=request.model_dump(exclude_unset=True),
             actor_id=_actor_id(user),
+        )
+    )
+
+
+@router.get(
+    "/projects/{project_id}/share-link",
+    response_model=StandardResponse[DailyReportShareLinkItem],
+)
+async def get_daily_report_share_link(
+    project_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_staff(user)
+    await _project(db, project_id)
+    _assert_staff_project_access(user, project_id)
+    return StandardResponse(
+        data=daily_report_service.get_customer_share_link_details(project_id)
+    )
+
+
+@router.put(
+    "/projects/{project_id}/share-link",
+    response_model=StandardResponse[DailyReportShareLinkItem],
+)
+async def update_daily_report_share_link(
+    project_id: str,
+    request: DailyReportShareLinkUpdate,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_staff(user)
+    await _project(db, project_id)
+    _assert_staff_project_access(user, project_id)
+    return StandardResponse(
+        data=daily_report_service.update_customer_share_link(
+            project_id=project_id,
+            enabled=request.enabled,
+            rotate=request.rotate,
+            actor_id=_actor_id(user),
+            actor_role=_primary_role(user),
         )
     )
 
@@ -1259,6 +1340,61 @@ async def upsert_daily_report_membership(
             actor_id=_actor_id(user),
         )
     )
+
+
+@router.get(
+    "/public/reports",
+    response_model=StandardResponse[list[PublicDailyReportItem]],
+)
+async def list_public_customer_reports(
+    share_token: str = Header(default="", alias="X-Customer-Report-Share"),
+):
+    project_id = daily_report_service.resolve_customer_share_project(share_token)
+    return StandardResponse(
+        data=daily_report_service.list_public_customer_reports(project_id=project_id)
+    )
+
+
+@router.get(
+    "/public/reports/{report_id}",
+    response_model=StandardResponse[PublicDailyReportItem],
+)
+async def get_public_customer_report(
+    report_id: str,
+    share_token: str = Header(default="", alias="X-Customer-Report-Share"),
+):
+    project_id = daily_report_service.resolve_customer_share_project(share_token)
+    return StandardResponse(
+        data=daily_report_service.get_public_customer_report(
+            project_id=project_id,
+            report_id=report_id,
+        )
+    )
+
+
+@router.get(
+    "/public/media/{media_id}/signed-url",
+    response_model=StandardResponse[DailyReportMediaAccessResponse],
+)
+async def get_public_customer_report_media_url(
+    media_id: str,
+    share_token: str = Header(default="", alias="X-Customer-Report-Share"),
+):
+    project_id = daily_report_service.resolve_customer_share_project(share_token)
+    media = daily_report_service.get_media(media_id)
+    visible = (
+        media.get("project_id") == project_id
+        and daily_report_service.is_media_published(
+            media_id=media_id,
+            project_id=project_id,
+        )
+    )
+    if not visible:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Published report media not found.",
+        )
+    return StandardResponse(data=await _signed_daily_report_media_access(media))
 
 
 @router.get("/customer/reports", response_model=StandardResponse[list[DailyReportItem]])

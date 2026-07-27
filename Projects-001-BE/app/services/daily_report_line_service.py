@@ -104,9 +104,16 @@ async def refresh_line_destination_candidate_names(candidates: list[dict]) -> li
     return daily_report_service.list_line_destination_candidates()
 
 
-def _report_url(report_id: str) -> str:
+def _report_url(report: dict) -> str:
     settings = get_settings()
-    query = urlencode({"report": report_id})
+    if settings.customer_report_public_share_enabled:
+        share_url = daily_report_service.get_customer_share_report_url(
+            project_id=str(report["project_id"]),
+            report_id=str(report["id"]),
+        )
+        if share_url:
+            return share_url
+    query = urlencode({"report": report["id"]})
     return f"{settings.frontend_base_url}/project-reports?{query}"
 
 
@@ -201,7 +208,7 @@ def _flex_message(report: dict) -> dict:
                         "action": {
                             "type": "uri",
                             "label": "View approved report",
-                            "uri": _report_url(report["id"]),
+                            "uri": _report_url(report),
                         },
                     }
                 ],
@@ -222,6 +229,19 @@ async def deliver_published_report(report: dict) -> str:
     job = daily_report_service.create_delivery_job(report=report)
     destination = daily_report_service.get_line_destination(report["project_id"])
     access_token = settings.line_customer_channel_access_token
+
+    if settings.customer_report_public_share_enabled:
+        share_link = daily_report_service.ensure_customer_share_link(report["project_id"])
+        if not share_link.get("enabled"):
+            error_detail = "ลิงก์รายงานสำหรับลูกค้าถูกปิดใช้งานในโครงการนี้"
+            daily_report_service.update_delivery_status(
+                report_id=report["id"],
+                job_id=job["id"],
+                delivery_status="NOT_CONFIGURED",
+                last_error="The customer report share link is disabled.",
+            )
+            _record_delivery_alert(report, error_detail)
+            return "NOT_CONFIGURED"
 
     if not access_token or not destination:
         error_detail = (

@@ -46,6 +46,11 @@ class Settings(BaseSettings):
         ge=1,
         alias="RATE_LIMIT_WEBHOOK_PER_MINUTE",
     )
+    rate_limit_public_report_per_minute: int = Field(
+        default=120,
+        ge=1,
+        alias="RATE_LIMIT_PUBLIC_REPORT_PER_MINUTE",
+    )
 
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/project-001",
@@ -109,6 +114,14 @@ class Settings(BaseSettings):
         alias="LINE_CUSTOMER_LIFF_ID",
     )
     frontend_base_url: str = Field(default="http://localhost:5173", alias="FRONTEND_BASE_URL")
+    customer_report_public_share_enabled: bool = Field(
+        default=False,
+        alias="CUSTOMER_REPORT_PUBLIC_SHARE_ENABLED",
+    )
+    customer_report_share_secret: str | None = Field(
+        default=None,
+        alias="CUSTOMER_REPORT_SHARE_SECRET",
+    )
 
     jwt_secret_key: str = Field(default="change-me", alias="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
@@ -255,6 +268,11 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.app_env.lower() == "development"
+
+    @property
+    def effective_customer_report_share_secret(self) -> str:
+        """Use a domain-separated secret when configured, with JWT as a safe migration fallback."""
+        return self.customer_report_share_secret or self.jwt_secret_key
 
 
 @lru_cache(maxsize=1)

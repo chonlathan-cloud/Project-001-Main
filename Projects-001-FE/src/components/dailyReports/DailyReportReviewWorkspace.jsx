@@ -41,6 +41,7 @@ import {
 import { formatReportDate } from './dailyReportUtils';
 import DailyReportSettingsDialog from './DailyReportSettingsDialog';
 import DailyReportEvidenceGallery from './DailyReportEvidenceGallery';
+import CustomerReportShareCard from './CustomerReportShareCard';
 
 function draftFromReport(report) {
   return {
@@ -323,6 +324,7 @@ export default function DailyReportReviewWorkspace() {
     try {
       const [updated, updatedDestination] = await Promise.all([
         updateDailyReportProjectSettings(settingsProjectId, {
+          reporting_company_name: projectSettings.reporting_company_name,
           enabled: projectSettings.enabled,
           timezone: projectSettings.timezone,
           working_days: projectSettings.working_days,
@@ -345,7 +347,7 @@ export default function DailyReportReviewWorkspace() {
         projectSettings: updated,
         lineDestination: updatedDestination,
       }));
-      setNotice({ tone: 'success', message: 'Daily Report deadline settings saved.' });
+      setNotice({ tone: 'success', message: 'Daily Report project settings saved.' });
       setShowSettings(false);
     } catch (error) {
       setNotice({ tone: 'danger', message: error.message || 'Unable to save project settings.' });
@@ -355,7 +357,7 @@ export default function DailyReportReviewWorkspace() {
   };
 
   const closeProjectSettings = () => {
-    if (settingsDirty && !window.confirm('Discard unsaved Deadline & LINE setting changes?')) return;
+    if (settingsDirty && !window.confirm('Discard unsaved project report setting changes?')) return;
     setShowSettings(false);
   };
 
@@ -687,6 +689,13 @@ export default function DailyReportReviewWorkspace() {
                   </button>
                 </section>
               ) : null}
+
+              <CustomerReportShareCard
+                projectId={report.project_id}
+                reportId={report.id}
+                refreshKey={`${report.published_version || 0}-${report.delivery_status || ''}`}
+                onNotice={setNotice}
+              />
 
               {report.status === 'PUBLISHED' ? (
                 <section className="dr-card dr-published-banner">

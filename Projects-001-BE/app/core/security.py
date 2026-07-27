@@ -18,6 +18,7 @@ from app.core.config import get_settings
 
 ACCESS_REQUEST_TOKEN_PURPOSE = "access_request"
 ACCESS_REQUEST_TOKEN_EXPIRE_MINUTES = 15
+CUSTOMER_REPORT_SHARE_TOKEN_PURPOSE = "customer_report_share"
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -255,4 +256,82 @@ def verify_access_request_token(token: str) -> dict[str, Any]:
             detail="Access request token has an unsupported provider.",
         )
 
+    return payload
+
+
+def issue_customer_report_share_token(*, project_id: str, token_version: int) -> str:
+    """Create a stable, revocable capability token for one project's public reports."""
+    settings = get_settings()
+    normalized_project_id = str(project_id or "").strip()
+    normalized_version = int(token_version)
+    if not normalized_project_id:
+        raise ValueError("Customer report share tokens require a project ID.")
+    if normalized_version < 1:
+        raise ValueError("Customer report share token versions must be positive.")
+
+    header = {"alg": "HS256", "typ": "RAYADEE-CUSTOMER-SHARE"}
+    payload = {
+        "purpose": CUSTOMER_REPORT_SHARE_TOKEN_PURPOSE,
+        "project_id": normalized_project_id,
+        "token_version": normalized_version,
+        "tenant_id": settings.identity_platform_tenant_id,
+        "app_env": settings.app_env,
+    }
+    encoded_header = _b64url_encode(_json_bytes(header))
+    encoded_payload = _b64url_encode(_json_bytes(payload))
+    signing_input = f"{encoded_header}.{encoded_payload}".encode("ascii")
+    signature = _sign(
+        signing_input,
+        settings.effective_customer_report_share_secret,
+    )
+    return f"{encoded_header}.{encoded_payload}.{signature}"
+
+
+def verify_customer_report_share_token(token: str) -> dict[str, Any]:
+    """Verify a customer report capability without creating a customer session."""
+    settings = get_settings()
+    try:
+        encoded_header, encoded_payload, signature = str(token or "").split(".", 2)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Shared report link not found.",
+        ) from exc
+
+    signing_input = f"{encoded_header}.{encoded_payload}".encode("ascii")
+    expected_signature = _sign(
+        signing_input,
+        settings.effective_customer_report_share_secret,
+    )
+    if not hmac.compare_digest(signature, expected_signature):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Shared report link not found.",
+        )
+
+    try:
+        payload = json.loads(_b64url_decode(encoded_payload).decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Shared report link not found.",
+        ) from exc
+
+    try:
+        token_version = int(payload.get("token_version") or 0)
+    except (TypeError, ValueError):
+        token_version = 0
+    valid = (
+        payload.get("purpose") == CUSTOMER_REPORT_SHARE_TOKEN_PURPOSE
+        and bool(str(payload.get("project_id") or "").strip())
+        and token_version >= 1
+        and str(payload.get("tenant_id") or "").strip()
+        == str(settings.identity_platform_tenant_id or "").strip()
+        and str(payload.get("app_env") or "").strip() == settings.app_env
+    )
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Shared report link not found.",
+        )
     return payload

@@ -182,4 +182,10 @@ def daily_report_rate_limit_rules(settings) -> list[RateLimitRule]:
             path_pattern=r"/api/v1/daily-reports/line/customer/webhook",
             requests_per_minute=settings.rate_limit_webhook_per_minute,
         ),
+        RateLimitRule.create(
+            name="public_customer_reports",
+            method="GET",
+            path_pattern=r"/api/v1/daily-reports/public/(?:reports(?:/[^/]+)?|media/[^/]+/signed-url)",
+            requests_per_minute=settings.rate_limit_public_report_per_minute,
+        ),
     ]

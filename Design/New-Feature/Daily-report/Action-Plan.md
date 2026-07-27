@@ -19,7 +19,7 @@ Create a controlled daily site-reporting workflow in which:
 3. An Admin or Owner reviews the evidence and customer-facing content.
 4. Only an Admin or Owner can approve and publish the report.
 5. The customer receives a LINE summary through `RYD PROJECT CUSTOMER`.
-6. The full report remains private inside the authenticated RAYADEE web app.
+6. The full report remains private behind a revocable project share link; customer login is not required.
 7. Published versions are immutable and auditable.
 
 The customer should receive one consolidated report per project and reporting date, not one message per subcontractor.
@@ -32,14 +32,14 @@ The customer should receive one consolidated report per project and reporting da
 - Owner has access to every project.
 - Admin access is limited to authorized projects.
 - Subcontractors can access only their assigned projects and their own submissions.
-- Customers can access only published reports for approved project memberships.
+- Anyone holding the active project share link can access only published customer-facing reports for that project.
 - Customer acknowledgement is not contractual approval or work acceptance.
 - Published reports are locked.
 - Corrections create a new version and preserve previous versions.
 - AI may prepare a draft but may never approve or publish.
 - RAYADEE is the system of record.
-- LINE OA is an authentication and messaging gateway.
-- The customer receives a LINE summary plus a link to the private RAYADEE report.
+- LINE OA is the customer messaging and share-link delivery gateway.
+- The customer receives a LINE summary plus a revocable, login-free RAYADEE report link.
 - Report deadlines and reminders are configurable per project.
 - Default operational timezone is `Asia/Bangkok`.
 - Automatic customer publishing is not allowed.
@@ -85,19 +85,19 @@ Purpose:
 
 - Send approved daily-report summaries to each project's LINE group
 - Open the customer LIFF page from the Rich Menu
-- Authenticate customer LINE identities
-- Allow customers to view published reports, acknowledge them, and ask questions
+- Deliver the project-scoped report capability link to the bound LINE group
+- Allow link holders to view published reports without creating an account
 
 Recommended LIFF entry:
 
 ```text
-https://liff.line.me/{CUSTOMER_LIFF_ID}/project-reports
+https://{FRONTEND_HOST}/shared/project-reports#access={PROJECT_SHARE_TOKEN}
 ```
 
 RAYADEE frontend route:
 
 ```text
-/project-reports
+/shared/project-reports
 ```
 
 ### 3.3 Internal Admin/Owner entry
@@ -253,16 +253,16 @@ line_destinations:manage
 | Approve and publish | No | Authorized projects | All projects | No |
 | Create correction version | No | Authorized projects | All projects | No |
 | Configure daily-report project settings | No | Authorized projects | All projects | No |
-| View published customer report | No by default | Authorized projects | All projects | Approved projects |
-| Acknowledge customer report | No | No | No | Yes |
-| Ask report-linked question | No | No | No | Yes |
+| View published customer report | No by default | Authorized projects | All projects | Active project share link |
+| Acknowledge customer report | No | No | No | No; discuss in LINE |
+| Ask report-linked question | No | No | No | No; discuss in LINE |
 
 ### 6.3 Account-approval authority
 
 | Access request | Admin | Owner |
 |---|---:|---:|
 | Subcontractor | Approve/reject | Approve/reject |
-| Customer | Approve/reject | Approve/reject |
+| Customer | Not required for report viewing | Not required for report viewing |
 | Admin/staff | No | Approve/reject |
 | Owner | No | Approve/reject |
 
@@ -1496,7 +1496,7 @@ Recommended Scheduler approach:
 - Create `project_memberships`.
 - Backfill valid active subcontractor assignments.
 - Add Admin reviewer memberships or explicit all-project policy.
-- Add customer memberships only through invitation/approval.
+- Preserve legacy customer memberships during rollout; new share-link viewing does not require membership.
 - Produce a dry-run summary before writing.
 - Make migration idempotent.
 
@@ -1626,9 +1626,9 @@ Do not log:
 - Multiple subcontractors → one consolidated report
 - Admin request changes → subcontractor resubmission
 - Admin approval → immutable version → delivery job
-- Customer OA push → authenticated report link
-- Customer without membership denied
-- Customer from another project denied
+- Customer OA push → login-free project report link
+- Missing, disabled, or rotated share token denied
+- Share token from another project denied
 - Failed LINE delivery retried without duplicate message
 - Late submission after publish creates no silent mutation
 

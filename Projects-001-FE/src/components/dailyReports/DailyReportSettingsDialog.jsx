@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  Building2,
   Clock3,
   LoaderCircle,
   MapPinned,
@@ -106,8 +107,8 @@ export default function DailyReportSettingsDialog({
         <header>
           <div>
             <span className="dr-eyebrow">OWNER CONFIGURATION</span>
-            <h2 id="dr-settings-title">Deadline &amp; LINE settings</h2>
-            <p>Configure the daily reporting schedule and the customer group for this project.</p>
+            <h2 id="dr-settings-title">Project report settings</h2>
+            <p>Configure the reporting company, schedule, and customer LINE group for this project.</p>
           </div>
           <button
             ref={closeButtonRef}
@@ -121,6 +122,31 @@ export default function DailyReportSettingsDialog({
         </header>
 
         <div className="dr-settings-dialog-body">
+          <section className="dr-settings-section">
+            <div className="dr-section-heading">
+              <Building2 />
+              <div>
+                <h3>บริษัทเจ้าของรายงาน</h3>
+                <p>ชื่อนี้จะแสดงใน Customer Report และถูกบันทึกไว้กับแต่ละฉบับที่เผยแพร่</p>
+              </div>
+            </div>
+            <div className="dr-form-grid">
+              <label className="dr-field full">
+                <span>ชื่อบริษัทที่ใช้ในรายงานลูกค้า</span>
+                <input
+                  value={settings?.reporting_company_name || ''}
+                  onChange={(event) => onSettingsChange({ reporting_company_name: event.target.value })}
+                  disabled={!settings}
+                  placeholder="เช่น บริษัท ระย้าดี จำกัด"
+                  autoComplete="organization"
+                  maxLength="200"
+                  required
+                />
+                <small>ค่าเริ่มต้นมาจาก Company ในโปรไฟล์ Owner/Admin และสามารถกำหนดแยกในแต่ละโครงการได้</small>
+              </label>
+            </div>
+          </section>
+
           <section className="dr-settings-section">
             <div className="dr-section-heading">
               <Clock3 />
@@ -277,7 +303,12 @@ export default function DailyReportSettingsDialog({
               type="button"
               className="dr-button primary"
               onClick={onSave}
-              disabled={!settings || busy === 'settings-save' || !dirty}
+              disabled={
+                !settings
+                || !String(settings.reporting_company_name || '').trim()
+                || busy === 'settings-save'
+                || !dirty
+              }
             >
               {busy === 'settings-save' ? <LoaderCircle className="spin" /> : <Save />} Save settings
             </button>

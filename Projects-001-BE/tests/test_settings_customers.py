@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.api.deps.auth import AuthenticatedUser
+from app.api.v1 import daily_reports as daily_reports_api
 from app.api.v1 import settings as settings_api
 from app.schemas.profile_schema import UpdateCustomerProfileRequest
 from app.services import daily_report_service, identity_service
@@ -131,6 +132,22 @@ class SettingsCustomerTests(unittest.TestCase):
         self.assertEqual(item.contact_name, "Narin Customer")
         self.assertEqual(item.first_name, "Narin")
         self.assertEqual(item.nickname, "Rin")
+
+    def test_daily_report_company_defaults_from_owner_admin_profile(self):
+        identity_service.upsert_admin(
+            email=self.owner.email or "",
+            display_name="Project Owner",
+            company="RAYADEE Construction Co., Ltd.",
+            role="owner",
+            roles=["owner"],
+            is_active=True,
+            granted_by=self.owner.email,
+        )
+
+        self.assertEqual(
+            daily_reports_api._staff_company_name(self.owner),
+            "RAYADEE Construction Co., Ltd.",
+        )
 
     def test_update_customer_replaces_projects_and_preserves_line_identity(self):
         customer = self._create_customer()
