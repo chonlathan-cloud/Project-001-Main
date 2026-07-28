@@ -1,0 +1,18 @@
+# Copy to mcp.deploy.demo. Values here are non-secret deployment selectors.
+MCP_ENVIRONMENT=demo
+MCP_SERVICE_NAME=projects-001-mcp
+MCP_IMAGE_NAME=projects-001-mcp
+MCP_SOURCE_DIR=Projects-001-MCP
+MCP_ENV_FILE=cloudrun-mcp.env.yaml
+MCP_SERVICE_ACCOUNT=projects-001-mcp-demo@project001-489710.iam.gserviceaccount.com
+MCP_BACKEND_SERVICE_NAME=projects-001-be
+MCP_CLOUDSQL_INSTANCE=project001-489710:asia-southeast1:project-001
+MCP_FIRESTORE_DATABASE_ID=(default)
+MCP_ALLOWED_BUCKETS=kyc_id_cards,temp_bills,perm_bills,project001-489710-work-inspection,project001-489710-daily-reports-demo
+MCP_RESOURCE_URL=https://replace-with-demo-mcp-service.example.invalid/mcp
+MCP_SECRET_ENV_VARS=
+MCP_RATE_LIMIT_PER_MINUTE=60
+MCP_MEMORY=512Mi
+MCP_CPU=1
+MCP_MIN_INSTANCES=0
+MCP_MAX_INSTANCES=5

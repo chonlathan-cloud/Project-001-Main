@@ -1,0 +1,1 @@
+"""Product MCP tool package."""

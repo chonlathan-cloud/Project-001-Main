@@ -9,6 +9,13 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 ADMIN_ROLE_VALUES = {"admin", "owner", "inspector"}
+MCP_PERMISSION_VALUES = {
+    "mcp_access",
+    "financial_data_read",
+    "sensitive_documents_read",
+    "infrastructure_read",
+    "audit_log_read",
+}
 
 
 def _normalize_admin_role(value: str | None, *, default: str = "admin") -> str:
@@ -34,6 +41,23 @@ def _normalize_admin_roles(value: list[str] | None, *, fallback: str = "admin") 
 
     fallback_role = _normalize_admin_role(fallback)
     return [fallback_role]
+
+
+def _normalize_mcp_permissions(value: list[str] | None) -> list[str]:
+    normalized = sorted({str(item or "").strip().lower() for item in value or []})
+    unknown = set(normalized) - MCP_PERMISSION_VALUES
+    if unknown:
+        raise ValueError(f"Unsupported MCP permissions: {', '.join(sorted(unknown))}.")
+    return normalized
+
+
+def _normalize_mcp_issuer(value: str | None) -> str | None:
+    cleaned = str(value or "").strip().rstrip("/")
+    if not cleaned:
+        return None
+    if not cleaned.startswith("https://"):
+        raise ValueError("mcp_oauth_issuer must use HTTPS.")
+    return cleaned
 
 
 class BankAccountInfo(BaseModel):
@@ -128,6 +152,11 @@ class AdminDirectoryItem(BaseModel):
     role: str = "admin"
     roles: list[str] = Field(default_factory=list)
     assigned_project_ids: list[str] = Field(default_factory=list)
+    external_mcp_enabled: bool = False
+    mcp_oauth_issuer: str | None = None
+    mcp_oauth_subject: str | None = None
+    mcp_permissions: list[str] = Field(default_factory=list)
+    mcp_all_projects_read: bool = False
     is_active: bool = True
     granted_by: str | None = None
     created_at: datetime | None = None
@@ -157,6 +186,11 @@ class UpsertAdminRequest(BaseModel):
     role: str = "admin"
     roles: list[str] | None = None
     assigned_project_ids: list[str] = Field(default_factory=list)
+    external_mcp_enabled: bool | None = None
+    mcp_oauth_issuer: str | None = None
+    mcp_oauth_subject: str | None = None
+    mcp_permissions: list[str] | None = None
+    mcp_all_projects_read: bool | None = None
     is_active: bool = True
 
     @field_validator("role", mode="before")
@@ -171,6 +205,18 @@ class UpsertAdminRequest(BaseModel):
             return None
         return _normalize_admin_roles(value)
 
+    @field_validator("mcp_permissions", mode="before")
+    @classmethod
+    def validate_mcp_permissions(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_mcp_permissions(value)
+
+    @field_validator("mcp_oauth_issuer", mode="before")
+    @classmethod
+    def validate_mcp_issuer(cls, value: str | None) -> str | None:
+        return _normalize_mcp_issuer(value)
+
 
 class UpdateAdminRequest(BaseModel):
     display_name: str | None = None
@@ -184,6 +230,11 @@ class UpdateAdminRequest(BaseModel):
     role: str | None = None
     roles: list[str] | None = None
     assigned_project_ids: list[str] | None = None
+    external_mcp_enabled: bool | None = None
+    mcp_oauth_issuer: str | None = None
+    mcp_oauth_subject: str | None = None
+    mcp_permissions: list[str] | None = None
+    mcp_all_projects_read: bool | None = None
     is_active: bool | None = None
 
     @field_validator("role", mode="before")
@@ -199,6 +250,18 @@ class UpdateAdminRequest(BaseModel):
         if value is None:
             return None
         return _normalize_admin_roles(value)
+
+    @field_validator("mcp_permissions", mode="before")
+    @classmethod
+    def validate_mcp_permissions(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_mcp_permissions(value)
+
+    @field_validator("mcp_oauth_issuer", mode="before")
+    @classmethod
+    def validate_mcp_issuer(cls, value: str | None) -> str | None:
+        return _normalize_mcp_issuer(value)
 
 
 class SessionUserPayload(BaseModel):

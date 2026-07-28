@@ -63,7 +63,6 @@ from app.services.identity_service import (
     reset_subcontractor_line_binding,
     subcontractor_doc_id_for_identity,
     update_admin,
-    update_access_request,
     update_customer_profile,
     update_subcontractor_profile,
     upsert_admin,
@@ -92,8 +91,15 @@ async def _profile_item(profile) -> SubcontractorProfileItem:
     return SubcontractorProfileItem(**payload)
 
 
-def _admin_item(entry) -> AdminDirectoryItem:
+def _admin_item(
+    entry,
+    *,
+    include_mcp_principal: bool = False,
+) -> AdminDirectoryItem:
     payload = asdict(entry)
+    if not include_mcp_principal:
+        payload["mcp_oauth_issuer"] = None
+        payload["mcp_oauth_subject"] = None
     payload["timezone"] = entry.time
     payload["assigned_project_ids"] = daily_report_service.list_membership_project_ids(
         principal_type="admin",
@@ -416,18 +422,26 @@ async def get_kyc_image(
 
 
 @router.get("/admins", response_model=StandardResponse[list[AdminDirectoryItem]])
-async def list_admins(_user: AuthenticatedUser = Depends(require_admin_user)):
+async def list_admins(user: AuthenticatedUser = Depends(require_admin_user)):
     return StandardResponse(
-        data=[_admin_item(entry) for entry in list_admin_directory_entries()]
+        data=[
+            _admin_item(entry, include_mcp_principal=user.has_role("owner"))
+            for entry in list_admin_directory_entries()
+        ]
     )
 
 
 @router.get("/admins/{admin_id}", response_model=StandardResponse[AdminDirectoryItem])
 async def get_admin_detail(
     admin_id: str,
-    _user: AuthenticatedUser = Depends(require_admin_user),
+    user: AuthenticatedUser = Depends(require_admin_user),
 ):
-    return StandardResponse(data=_admin_item(get_admin(admin_id)))
+    return StandardResponse(
+        data=_admin_item(
+            get_admin(admin_id),
+            include_mcp_principal=user.has_role("owner"),
+        )
+    )
 
 
 @router.post("/admins", response_model=StandardResponse[AdminDirectoryItem])
@@ -458,6 +472,11 @@ async def create_admin(
         ),
         role=request.role,
         roles=request.roles,
+        external_mcp_enabled=request.external_mcp_enabled,
+        mcp_oauth_issuer=request.mcp_oauth_issuer,
+        mcp_oauth_subject=request.mcp_oauth_subject,
+        mcp_permissions=request.mcp_permissions,
+        mcp_all_projects_read=request.mcp_all_projects_read,
         is_active=request.is_active,
         granted_by=user.email or user.subject,
     )
@@ -466,7 +485,7 @@ async def create_admin(
         project_ids=request.assigned_project_ids,
         actor_id=user.email or user.subject,
     )
-    return StandardResponse(data=_admin_item(entry))
+    return StandardResponse(data=_admin_item(entry, include_mcp_principal=True))
 
 
 @router.put("/admins/{admin_id}", response_model=StandardResponse[AdminDirectoryItem])
@@ -477,6 +496,15 @@ async def edit_admin(
     db: AsyncSession = Depends(get_db),
 ):
     updates = request.model_dump(exclude_none=True)
+    for nullable_mcp_field in {
+        "mcp_oauth_issuer",
+        "mcp_oauth_subject",
+        "mcp_permissions",
+    }:
+        if nullable_mcp_field in request.model_fields_set and getattr(
+            request, nullable_mcp_field
+        ) is None:
+            updates[nullable_mcp_field] = None
     assigned_project_ids = updates.pop("assigned_project_ids", None)
     if assigned_project_ids is not None:
         await _validate_project_ids(db, assigned_project_ids)
@@ -488,7 +516,7 @@ async def edit_admin(
             project_ids=assigned_project_ids,
             actor_id=user.email or user.subject,
         )
-    return StandardResponse(data=_admin_item(entry))
+    return StandardResponse(data=_admin_item(entry, include_mcp_principal=True))
 
 
 @router.get("/access-requests", response_model=StandardResponse[list[AccessRequestItem]])

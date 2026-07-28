@@ -20,6 +20,10 @@ cloudrun-frontend.build.env
 cloudrun-beta.env
 cloudrun-backend-beta.env.yaml
 cloudrun-frontend-beta.build.env
+mcp.deploy.demo
+mcp.deploy.beta
+cloudrun-mcp.env.yaml
+cloudrun-mcp-beta.env.yaml
 
 # Editor directories and files
 .vscode/*
@@ -37,6 +41,11 @@ node_modules/
 build/
 dist/
 coverage/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
 .DS_Store
 *.log
 .env*

@@ -51,6 +51,11 @@ class Settings(BaseSettings):
         ge=1,
         alias="RATE_LIMIT_PUBLIC_REPORT_PER_MINUTE",
     )
+    rate_limit_mcp_internal_per_minute: int = Field(
+        default=300,
+        ge=1,
+        alias="RATE_LIMIT_MCP_INTERNAL_PER_MINUTE",
+    )
 
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/project-001",
@@ -197,6 +202,21 @@ class Settings(BaseSettings):
 
     admin_email_domain: str | None = Field(default=None, alias="ADMIN_EMAIL_DOMAIN")
     admin_emails: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="ADMIN_EMAILS")
+    mcp_internal_enabled: bool = Field(default=False, alias="MCP_INTERNAL_ENABLED")
+    mcp_backend_audience: str | None = Field(default=None, alias="MCP_BACKEND_AUDIENCE")
+    mcp_allowed_service_accounts: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        alias="MCP_ALLOWED_SERVICE_ACCOUNTS",
+    )
+    mcp_allowed_client_ids: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        alias="MCP_ALLOWED_CLIENT_IDS",
+    )
+    mcp_allowed_roles: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["owner"],
+        alias="MCP_ALLOWED_ROLES",
+    )
+    mcp_cursor_secret: str | None = Field(default=None, alias="MCP_CURSOR_SECRET")
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -215,6 +235,28 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip().lower() for item in value.split(",") if item.strip()]
         return []
+
+    @field_validator(
+        "mcp_allowed_service_accounts",
+        "mcp_allowed_client_ids",
+        "mcp_allowed_roles",
+        mode="before",
+    )
+    @classmethod
+    def _parse_mcp_allowlists(cls, value: object) -> list[str]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return []
+
+    @field_validator("mcp_allowed_roles")
+    @classmethod
+    def _validate_mcp_allowed_roles(cls, value: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(item.strip().lower() for item in value if item.strip()))
+        if not normalized or any(item not in {"owner", "admin"} for item in normalized):
+            raise ValueError("MCP_ALLOWED_ROLES must contain only owner and/or admin.")
+        return normalized
 
     @field_validator("admin_email_domain", mode="before")
     @classmethod
@@ -265,6 +307,12 @@ class Settings(BaseSettings):
         cleaned = str(value).strip()
         return cleaned or None
 
+    @field_validator("mcp_backend_audience", mode="before")
+    @classmethod
+    def _normalize_mcp_backend_audience(cls, value: object) -> str | None:
+        cleaned = str(value or "").strip().rstrip("/")
+        return cleaned or None
+
     @property
     def is_development(self) -> bool:
         return self.app_env.lower() == "development"
@@ -273,6 +321,11 @@ class Settings(BaseSettings):
     def effective_customer_report_share_secret(self) -> str:
         """Use a domain-separated secret when configured, with JWT as a safe migration fallback."""
         return self.customer_report_share_secret or self.jwt_secret_key
+
+    @property
+    def effective_mcp_cursor_secret(self) -> str:
+        """Use a domain-separated secret when configured, with JWT as migration fallback."""
+        return self.mcp_cursor_secret or self.jwt_secret_key
 
 
 @lru_cache(maxsize=1)

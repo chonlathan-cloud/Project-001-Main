@@ -6,6 +6,8 @@ from itertools import count
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
+
 from app.api.deps.auth import AuthenticatedUser
 from app.api.v1 import daily_reports as daily_reports_api
 from app.api.v1 import settings as settings_api
@@ -148,6 +150,56 @@ class SettingsCustomerTests(unittest.TestCase):
             daily_reports_api._staff_company_name(self.owner),
             "RAYADEE Construction Co., Ltd.",
         )
+
+    def test_mcp_principal_binding_is_unique_revocable_and_owner_visible_only(self):
+        owner_entry = identity_service.upsert_admin(
+            email=self.owner.email or "",
+            display_name="Project Owner",
+            role="owner",
+            roles=["owner"],
+            external_mcp_enabled=True,
+            mcp_oauth_issuer="https://issuer.test/",
+            mcp_oauth_subject="oauth-owner-001",
+            mcp_permissions=["mcp_access"],
+            is_active=True,
+            granted_by=self.owner.email,
+        )
+
+        admin_view = settings_api._admin_item(owner_entry)
+        owner_view = settings_api._admin_item(
+            owner_entry,
+            include_mcp_principal=True,
+        )
+        self.assertIsNone(admin_view.mcp_oauth_issuer)
+        self.assertIsNone(admin_view.mcp_oauth_subject)
+        self.assertEqual(owner_view.mcp_oauth_issuer, "https://issuer.test")
+        self.assertEqual(owner_view.mcp_oauth_subject, "oauth-owner-001")
+
+        with self.assertRaises(HTTPException):
+            identity_service.upsert_admin(
+                email="second-admin@example.com",
+                display_name="Second Admin",
+                role="admin",
+                roles=["admin"],
+                external_mcp_enabled=True,
+                mcp_oauth_issuer="https://issuer.test",
+                mcp_oauth_subject="oauth-owner-001",
+                mcp_permissions=["mcp_access"],
+                is_active=True,
+                granted_by=self.owner.email,
+            )
+
+        revoked = identity_service.update_admin(
+            owner_entry.id,
+            updates={
+                "external_mcp_enabled": False,
+                "mcp_oauth_issuer": None,
+                "mcp_oauth_subject": None,
+            },
+        )
+        self.assertFalse(revoked.external_mcp_enabled)
+        self.assertIsNone(revoked.mcp_oauth_issuer)
+        self.assertIsNone(revoked.mcp_oauth_subject)
 
     def test_update_customer_replaces_projects_and_preserves_line_identity(self):
         customer = self._create_customer()

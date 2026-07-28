@@ -188,4 +188,10 @@ def daily_report_rate_limit_rules(settings) -> list[RateLimitRule]:
             path_pattern=r"/api/v1/daily-reports/public/(?:reports(?:/[^/]+)?|media/[^/]+/signed-url)",
             requests_per_minute=settings.rate_limit_public_report_per_minute,
         ),
+        RateLimitRule.create(
+            name="mcp_internal_reads",
+            method="POST",
+            path_pattern=r"/api/v1/internal/mcp/[^/]+(?:/[^/]+)*",
+            requests_per_minute=settings.rate_limit_mcp_internal_per_minute,
+        ),
     ]

@@ -358,6 +358,7 @@ class Phase8SecurityTests(unittest.TestCase):
             rate_limit_question_per_minute=10,
             rate_limit_webhook_per_minute=180,
             rate_limit_public_report_per_minute=120,
+            rate_limit_mcp_internal_per_minute=300,
         )
         rules = {rule.name: rule for rule in daily_report_rate_limit_rules(settings)}
 
@@ -384,6 +385,11 @@ class Phase8SecurityTests(unittest.TestCase):
         self.assertTrue(
             rules["public_customer_reports"].path_pattern.fullmatch(
                 "/api/v1/daily-reports/public/reports/report-1"
+            )
+        )
+        self.assertTrue(
+            rules["mcp_internal_reads"].path_pattern.fullmatch(
+                "/api/v1/internal/mcp/boq/versions:compare"
             )
         )
 

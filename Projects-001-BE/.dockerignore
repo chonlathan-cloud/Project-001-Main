@@ -4,11 +4,13 @@
 .env
 .env.*
 .venv
+venv
 __pycache__
 *.pyc
 *.pyo
 *.pyd
 .pytest_cache
+.ruff_cache
 .mypy_cache
 node_modules
 dist

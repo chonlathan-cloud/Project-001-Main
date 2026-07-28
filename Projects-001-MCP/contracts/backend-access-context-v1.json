@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://projects-001.example/contracts/mcp/backend-access-context-v1.json",
+  "title": "Backend MCP Access Context v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "subject",
+    "issuer",
+    "client_id",
+    "user_id",
+    "environment",
+    "active",
+    "external_mcp_enabled",
+    "role",
+    "permissions",
+    "all_projects_read",
+    "assigned_project_ids",
+    "authorization_revision",
+    "resolved_at"
+  ],
+  "properties": {
+    "contract_version": {"const": "1.0"},
+    "subject": {"type": "string", "minLength": 1, "maxLength": 255},
+    "issuer": {"type": "string", "format": "uri", "minLength": 8, "maxLength": 2048},
+    "client_id": {"type": "string", "minLength": 1, "maxLength": 255},
+    "user_id": {"type": "string", "minLength": 1, "maxLength": 255},
+    "environment": {"enum": ["demo", "beta"]},
+    "active": {"type": "boolean"},
+    "external_mcp_enabled": {"type": "boolean"},
+    "role": {"enum": ["owner", "admin", "inspector", "staff", "subcontractor", "customer", "pending"]},
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 32,
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}
+    },
+    "all_projects_read": {"type": "boolean"},
+    "assigned_project_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 1000,
+      "items": {"type": "string", "minLength": 1, "maxLength": 128}
+    },
+    "authorization_revision": {"type": "string", "minLength": 1, "maxLength": 128},
+    "resolved_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -28,6 +28,13 @@ CUSTOMER_ROLE = "customer"
 PENDING_ROLE = "pending"
 ADMIN_ROLES = {OWNER_ROLE, ADMIN_ROLE, INSPECTOR_ROLE}
 ADMIN_ACCESS_ROLES = {OWNER_ROLE, ADMIN_ROLE}
+MCP_PERMISSION_VALUES = {
+    "mcp_access",
+    "financial_data_read",
+    "sensitive_documents_read",
+    "infrastructure_read",
+    "audit_log_read",
+}
 ACCESS_REQUEST_STATUSES = {"pending", "approved", "rejected"}
 ACCESS_REQUEST_PROVIDERS = {"google", "line"}
 
@@ -52,6 +59,17 @@ def _normalize_project_ids(value: object) -> list[str]:
             normalized.append(cleaned)
             seen.add(cleaned)
     return normalized
+
+
+def _normalize_mcp_permissions(value: object) -> list[str]:
+    raw_values = value if isinstance(value, list | tuple | set) else []
+    return sorted(
+        {
+            str(item or "").strip().lower()
+            for item in raw_values
+            if str(item or "").strip().lower() in MCP_PERMISSION_VALUES
+        }
+    )
 
 
 def _normalize_email(value: str) -> str:
@@ -186,6 +204,11 @@ class AdminDirectoryEntry:
     profile_image_storage_key: str | None
     role: str
     roles: list[str]
+    external_mcp_enabled: bool
+    mcp_oauth_issuer: str | None
+    mcp_oauth_subject: str | None
+    mcp_permissions: list[str]
+    mcp_all_projects_read: bool
     is_active: bool
     granted_by: str | None
     created_at: datetime | None
@@ -290,6 +313,14 @@ def _admin_from_dict(doc_id: str, payload: dict[str, Any]) -> AdminDirectoryEntr
         # owners so old full-access admins do not silently lose permissions.
         role=primary_role,
         roles=roles,
+        external_mcp_enabled=bool(payload.get("external_mcp_enabled", False)),
+        mcp_oauth_issuer=(
+            _normalize_optional_text(payload.get("mcp_oauth_issuer")) or ""
+        ).rstrip("/")
+        or None,
+        mcp_oauth_subject=_normalize_optional_text(payload.get("mcp_oauth_subject")),
+        mcp_permissions=_normalize_mcp_permissions(payload.get("mcp_permissions")),
+        mcp_all_projects_read=bool(payload.get("mcp_all_projects_read", False)),
         is_active=bool(payload.get("is_active", True)),
         granted_by=_normalize_optional_text(payload.get("granted_by")),
         created_at=_datetime_value(payload.get("created_at")),
@@ -956,6 +987,58 @@ def get_admin_by_email(email: str) -> AdminDirectoryEntry | None:
     return _admin_from_dict(snapshot.id, snapshot.to_dict() or {})
 
 
+def get_admin_by_mcp_principal(*, issuer: str, subject: str) -> AdminDirectoryEntry | None:
+    normalized_issuer = str(issuer or "").strip().rstrip("/")
+    normalized_subject = str(subject or "").strip()
+    if not normalized_issuer or not normalized_subject:
+        return None
+    matches = [
+        entry
+        for entry in list_admins()
+        if (
+            entry.mcp_oauth_issuer == normalized_issuer
+            and entry.mcp_oauth_subject == normalized_subject
+        )
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _ensure_unique_mcp_principal(
+    *,
+    issuer: str | None,
+    subject: str | None,
+    exclude_admin_id: str | None = None,
+) -> None:
+    if not issuer or not subject:
+        return
+    for entry in list_admins():
+        if entry.id == exclude_admin_id:
+            continue
+        if entry.mcp_oauth_issuer == issuer and entry.mcp_oauth_subject == subject:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This MCP OAuth principal is already connected to another account.",
+            )
+
+
+def _ensure_valid_mcp_configuration(
+    *,
+    enabled: bool,
+    issuer: str | None,
+    subject: str | None,
+) -> None:
+    if bool(issuer) != bool(subject):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MCP OAuth issuer and subject must be configured or cleared together.",
+        )
+    if enabled and (not issuer or not subject):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="External MCP access requires a connected OAuth principal.",
+        )
+
+
 def get_admin(doc_id: str) -> AdminDirectoryEntry:
     client = _ensure_firestore()
     snapshot = client.collection(ADMINS_COLLECTION).document(doc_id).get()
@@ -1006,6 +1089,11 @@ def upsert_admin(
     bank_account: dict[str, str | None] | None = None,
     role: str = ADMIN_ROLE,
     roles: list[str] | None = None,
+    external_mcp_enabled: bool | None = None,
+    mcp_oauth_issuer: str | None = None,
+    mcp_oauth_subject: str | None = None,
+    mcp_permissions: list[str] | None = None,
+    mcp_all_projects_read: bool | None = None,
     is_active: bool,
     granted_by: str | None,
 ) -> AdminDirectoryEntry:
@@ -1025,6 +1113,40 @@ def upsert_admin(
         "granted_by": _normalize_optional_text(granted_by),
         "updated_at": now,
     }
+    if existing is None or external_mcp_enabled is not None:
+        payload["external_mcp_enabled"] = bool(external_mcp_enabled)
+    if existing is None or mcp_oauth_issuer is not None:
+        payload["mcp_oauth_issuer"] = (
+            _normalize_optional_text(mcp_oauth_issuer) or ""
+        ).rstrip("/") or None
+    if existing is None or mcp_oauth_subject is not None:
+        payload["mcp_oauth_subject"] = _normalize_optional_text(mcp_oauth_subject)
+    if existing is None or mcp_permissions is not None:
+        payload["mcp_permissions"] = _normalize_mcp_permissions(mcp_permissions)
+    if existing is None or mcp_all_projects_read is not None:
+        payload["mcp_all_projects_read"] = bool(mcp_all_projects_read)
+    effective_issuer = payload.get(
+        "mcp_oauth_issuer", existing.mcp_oauth_issuer if existing else None
+    )
+    effective_subject = payload.get(
+        "mcp_oauth_subject", existing.mcp_oauth_subject if existing else None
+    )
+    effective_enabled = bool(
+        payload.get(
+            "external_mcp_enabled",
+            existing.external_mcp_enabled if existing else False,
+        )
+    )
+    _ensure_valid_mcp_configuration(
+        enabled=effective_enabled,
+        issuer=effective_issuer,
+        subject=effective_subject,
+    )
+    _ensure_unique_mcp_principal(
+        issuer=effective_issuer,
+        subject=effective_subject,
+        exclude_admin_id=existing.id if existing else None,
+    )
     if contact_name is not None:
         payload["contact_name"] = _normalize_optional_text(contact_name)
     if phone is not None:
@@ -1095,6 +1217,34 @@ def update_admin(doc_id: str, *, updates: dict[str, Any]) -> AdminDirectoryEntry
         payload["role"] = _primary_role_for_roles(payload["roles"])
     if "is_active" in updates:
         payload["is_active"] = bool(updates["is_active"])
+    if "external_mcp_enabled" in updates:
+        payload["external_mcp_enabled"] = bool(updates["external_mcp_enabled"])
+    if "mcp_oauth_issuer" in updates:
+        payload["mcp_oauth_issuer"] = (
+            _normalize_optional_text(updates["mcp_oauth_issuer"]) or ""
+        ).rstrip("/") or None
+    if "mcp_oauth_subject" in updates:
+        payload["mcp_oauth_subject"] = _normalize_optional_text(updates["mcp_oauth_subject"])
+    if "mcp_permissions" in updates:
+        payload["mcp_permissions"] = _normalize_mcp_permissions(updates["mcp_permissions"])
+    if "mcp_all_projects_read" in updates:
+        payload["mcp_all_projects_read"] = bool(updates["mcp_all_projects_read"])
+
+    effective_issuer = payload.get("mcp_oauth_issuer", current.mcp_oauth_issuer)
+    effective_subject = payload.get("mcp_oauth_subject", current.mcp_oauth_subject)
+    effective_enabled = bool(
+        payload.get("external_mcp_enabled", current.external_mcp_enabled)
+    )
+    _ensure_valid_mcp_configuration(
+        enabled=effective_enabled,
+        issuer=effective_issuer,
+        subject=effective_subject,
+    )
+    _ensure_unique_mcp_principal(
+        issuer=effective_issuer,
+        subject=effective_subject,
+        exclude_admin_id=current.id,
+    )
 
     _ensure_can_remove_owner(current, payload)
     client.collection(ADMINS_COLLECTION).document(doc_id).set(payload, merge=True)

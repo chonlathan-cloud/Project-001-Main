@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://projects-001.example/contracts/mcp/tool-input-schemas-v1.json",
+  "schema_version": "1.0",
+  "$defs": {
+    "project_id": {"type": "string", "format": "uuid"},
+    "opaque_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._~-]+$"},
+    "cursor": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+    "short_limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "date": {"type": "string", "format": "date"},
+    "version": {"type": "string", "minLength": 1, "maxLength": 128},
+    "domain": {
+      "enum": [
+        "system_catalog",
+        "gcp_operations",
+        "projects_boq",
+        "finance_payments",
+        "users_access",
+        "inspection",
+        "daily_reports",
+        "gcs_files",
+        "dashboard_insights",
+        "history_audit"
+      ]
+    }
+  },
+  "tools": {
+    "get_system_catalog": {"type": "object", "additionalProperties": false, "properties": {}},
+    "describe_domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain"],
+      "properties": {"domain": {"$ref": "#/$defs/domain"}}
+    },
+    "search": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query"],
+      "properties": {
+        "query": {"type": "string", "minLength": 1, "maxLength": 500},
+        "domains": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"$ref": "#/$defs/domain"}},
+        "project_id": {"$ref": "#/$defs/project_id"},
+        "record_types": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 64}},
+        "date_from": {"$ref": "#/$defs/date"},
+        "date_to": {"$ref": "#/$defs/date"},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "limit": {"$ref": "#/$defs/short_limit"}
+      }
+    },
+    "fetch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference"],
+      "properties": {
+        "reference": {"type": "string", "minLength": 5, "maxLength": 512, "pattern": "^[a-z_]+:[a-z_]+:[A-Za-z0-9._~-]+$"},
+        "version": {"$ref": "#/$defs/version"},
+        "as_of": {"$ref": "#/$defs/timestamp"},
+        "max_content_chars": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 4000}
+      },
+      "not": {"required": ["version", "as_of"]}
+    },
+    "list_projects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 32}},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "limit": {"$ref": "#/$defs/limit"}
+      }
+    },
+    "get_project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}}
+    },
+    "get_project_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}, "as_of": {"$ref": "#/$defs/timestamp"}}
+    },
+    "get_boq_current": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}}
+    },
+    "list_boq_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}, "cursor": {"$ref": "#/$defs/cursor"}, "limit": {"$ref": "#/$defs/limit"}}
+    },
+    "get_boq_version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}, "version": {"$ref": "#/$defs/version"}, "as_of": {"$ref": "#/$defs/timestamp"}},
+      "oneOf": [{"required": ["version"]}, {"required": ["as_of"]}]
+    },
+    "compare_boq_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "version_a", "version_b"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}, "version_a": {"$ref": "#/$defs/version"}, "version_b": {"$ref": "#/$defs/version"}}
+    },
+    "get_project_financial_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}, "as_of": {"$ref": "#/$defs/timestamp"}, "fresh": {"type": "boolean", "default": true}}
+    },
+    "search_financial_records": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {"type": "string", "minLength": 1, "maxLength": 300},
+        "project_id": {"$ref": "#/$defs/project_id"},
+        "statuses": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 32}},
+        "record_types": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"enum": ["input_request", "payment", "installment", "transaction"]}},
+        "date_from": {"$ref": "#/$defs/date"},
+        "date_to": {"$ref": "#/$defs/date"},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "limit": {"$ref": "#/$defs/short_limit"}
+      }
+    },
+    "get_payment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payment_id"],
+      "properties": {"payment_id": {"$ref": "#/$defs/opaque_id"}}
+    },
+    "get_payment_document_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payment_id"],
+      "properties": {"payment_id": {"$ref": "#/$defs/opaque_id"}}
+    },
+    "get_current_access": {"type": "object", "additionalProperties": false, "properties": {}},
+    "list_project_access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}, "cursor": {"$ref": "#/$defs/cursor"}, "limit": {"$ref": "#/$defs/limit"}}
+    },
+    "get_user_access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_id"],
+      "properties": {"user_id": {"$ref": "#/$defs/opaque_id"}}
+    },
+    "list_inspection_items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": {"$ref": "#/$defs/project_id"},
+        "statuses": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 32}},
+        "severities": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 32}},
+        "due_before": {"$ref": "#/$defs/date"},
+        "overdue": {"type": "boolean"},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "limit": {"$ref": "#/$defs/short_limit"}
+      }
+    },
+    "get_inspection_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "item_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}, "item_id": {"$ref": "#/$defs/opaque_id"}}
+    },
+    "list_daily_reports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": {"$ref": "#/$defs/project_id"},
+        "date_from": {"$ref": "#/$defs/date"},
+        "date_to": {"$ref": "#/$defs/date"},
+        "statuses": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 32}},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "limit": {"$ref": "#/$defs/short_limit"}
+      }
+    },
+    "get_daily_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report_id"],
+      "properties": {"report_id": {"$ref": "#/$defs/opaque_id"}, "version": {"$ref": "#/$defs/version"}}
+    },
+    "list_daily_report_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report_id"],
+      "properties": {"report_id": {"$ref": "#/$defs/opaque_id"}, "cursor": {"$ref": "#/$defs/cursor"}, "limit": {"$ref": "#/$defs/limit"}}
+    },
+    "get_report_share_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}}
+    },
+    "search_documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {"type": "string", "minLength": 1, "maxLength": 300},
+        "project_id": {"$ref": "#/$defs/project_id"},
+        "content_types": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"enum": ["pdf", "image", "text", "audio", "video"]}},
+        "date_from": {"$ref": "#/$defs/date"},
+        "date_to": {"$ref": "#/$defs/date"},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10}
+      }
+    },
+    "get_document_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_id"],
+      "properties": {"document_id": {"$ref": "#/$defs/opaque_id"}, "version": {"$ref": "#/$defs/version"}}
+    },
+    "read_document_content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_id"],
+      "properties": {
+        "document_id": {"$ref": "#/$defs/opaque_id"},
+        "version": {"$ref": "#/$defs/version"},
+        "page": {"type": "integer", "minimum": 1, "maximum": 500},
+        "section": {"type": "string", "minLength": 1, "maxLength": 200},
+        "max_content_chars": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 4000}
+      }
+    },
+    "get_dashboard_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_ids": {"type": "array", "maxItems": 50, "uniqueItems": true, "items": {"$ref": "#/$defs/project_id"}},
+        "date_from": {"$ref": "#/$defs/date"},
+        "date_to": {"$ref": "#/$defs/date"},
+        "fresh": {"type": "boolean", "default": true}
+      }
+    },
+    "get_project_insights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/project_id"}, "date_from": {"$ref": "#/$defs/date"}, "date_to": {"$ref": "#/$defs/date"}}
+    },
+    "search_audit_events": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "date_from": {"$ref": "#/$defs/timestamp"},
+        "date_to": {"$ref": "#/$defs/timestamp"},
+        "tool_names": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}},
+        "decisions": {"type": "array", "maxItems": 4, "uniqueItems": true, "items": {"enum": ["allow", "deny", "error"]}},
+        "domain": {"$ref": "#/$defs/domain"},
+        "subject_id": {"$ref": "#/$defs/opaque_id"},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}
+      }
+    },
+    "get_audit_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id"],
+      "properties": {"event_id": {"$ref": "#/$defs/opaque_id"}}
+    },
+    "get_system_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"components": {"type": "array", "maxItems": 10, "uniqueItems": true, "items": {"enum": ["mcp", "backend", "cloud_sql", "firestore", "gcs", "oauth"]}}}
+    },
+    "get_gcp_resource_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"resource_types": {"type": "array", "maxItems": 6, "uniqueItems": true, "items": {"enum": ["cloud_run", "cloud_sql", "firestore", "gcs", "logging", "artifact_registry"]}}}
+    },
+    "get_cloud_run_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service_alias"],
+      "properties": {"service_alias": {"enum": ["frontend", "backend", "mcp"]}}
+    },
+    "search_application_errors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date_from", "date_to"],
+      "properties": {
+        "date_from": {"$ref": "#/$defs/timestamp"},
+        "date_to": {"$ref": "#/$defs/timestamp"},
+        "service_alias": {"enum": ["frontend", "backend", "mcp"]},
+        "workflow": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_~-]*$"},
+        "severities": {"type": "array", "maxItems": 5, "uniqueItems": true, "items": {"enum": ["WARNING", "ERROR", "CRITICAL", "ALERT", "EMERGENCY"]}},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}
+      }
+    },
+    "get_data_source_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"sources": {"type": "array", "maxItems": 5, "uniqueItems": true, "items": {"enum": ["backend", "cloud_sql", "firestore", "gcs", "oauth"]}}}
+    },
+    "get_processing_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow", "job_id"],
+      "properties": {"workflow": {"enum": ["boq_sync", "receipt_ocr", "daily_report_delivery", "flowaccount_sync"]}, "job_id": {"$ref": "#/$defs/opaque_id"}}
+    }
+  }
+}
+

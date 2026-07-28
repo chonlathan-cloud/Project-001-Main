@@ -21,6 +21,7 @@ from app.api.v1 import (
     insights,
     inspection,
     input_requests,
+    mcp_internal,
     profile,
     projects,
     settings,
@@ -75,6 +76,7 @@ app.include_router(settings.router, prefix=API_V1_PREFIX)
 app.include_router(chat.router, prefix=API_V1_PREFIX)
 app.include_router(daily_reports.router, prefix=API_V1_PREFIX)
 app.include_router(daily_reports.internal_router, prefix=API_V1_PREFIX)
+app.include_router(mcp_internal.router, prefix=API_V1_PREFIX)
 
 
 @app.get("/health", tags=["Health"])

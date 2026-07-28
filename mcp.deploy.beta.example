@@ -1,0 +1,18 @@
+# Copy to mcp.deploy.beta only after the Demo release gates pass.
+MCP_ENVIRONMENT=beta
+MCP_SERVICE_NAME=projects-001-mcp-beta
+MCP_IMAGE_NAME=projects-001-mcp
+MCP_SOURCE_DIR=Projects-001-MCP
+MCP_ENV_FILE=cloudrun-mcp-beta.env.yaml
+MCP_SERVICE_ACCOUNT=projects-001-mcp-beta@project001-489710.iam.gserviceaccount.com
+MCP_BACKEND_SERVICE_NAME=projects-001-be-beta
+MCP_CLOUDSQL_INSTANCE=project001-489710:asia-southeast1:project-001-beta
+MCP_FIRESTORE_DATABASE_ID=prod-beta
+MCP_ALLOWED_BUCKETS=kyc_id_cards-beta,temp_bills-beta,perm_bills-beta,project001-489710-work-inspection-beta,project001-489710-daily-reports-beta
+MCP_RESOURCE_URL=https://replace-with-beta-mcp-service.example.invalid/mcp
+MCP_SECRET_ENV_VARS=
+MCP_RATE_LIMIT_PER_MINUTE=60
+MCP_MEMORY=512Mi
+MCP_CPU=1
+MCP_MIN_INSTANCES=0
+MCP_MAX_INSTANCES=5
