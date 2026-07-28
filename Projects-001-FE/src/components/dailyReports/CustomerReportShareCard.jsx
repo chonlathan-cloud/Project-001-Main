@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Check,
   Copy,
   Link2,
   Link2Off,
@@ -12,6 +13,8 @@ import {
   getDailyReportShareLink,
   updateDailyReportShareLink,
 } from '../../api';
+
+const COPY_FEEDBACK_DURATION_MS = 2400;
 
 function reportScopedLink(linkUrl, reportId) {
   if (!linkUrl || !reportId) return linkUrl || '';
@@ -30,6 +33,7 @@ export default function CustomerReportShareCard({
   const [shareLink, setShareLink] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
+  const [copyState, setCopyState] = useState('idle');
   const currentLink = useMemo(
     () => reportScopedLink(shareLink?.link_url, reportId),
     [reportId, shareLink?.link_url],
@@ -38,6 +42,7 @@ export default function CustomerReportShareCard({
   useEffect(() => {
     if (!projectId) return undefined;
     let active = true;
+    setCopyState('idle');
     setLoading(true);
     getDailyReportShareLink(projectId)
       .then((item) => {
@@ -55,7 +60,17 @@ export default function CustomerReportShareCard({
     return () => { active = false; };
   }, [onNotice, projectId, refreshKey]);
 
+  useEffect(() => {
+    if (copyState === 'idle') return undefined;
+    const resetTimer = window.setTimeout(
+      () => setCopyState('idle'),
+      COPY_FEEDBACK_DURATION_MS,
+    );
+    return () => window.clearTimeout(resetTimer);
+  }, [copyState]);
+
   const updateLink = async ({ enabled, rotate = false }) => {
+    setCopyState('idle');
     setBusy(rotate ? 'rotate' : enabled ? 'enable' : 'disable');
     try {
       const updated = await updateDailyReportShareLink(projectId, { enabled, rotate });
@@ -79,13 +94,27 @@ export default function CustomerReportShareCard({
   };
 
   const copyLink = async () => {
+    setCopyState('idle');
+    setBusy('copy');
     try {
       await navigator.clipboard.writeText(currentLink);
+      setCopyState('copied');
       onNotice?.({ tone: 'success', message: 'Customer report link copied.' });
     } catch {
+      setCopyState('error');
       onNotice?.({ tone: 'danger', message: 'Unable to copy the link. Select and copy it manually.' });
+    } finally {
+      setBusy('');
     }
   };
+
+  const copyButtonLabel = busy === 'copy'
+    ? 'Copying…'
+    : copyState === 'copied'
+      ? 'Copied!'
+      : copyState === 'error'
+        ? 'Copy failed'
+        : 'Copy link';
 
   return (
     <section className="dr-card dr-share-card" aria-labelledby="customer-share-title">
@@ -109,8 +138,19 @@ export default function CustomerReportShareCard({
             <span>Report-specific link</span>
             <input value={currentLink} readOnly aria-label="Customer report share link" />
           </label>
-          <button type="button" className="dr-button primary" onClick={copyLink} disabled={!currentLink || Boolean(busy)}>
-            <Copy /> Copy link
+          <button
+            type="button"
+            className={`dr-button ${copyState === 'error' ? 'danger' : 'primary'} dr-share-copy-button${copyState === 'copied' ? ' is-copied' : ''}`}
+            onClick={copyLink}
+            disabled={!currentLink || Boolean(busy)}
+            aria-busy={busy === 'copy'}
+          >
+            {busy === 'copy'
+              ? <LoaderCircle className="spin" aria-hidden="true" />
+              : copyState === 'copied'
+                ? <Check aria-hidden="true" />
+                : <Copy aria-hidden="true" />}
+            <span aria-live="polite" aria-atomic="true">{copyButtonLabel}</span>
           </button>
         </div>
       ) : null}

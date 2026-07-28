@@ -1834,6 +1834,23 @@
   border-color: #4f6f64;
 }
 
+.dr-share-copy-button {
+  min-width: 112px;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
+}
+
+.dr-share-copy-button.is-copied,
+.dr-share-copy-button.is-copied:hover {
+  border-color: #2f7a55;
+  background: #2f7a55;
+  box-shadow: 0 0 0 3px rgba(47, 122, 85, 0.16);
+  color: #fff;
+}
+
 .dr-share-rollout-note {
   border: 1px solid #ead8a7;
   border-radius: 9px;
@@ -2986,6 +3003,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .dr-share-copy-button,
   .dr-customer-photos img,
   .dr-photo-lightbox-backdrop,
   .dr-photo-lightbox-stage img,

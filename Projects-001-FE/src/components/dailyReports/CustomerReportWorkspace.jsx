@@ -34,6 +34,7 @@ import {
   DailyReportNotice,
   DailyReportStatusBadge,
 } from './dailyReportUi';
+import { getPublishedPhotoMedia } from './customerReportMedia';
 import { formatReportDate } from './dailyReportUtils';
 import CustomerPhotoLightbox from './CustomerPhotoLightbox';
 
@@ -59,6 +60,10 @@ export default function CustomerReportWorkspace({
   const [notice, setNotice] = useState(null);
   const [accessError, setAccessError] = useState('');
   const selectedId = publicAccess ? selectedReportId : (searchParams.get('report') || '');
+  const publishedPhotoMedia = useMemo(
+    () => getPublishedPhotoMedia(report?.media),
+    [report],
+  );
   const selectReport = (reportId) => {
     if (publicAccess) {
       onSelectedReportChange?.(reportId);
@@ -67,7 +72,7 @@ export default function CustomerReportWorkspace({
     setSearchParams(reportId ? { report: reportId } : {});
   };
   const photos = useMemo(
-    () => (report?.media || [])
+    () => publishedPhotoMedia
       .map((media) => {
         const access = mediaUrls[media.id];
         const url = typeof access === 'string' ? access : access?.url;
@@ -84,7 +89,7 @@ export default function CustomerReportWorkspace({
         };
       })
       .filter((photo) => Boolean(photo.url)),
-    [mediaUrls, report],
+    [mediaUrls, publishedPhotoMedia],
   );
 
   useEffect(() => {
@@ -143,9 +148,9 @@ export default function CustomerReportWorkspace({
       .then(async (item) => {
         if (!active) return;
         setReport(item);
-        const photoMedia = (item.media || []).filter((media) => media.content_type?.startsWith('image/'));
+        const photoMedia = getPublishedPhotoMedia(item.media);
         const urlEntries = await Promise.all(
-          photoMedia.slice(0, 8).map(async (media) => {
+          photoMedia.map(async (media) => {
             try {
               const access = publicAccess
                 ? await getSharedDailyReportMediaUrl(shareToken, media.id)
@@ -339,7 +344,10 @@ export default function CustomerReportWorkspace({
 
               {photos.length > 0 ? (
                 <section className="dr-customer-photos">
-                  <div className="dr-inline-heading"><h2><Camera /> รูปภาพหน้างาน</h2><span>รูปประกอบรายงานที่อนุมัติแล้ว</span></div>
+                  <div className="dr-inline-heading">
+                    <h2><Camera /> รูปภาพหน้างาน</h2>
+                    <span>{publishedPhotoMedia.length} รูปที่อนุมัติแล้ว</span>
+                  </div>
                   <div>
                     {photos.map((photo, index) => (
                       <button
