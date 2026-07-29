@@ -11,8 +11,8 @@ The planning baseline remains immutable; implementation status is tracked here.
 | Phase 0 — contracts and ADRs | Complete | Auth0 compatibility spike proven in Demo; the temporary RFC 9207 response-issuer workaround is recorded in the release evidence |
 | Phase 1 — Demo foundation | Complete | Isolated IAM, deployment, OAuth, audit and rollback gates passed in Demo |
 | Phase 2 — Core Business Owner Pilot | Complete | All Demo gates passed, including MCP Inspector and direct Codex Owner flows |
-| Phase 3 — Finance and Document Gateway | Repository complete; Demo deployment pending | Seven public tools, eight Backend contracts, exact finance fixtures and document security tests pass locally |
-| Phases 4–7 | Not started | Follow the approved gates; no Phase 3 cloud promotion was performed |
+| Phase 3 — Finance and Document Gateway | Complete in Demo | Seven public tools and eight Backend contracts deployed; Owner, audit, privacy and latency gates passed |
+| Phases 4–7 | Not started | Follow the approved gates; Beta remains unchanged |
 
 ## Phase 0 artifacts
 
@@ -34,6 +34,7 @@ The planning baseline remains immutable; implementation status is tracked here.
   `Projects-001-MCP/tests/evals/phase3_evaluator.py`
 - [Demo release evidence](phase2-demo-release-evidence.md)
 - [Phase 3 repository evidence](phase3-repository-evidence.md)
+- [Phase 3 Demo release evidence](phase3-demo-release-evidence.md)
 
 ## Guardrails
 
@@ -64,5 +65,5 @@ The planning baseline remains immutable; implementation status is tracked here.
 - `deploy_mcp.sh` is syntax-valid and stops before cloud operations when the
   required environment-specific configuration is absent.
 
-No Cloud resources were created or changed as part of repository
-implementation.
+Repository verification is supplemented by the environment-specific release
+evidence above. Phase 3 was promoted only to Demo; Beta was not changed.
