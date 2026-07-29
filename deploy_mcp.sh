@@ -276,13 +276,10 @@ IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/${MCP
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 
 previous_revision="$(
-  gcloud run revisions list \
-    --service "${MCP_SERVICE_NAME}" \
+  gcloud run services describe "${MCP_SERVICE_NAME}" \
     --project "${GCP_PROJECT_ID}" \
     --region "${GCP_REGION}" \
-    --sort-by='~metadata.creationTimestamp' \
-    --limit=1 \
-    --format='value(metadata.name)' 2>/dev/null || true
+    --format='value(status.latestReadyRevisionName)' 2>/dev/null || true
 )"
 
 echo "Building and pushing ${IMAGE_URI}"
@@ -314,6 +311,20 @@ fi
 
 gcloud "${deploy_args[@]}"
 
+deployed_revision="$(
+  gcloud run services describe "${MCP_SERVICE_NAME}" \
+    --project "${GCP_PROJECT_ID}" \
+    --region "${GCP_REGION}" \
+    --format='value(status.latestCreatedRevisionName)'
+)"
+[[ -n "${deployed_revision}" ]] || fail "Cloud Run did not report a created revision"
+
+gcloud run services update-traffic "${MCP_SERVICE_NAME}" \
+  --project "${GCP_PROJECT_ID}" \
+  --region "${GCP_REGION}" \
+  --to-revisions="${deployed_revision}=100" \
+  --quiet
+
 service_url="$(
   gcloud run services describe "${MCP_SERVICE_NAME}" \
     --project "${GCP_PROJECT_ID}" \
@@ -342,6 +353,8 @@ revision="$(
     --region "${GCP_REGION}" \
     --format='value(status.latestReadyRevisionName)'
 )"
+[[ "${revision}" == "${deployed_revision}" ]] || fail \
+  "deployed revision did not become the ready revision"
 
 echo "MCP deployed: ${service_url}/mcp"
 echo "Ready revision: ${revision}"
