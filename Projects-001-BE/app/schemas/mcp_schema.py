@@ -125,3 +125,71 @@ class McpProjectAccessRequest(McpProjectRequest):
 
 class McpUserAccessRequest(McpPrincipalRequest):
     user_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._~-]+$")
+
+
+class McpProjectFinancialSummaryRequest(McpProjectRequest):
+    as_of: datetime | None = None
+    fresh: bool = True
+
+
+class McpFinancialSearchRequest(McpPrincipalRequest):
+    query: str | None = Field(default=None, min_length=1, max_length=300)
+    project_id: UUID | None = None
+    statuses: list[str] = Field(default_factory=list, max_length=20)
+    record_types: list[
+        Literal["input_request", "payment", "installment", "transaction"]
+    ] = Field(default_factory=list, max_length=10)
+    date_from: date | None = None
+    date_to: date | None = None
+    cursor: str | None = Field(default=None, max_length=1024)
+    limit: int = Field(default=20, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> McpFinancialSearchRequest:
+        if self.date_from and self.date_to:
+            if self.date_from > self.date_to:
+                raise ValueError("date_from must not be after date_to.")
+            if (self.date_to - self.date_from).days > 366:
+                raise ValueError("Financial search date range cannot exceed 366 days.")
+        return self
+
+
+class McpPaymentRequest(McpPrincipalRequest):
+    payment_id: UUID
+
+
+class McpDocumentSearchRequest(McpPrincipalRequest):
+    query: str | None = Field(default=None, min_length=1, max_length=300)
+    project_id: UUID | None = None
+    content_types: list[Literal["pdf", "image", "text", "audio", "video"]] = Field(
+        default_factory=list,
+        max_length=10,
+    )
+    date_from: date | None = None
+    date_to: date | None = None
+    cursor: str | None = Field(default=None, max_length=1024)
+    limit: int = Field(default=10, ge=1, le=25)
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> McpDocumentSearchRequest:
+        if self.date_from and self.date_to:
+            if self.date_from > self.date_to:
+                raise ValueError("date_from must not be after date_to.")
+            if (self.date_to - self.date_from).days > 366:
+                raise ValueError("Document search date range cannot exceed 366 days.")
+        return self
+
+
+class McpDocumentRequest(McpPrincipalRequest):
+    document_id: str = Field(
+        min_length=5,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )
+    version: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class McpDocumentContentRequest(McpDocumentRequest):
+    page: int | None = Field(default=None, ge=1, le=500)
+    section: str | None = Field(default=None, min_length=1, max_length=200)
+    max_content_chars: int = Field(default=4000, ge=1, le=20000)

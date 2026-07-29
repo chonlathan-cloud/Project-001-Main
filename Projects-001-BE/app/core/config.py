@@ -217,6 +217,30 @@ class Settings(BaseSettings):
         alias="MCP_ALLOWED_ROLES",
     )
     mcp_cursor_secret: str | None = Field(default=None, alias="MCP_CURSOR_SECRET")
+    mcp_document_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1,
+        le=50 * 1024 * 1024,
+        alias="MCP_DOCUMENT_MAX_BYTES",
+    )
+    mcp_document_max_pages: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        alias="MCP_DOCUMENT_MAX_PAGES",
+    )
+    mcp_document_max_chars: int = Field(
+        default=20_000,
+        ge=1,
+        le=100_000,
+        alias="MCP_DOCUMENT_MAX_CHARS",
+    )
+    mcp_document_scan_limit: int = Field(
+        default=250,
+        ge=25,
+        le=1000,
+        alias="MCP_DOCUMENT_SCAN_LIMIT",
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod

@@ -3,7 +3,7 @@
 Standalone, read-only Product MCP service for Projects-001. The service provides
 a Streamable HTTP `/mcp` endpoint, OAuth resource-server validation, per-call
 Product policy resolution, common envelopes, separated audit telemetry, and the
-Phase 2 Core Business Owner Pilot tools.
+Phase 2 Core Business Owner Pilot and Phase 3 Finance/Document Gateway tools.
 
 ## Current scope
 
@@ -23,6 +23,13 @@ Implemented tools:
 - `compare_boq_versions`
 - `list_project_access`
 - `get_user_access`
+- `get_project_financial_summary`
+- `search_financial_records`
+- `get_payment`
+- `get_payment_document_status`
+- `search_documents`
+- `get_document_metadata`
+- `read_document_content`
 
 They require a valid OAuth access token and a successful response from the
 service-authenticated Backend contracts. The MCP forwards only the verified OAuth
@@ -54,12 +61,13 @@ before attempting authenticated calls.
 ruff check app tests
 pytest
 python -m tests.evals.phase2_evaluator
+python -m tests.evals.phase3_evaluator
 docker build --tag projects-001-mcp:local .
 ```
 
-The evaluator reports the Phase 2 Core Golden score and exact BOQ fixture gate
-from the versioned `demo-sanitized` dataset. Real-client OAuth and tool-selection
-evidence remains a separate release gate.
+The evaluators report the Phase 2 Core Golden/BOQ gate and the Phase 3 exact
+Finance/Document security gate from the versioned `demo-sanitized` dataset.
+Real-client Phase 3 tool-selection evidence remains a separate release gate.
 
 Deployment is intentionally separate from the Backend lifecycle. From the
 repository root, copy the matching `mcp.deploy.*.example` and
@@ -73,6 +81,10 @@ deployment has been explicitly approved.
 - Asymmetric OAuth JWT verification with issuer, audience/resource, expiry,
   environment and scope checks.
 - Product authorization is re-resolved for each tool call.
+- Finance reads require Product `financial_data_read` for Admins; sensitive
+  document bodies require `sensitive_documents_read` and mandatory audit.
+- Document content is bounded, credential-redacted and explicitly labeled as
+  untrusted; no GCS path or signed URL is returned.
 - Owner-only rollout by default; future Admin access needs both rollout inclusion
   and explicit `mcp_access`.
 - No environment input, generic query/path tool or business write.

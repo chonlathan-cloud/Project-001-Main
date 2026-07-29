@@ -663,6 +663,27 @@ async def download_storage_key_bytes(storage_key: str) -> bytes:
     return await asyncio.to_thread(_download_storage_key_bytes_sync, storage_key)
 
 
+def _storage_key_metadata_sync(storage_key: str) -> dict[str, object]:
+    bucket_name, object_name = _parse_gs_storage_key(storage_key)
+    client = _require_storage_client()
+    blob = client.bucket(bucket_name).blob(object_name)
+    if not blob.exists(client):
+        raise FileNotFoundError("Stored document was not found.")
+    blob.reload(client)
+    return {
+        "size_bytes": int(blob.size or 0),
+        "content_type": blob.content_type,
+        "updated_at": blob.updated,
+        "generation": str(blob.generation) if blob.generation is not None else None,
+    }
+
+
+async def get_storage_key_metadata(storage_key: str) -> dict[str, object]:
+    """Return bounded object metadata without exposing its bucket or object name."""
+
+    return await asyncio.to_thread(_storage_key_metadata_sync, storage_key)
+
+
 def _list_temp_receipt_objects_sync() -> list[dict[str, object]]:
     bucket_name = get_default_bucket_name()
     client = _require_storage_client()

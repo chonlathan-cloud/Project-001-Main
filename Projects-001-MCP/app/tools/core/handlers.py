@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime
 from typing import Annotated, Any
 from uuid import UUID
@@ -38,6 +39,54 @@ Cursor = Annotated[str | None, Field(max_length=1024)]
 ProjectLimit = Annotated[int, Field(ge=1, le=100)]
 SearchLimit = Annotated[int, Field(ge=1, le=50)]
 Version = Annotated[str, Field(min_length=1, max_length=128)]
+
+
+def _search_definition(
+    registry: ToolRegistry,
+    domains: list[DomainName] | None,
+):
+    definition = registry.tool("search")
+    if DomainName.FINANCE_PAYMENTS in set(domains or []):
+        return replace(
+            definition,
+            domain=DomainName.FINANCE_PAYMENTS,
+            required_permissions=definition.required_permissions
+            | frozenset({"financial_data_read"}),
+            sensitive=True,
+        )
+    return definition
+
+
+def _fetch_definition(
+    registry: ToolRegistry,
+    reference: str,
+):
+    definition = registry.tool("fetch")
+    domain_name, record_type, opaque_id = reference.split(":", 2)
+    project_id = None
+    if domain_name == DomainName.FINANCE_PAYMENTS.value:
+        definition = replace(
+            definition,
+            domain=DomainName.FINANCE_PAYMENTS,
+            required_permissions=definition.required_permissions
+            | frozenset({"financial_data_read"}),
+            sensitive=True,
+        )
+    elif domain_name == DomainName.USERS_ACCESS.value:
+        definition = replace(
+            definition,
+            domain=DomainName.USERS_ACCESS,
+            sensitive=True,
+        )
+    elif domain_name == DomainName.GCS_FILES.value and record_type == "document":
+        definition = replace(definition, domain=DomainName.GCS_FILES)
+        parts = opaque_id.split(".", 2)
+        if len(parts) == 3:
+            try:
+                project_id = str(UUID(parts[1]))
+            except ValueError:
+                pass
+    return definition, project_id
 
 
 async def _read(
@@ -157,7 +206,7 @@ def register_core_tools(
             )
 
         return await runtime.execute(
-            registry.tool("search"),
+            _search_definition(registry, domains),
             operation,
             project_id=str(project_id) if project_id else None,
             target_record_ids=[str(project_id)] if project_id else None,
@@ -208,9 +257,11 @@ def register_core_tools(
                 version=version_data.get("version_id"),
             )
 
+        definition, project_id = _fetch_definition(registry, reference)
         return await runtime.execute(
-            registry.tool("fetch"),
+            definition,
             operation,
+            project_id=project_id,
             target_record_ids=[reference],
         )
 

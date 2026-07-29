@@ -15,16 +15,23 @@ from app.schemas.mcp_schema import (
     McpBOQVersionRequest,
     McpBOQVersionsRequest,
     McpFetchRequest,
+    McpDocumentContentRequest,
+    McpDocumentRequest,
+    McpDocumentSearchRequest,
+    McpFinancialSearchRequest,
+    McpPaymentRequest,
     McpPrincipalRequest,
     McpProjectAccessRequest,
     McpProjectListRequest,
     McpProjectRequest,
     McpProjectSummaryRequest,
+    McpProjectFinancialSummaryRequest,
     McpSearchRequest,
     McpUserAccessRequest,
 )
 from app.schemas.responses import StandardResponse
 from app.services import mcp_read_service
+from app.services import mcp_finance_document_service
 from app.services.mcp_access_service import resolve_mcp_access
 
 router = APIRouter(prefix="/internal/mcp", tags=["Internal Product MCP"])
@@ -155,3 +162,87 @@ async def get_user_access(
     _caller: ServicePrincipal = Depends(require_mcp_service),
 ) -> StandardResponse[dict]:
     return await _read(lambda: mcp_read_service.get_user_access(request))
+
+
+@router.post("/finance/projects:summary", response_model=StandardResponse[dict])
+async def get_project_financial_summary(
+    request: McpProjectFinancialSummaryRequest,
+    _caller: ServicePrincipal = Depends(require_mcp_service),
+    db: AsyncSession = Depends(get_db),
+) -> StandardResponse[dict]:
+    return await _read(
+        lambda: mcp_finance_document_service.get_project_financial_summary(db, request)
+    )
+
+
+@router.post("/finance/records:search", response_model=StandardResponse[dict])
+async def search_financial_records(
+    request: McpFinancialSearchRequest,
+    _caller: ServicePrincipal = Depends(require_mcp_service),
+    db: AsyncSession = Depends(get_db),
+) -> StandardResponse[dict]:
+    return await _read(
+        lambda: mcp_finance_document_service.search_financial_records(db, request)
+    )
+
+
+@router.post("/payments:get", response_model=StandardResponse[dict])
+async def get_payment(
+    request: McpPaymentRequest,
+    _caller: ServicePrincipal = Depends(require_mcp_service),
+    db: AsyncSession = Depends(get_db),
+) -> StandardResponse[dict]:
+    return await _read(lambda: mcp_finance_document_service.get_payment(db, request))
+
+
+@router.post("/payments/document-status:get", response_model=StandardResponse[dict])
+async def get_payment_document_status(
+    request: McpPaymentRequest,
+    _caller: ServicePrincipal = Depends(require_mcp_service),
+    db: AsyncSession = Depends(get_db),
+) -> StandardResponse[dict]:
+    return await _read(
+        lambda: mcp_finance_document_service.get_payment_document_status(db, request)
+    )
+
+
+@router.post("/documents:search", response_model=StandardResponse[dict])
+async def search_documents(
+    request: McpDocumentSearchRequest,
+    _caller: ServicePrincipal = Depends(require_mcp_service),
+    db: AsyncSession = Depends(get_db),
+) -> StandardResponse[dict]:
+    return await _read(lambda: mcp_finance_document_service.search_documents(db, request))
+
+
+@router.post("/documents/metadata:get", response_model=StandardResponse[dict])
+async def get_document_metadata(
+    request: McpDocumentRequest,
+    _caller: ServicePrincipal = Depends(require_mcp_service),
+    db: AsyncSession = Depends(get_db),
+) -> StandardResponse[dict]:
+    return await _read(
+        lambda: mcp_finance_document_service.get_document_metadata(db, request)
+    )
+
+
+@router.post("/documents/content:read", response_model=StandardResponse[dict])
+async def read_document_content(
+    request: McpDocumentContentRequest,
+    _caller: ServicePrincipal = Depends(require_mcp_service),
+    db: AsyncSession = Depends(get_db),
+) -> StandardResponse[dict]:
+    return await _read(
+        lambda: mcp_finance_document_service.read_document_content(db, request)
+    )
+
+
+@router.post("/daily-reports/share-status:get", response_model=StandardResponse[dict])
+async def get_report_share_status(
+    request: McpProjectRequest,
+    _caller: ServicePrincipal = Depends(require_mcp_service),
+    db: AsyncSession = Depends(get_db),
+) -> StandardResponse[dict]:
+    return await _read(
+        lambda: mcp_finance_document_service.get_report_share_status(db, request)
+    )

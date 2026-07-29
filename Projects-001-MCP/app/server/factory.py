@@ -21,9 +21,11 @@ from app.auth.oidc import OidcJwtTokenVerifier
 from app.config.settings import Settings
 from app.policy.client import BackendPolicyClient, PolicyClient
 from app.server.request_context import RequestIdMiddleware
+from app.server.strict_fastmcp import ClosedInputFastMCP
 from app.tools.access.handlers import register_access_tools
 from app.tools.core.handlers import register_core_tools
 from app.tools.discovery.handlers import register_discovery_tools
+from app.tools.finance_documents.handlers import register_finance_document_tools
 from app.tools.registry import ToolRegistry
 from app.tools.runtime import ToolRuntime
 
@@ -42,7 +44,7 @@ def create_mcp_server(
     audit = audit_emitter or StructuredAuditEmitter(settings)
     backend = backend_read_client or BackendReadClient(settings)
 
-    mcp = FastMCP(
+    mcp = ClosedInputFastMCP(
         name="Projects-001 Product MCP",
         instructions=(
             "Read-only access to authorized Projects-001 business and operational data. "
@@ -70,6 +72,7 @@ def create_mcp_server(
     register_discovery_tools(mcp, runtime, registry)
     register_access_tools(mcp, runtime, registry)
     register_core_tools(mcp, runtime, registry, backend)
+    register_finance_document_tools(mcp, runtime, registry, backend)
 
     @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
     async def health(_request: Request) -> JSONResponse:

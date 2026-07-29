@@ -117,6 +117,7 @@ def _authorize(
     request: McpPrincipalRequest,
     *,
     project_id: str | None = None,
+    required_permissions: frozenset[str] = frozenset(),
     settings: Settings | None = None,
 ) -> McpAccessContext:
     access = resolve_mcp_access(request, settings=settings)
@@ -125,6 +126,10 @@ def _authorize(
         or not access.external_mcp_enabled
         or access.role not in {"owner", "admin"}
         or (access.role == "admin" and "mcp_access" not in access.permissions)
+    ):
+        raise McpNotFoundOrForbidden
+    if access.role != "owner" and not required_permissions.issubset(
+        set(access.permissions)
     ):
         raise McpNotFoundOrForbidden
     if (
@@ -891,6 +896,16 @@ async def search(
                 }
                 for item, project_name in boq_rows
             )
+    if domains.intersection({"finance_payments", "gcs_files"}):
+        from app.services.mcp_finance_document_service import search_phase3_hits
+
+        hits.extend(
+            await search_phase3_hits(
+                db,
+                request,
+                settings=app_settings,
+            )
+        )
     hits.sort(key=lambda item: (item["title"].lower(), item["reference"]))
     page = hits[offset : offset + request.limit]
     has_more = offset + len(page) < len(hits)
@@ -988,4 +1003,14 @@ async def fetch(
             McpUserAccessRequest(**principal, user_id=opaque_id),
             settings=settings,
         )
+    if domain in {"finance_payments", "gcs_files"}:
+        from app.services.mcp_finance_document_service import fetch_phase3
+
+        result = await fetch_phase3(
+            db,
+            request,
+            settings=settings or get_settings(),
+        )
+        if result is not None:
+            return result
     raise McpNotFoundOrForbidden

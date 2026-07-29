@@ -997,6 +997,39 @@ def list_media(
     ]
 
 
+def list_media_for_mcp(
+    *,
+    project_ids: set[str] | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Bound daily-report media metadata before MCP ranking or delivery."""
+
+    bounded_limit = max(1, min(int(limit), 1000))
+    collection = _client().collection(MEDIA_COLLECTION)
+    snapshots: list[Any] = []
+    if project_ids is None:
+        snapshots = list(collection.limit(bounded_limit).stream())
+    else:
+        for project_id in sorted(project_ids):
+            remaining = bounded_limit - len(snapshots)
+            if remaining <= 0:
+                break
+            snapshots.extend(
+                collection.where("project_id", "==", project_id)
+                .limit(remaining)
+                .stream()
+            )
+    items = [_public(snapshot) for snapshot in snapshots]
+    return sorted(
+        items,
+        key=lambda item: (
+            _sort_datetime(item.get("created_at")),
+            _clean_text(item.get("id")),
+        ),
+        reverse=True,
+    )[:bounded_limit]
+
+
 def record_supplemental_media(
     *,
     media_id: str,

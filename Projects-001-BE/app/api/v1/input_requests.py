@@ -372,6 +372,7 @@ def _serialize_input_request(item: InputRequest, project_name: str) -> InputRequ
         receipt_file_name=item.receipt_file_name,
         receipt_content_type=item.receipt_content_type,
         receipt_storage_key=item.receipt_storage_key,
+        external_ai_blocked=bool(item.external_ai_blocked),
         ocr_raw_json=item.ocr_raw_json,
         ocr_low_confidence_fields=item.ocr_low_confidence_fields or [],
         is_duplicate_flag=_duplicate_flag_value(item.is_duplicate_flag),
@@ -1692,6 +1693,7 @@ async def update_admin_input_request(
             "vendor_branch",
             "vendor_address",
             "receipt_no",
+            "external_ai_blocked",
         }
         is_flowaccount_safe_update = not has_line_item_updates and update_field_names <= flowaccount_safe_update_fields
 

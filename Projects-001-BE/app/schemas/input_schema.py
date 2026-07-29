@@ -223,6 +223,7 @@ class InputRequestCreate(BaseModel):
     receipt_file_name: str | None = None
     receipt_content_type: str | None = None
     receipt_storage_key: str | None = None
+    external_ai_blocked: bool = False
     ocr_raw_json: dict | None = None
     ocr_low_confidence_fields: list[str] = Field(default_factory=list)
 
@@ -547,6 +548,7 @@ class InputRequestAdminUpdate(BaseModel):
     payment_reference: str | None = None
     amount: float | None = Field(default=None, gt=0)
     line_items: list[InputRequestLineItemPayload] | None = None
+    external_ai_blocked: bool | None = None
 
     @field_validator("requester_name")
     @classmethod

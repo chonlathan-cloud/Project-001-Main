@@ -64,6 +64,7 @@ class InputRequest(Base):
     receipt_file_name = Column(String, nullable=True)
     receipt_content_type = Column(String, nullable=True)
     receipt_storage_key = Column(String, nullable=True)
+    external_ai_blocked = Column(Boolean, nullable=False, default=False)
     ocr_raw_json = Column(JSON, nullable=True)
     ocr_low_confidence_fields = Column(JSON, nullable=True)
     is_duplicate_flag = Column(Boolean, nullable=False, default=False)

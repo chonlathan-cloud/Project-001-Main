@@ -4,9 +4,10 @@
 contract. It does not mean the current public endpoint is safe to call unchanged.
 All backend routes below are under `/api/v1`.
 
-## Phase 2 implementation status
+## Phase 3 implementation status
 
-The Core Pilot contracts are now implemented under `/internal/mcp`:
+The Core Pilot plus Finance and Document Gateway contracts are implemented under
+`/internal/mcp`:
 
 | Capability | Backend contract |
 |---|---|
@@ -15,10 +16,14 @@ The Core Pilot contracts are now implemented under `/internal/mcp`:
 | Projects | `POST /internal/mcp/projects:list`, `projects:get`, `projects:summary` |
 | BOQ current/history | `POST /internal/mcp/boq:current`, `boq/versions:list`, `boq/versions:get`, `boq/versions:compare` |
 | Users/access | `POST /internal/mcp/project-access:list`, `user-access:get` |
+| Finance | `POST /internal/mcp/finance/projects:summary`, `finance/records:search` |
+| Payments | `POST /internal/mcp/payments:get`, `payments/document-status:get` |
+| Document Gateway | `POST /internal/mcp/documents:search`, `documents/metadata:get`, `documents/content:read` |
+| Daily Report share status | `POST /internal/mcp/daily-reports/share-status:get` |
 
 These are service-authenticated POST reads. They do not mutate Business Data;
 POST is used so verified principal context never appears in URLs or intermediary
-query logs. Future-domain rows below still describe required work.
+query logs. Phase 4 and later-domain rows below still describe required work.
 
 | Tool | Source of truth | Existing contract / reusable source | Required new contract or adapter |
 |---|---|---|---|
@@ -34,10 +39,10 @@ query logs. Future-domain rows below still describe required work.
 | `list_boq_versions` | BOQ version manifest | SCD2 `boq_items.valid_from/valid_to` | Stable version entity/number and deterministic manifest |
 | `get_boq_version` | BOQ version manifest + rows | No current endpoint | Version/as-of resolver; never infer a version number in MCP |
 | `compare_boq_versions` | Product BOQ comparison rules | Current-tree comparison helpers are reusable | Explicit A/B version comparison by stable line identity and Decimal values |
-| `get_project_financial_summary` | Product finance rules + SQL | `GET /dashboard/summary`; Chat analytics | Project-scoped Decimal contract and calculation/source metadata |
-| `search_financial_records` | Product finance rules + SQL | `GET /insights/rows`; `GET /input/admin/requests` | Cursor pagination, assigned-project filter, Decimal serialization and PII minimization |
-| `get_payment` | Product payment rules + SQL | `GET /input/admin/requests/{request_id}`; payment relations | Stable payment read contract with project policy and redacted bank data |
-| `get_payment_document_status` | Product payment/document state | Accounting readiness and payment-confirmation records | Status-only document contract; no storage key or signed URL |
+| `get_project_financial_summary` | Product finance rules + SQL | `GET /dashboard/summary`; Chat analytics | Implemented: project-scoped Decimal contract and calculation metadata |
+| `search_financial_records` | Product finance rules + SQL | `GET /insights/rows`; `GET /input/admin/requests` | Implemented: signed cursor, scope filter, Decimal serialization and PII minimization |
+| `get_payment` | Product payment rules + SQL | `GET /input/admin/requests/{request_id}`; payment relations | Implemented: stable payment read with project policy and redacted bank/storage data |
+| `get_payment_document_status` | Product payment/document state | Accounting readiness and payment-confirmation records | Implemented: status only; no storage key, signed URL or FlowAccount identifier |
 | `list_project_access` | Product authorization | Settings Admin/Subcontractor/Customer reads; Daily Report memberships | Project-centric access view with PII minimization |
 | `get_user_access` | Product authorization | Settings directory reads | Opaque user lookup, authorized visibility and MCP entitlements |
 | `list_inspection_items` | Inspection business service | Inspection rounds/zones/defects GET routes | Bounded project-scoped internal read, no signed URLs |
@@ -45,10 +50,10 @@ query logs. Future-domain rows below still describe required work.
 | `list_daily_reports` | Daily Report business service | `GET /daily-reports/queue` and customer/staff reads | Project/date/status filters with cursor pagination |
 | `get_daily_report` | Daily Report business service | `GET /daily-reports/reports/{report_id}` | Current-published semantics and Product citation URL |
 | `list_daily_report_versions` | Firestore immutable snapshots | `GET /daily-reports/reports/{report_id}/versions` | Stable version references and source timestamps |
-| `get_report_share_status` | Share-link state | `GET /daily-reports/projects/{project_id}/share-link` | New status-only response that never includes token/link material |
-| `search_documents` | Product metadata | Receipt, inspection and daily-report metadata are fragmented | Unified opaque document metadata search |
-| `get_document_metadata` | Product metadata | Fragmented file metadata | Classification, `external_ai_blocked`, extraction status and citation route |
-| `read_document_content` | GCS bytes + Product access policy | Existing endpoints issue signed URLs | Document Gateway that streams bounded content server-side and audits sensitive reads |
+| `get_report_share_status` | Share-link state | `GET /daily-reports/projects/{project_id}/share-link` | Backend status-only contract implemented for Phase 4 tool release; no token/link material |
+| `search_documents` | Product metadata | Receipt, inspection and daily-report metadata are fragmented | Implemented: unified opaque metadata search across approved sources |
+| `get_document_metadata` | Product metadata | Fragmented file metadata | Implemented: classification, block flag, extraction state and Product citation |
+| `read_document_content` | Existing Product extraction + access policy | Existing endpoints issue signed URLs | Implemented: bounded existing receipt extraction, mandatory sensitive audit and no URL/path response |
 | `get_dashboard_summary` | Backend derived calculations | `GET /dashboard/summary` | Authorized scope, Decimal values and calculation/source metadata |
 | `get_project_insights` | Backend derived calculations | `GET /insights/summary` and Chat analytics | Project-scoped bounded result with source references |
 | `search_audit_events` | Product Audit log bucket | None | Dedicated Logging view adapter with allowlisted filters |

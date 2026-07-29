@@ -214,6 +214,40 @@ def get_file(file_id: str) -> dict[str, Any]:
     return _public_doc(snapshot)
 
 
+def list_files_for_mcp(
+    *,
+    project_ids: set[str] | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Bound inspection-file metadata reads before MCP ranking or delivery."""
+
+    bounded_limit = max(1, min(int(limit), 1000))
+    collection = _client().collection(FILES_COLLECTION)
+    snapshots: list[Any] = []
+    if project_ids is None:
+        snapshots = list(collection.limit(bounded_limit).stream())
+    else:
+        for project_id in sorted(project_ids):
+            remaining = bounded_limit - len(snapshots)
+            if remaining <= 0:
+                break
+            snapshots.extend(
+                collection.where("project_id", "==", project_id)
+                .limit(remaining)
+                .stream()
+            )
+    items = [_public_doc(snapshot) for snapshot in snapshots]
+    return sorted(
+        items,
+        key=lambda item: (
+            _datetime_value(item.get("uploaded_at"))
+            or datetime.min.replace(tzinfo=UTC),
+            _clean_text(item.get("id")),
+        ),
+        reverse=True,
+    )[:bounded_limit]
+
+
 def _ensure_project_settings(project_id: str, actor_id: str | None = None) -> dict[str, Any]:
     client = _client()
     ref = client.collection(SETTINGS_COLLECTION).document(project_id)

@@ -32,7 +32,7 @@ def test_forbidden_generic_tools_are_absent() -> None:
     assert names.isdisjoint(forbidden)
 
 
-def test_foundation_and_core_pilot_tools_are_implemented() -> None:
+def test_foundation_core_pilot_and_phase3_tools_are_implemented() -> None:
     assert {tool.name for tool in TOOLS if tool.implemented} == {
         "get_system_catalog",
         "describe_domain",
@@ -48,4 +48,11 @@ def test_foundation_and_core_pilot_tools_are_implemented() -> None:
         "compare_boq_versions",
         "list_project_access",
         "get_user_access",
+        "get_project_financial_summary",
+        "search_financial_records",
+        "get_payment",
+        "get_payment_document_status",
+        "search_documents",
+        "get_document_metadata",
+        "read_document_content",
     }

@@ -29,6 +29,14 @@ class BackendReadOperation(StrEnum):
     COMPARE_BOQ_VERSIONS = "compare_boq_versions"
     LIST_PROJECT_ACCESS = "list_project_access"
     GET_USER_ACCESS = "get_user_access"
+    GET_PROJECT_FINANCIAL_SUMMARY = "get_project_financial_summary"
+    SEARCH_FINANCIAL_RECORDS = "search_financial_records"
+    GET_PAYMENT = "get_payment"
+    GET_PAYMENT_DOCUMENT_STATUS = "get_payment_document_status"
+    SEARCH_DOCUMENTS = "search_documents"
+    GET_DOCUMENT_METADATA = "get_document_metadata"
+    READ_DOCUMENT_CONTENT = "read_document_content"
+    GET_REPORT_SHARE_STATUS = "get_report_share_status"
 
 
 ENDPOINTS = {
@@ -43,6 +51,20 @@ ENDPOINTS = {
     BackendReadOperation.COMPARE_BOQ_VERSIONS: "/api/v1/internal/mcp/boq/versions:compare",
     BackendReadOperation.LIST_PROJECT_ACCESS: "/api/v1/internal/mcp/project-access:list",
     BackendReadOperation.GET_USER_ACCESS: "/api/v1/internal/mcp/user-access:get",
+    BackendReadOperation.GET_PROJECT_FINANCIAL_SUMMARY: (
+        "/api/v1/internal/mcp/finance/projects:summary"
+    ),
+    BackendReadOperation.SEARCH_FINANCIAL_RECORDS: "/api/v1/internal/mcp/finance/records:search",
+    BackendReadOperation.GET_PAYMENT: "/api/v1/internal/mcp/payments:get",
+    BackendReadOperation.GET_PAYMENT_DOCUMENT_STATUS: (
+        "/api/v1/internal/mcp/payments/document-status:get"
+    ),
+    BackendReadOperation.SEARCH_DOCUMENTS: "/api/v1/internal/mcp/documents:search",
+    BackendReadOperation.GET_DOCUMENT_METADATA: "/api/v1/internal/mcp/documents/metadata:get",
+    BackendReadOperation.READ_DOCUMENT_CONTENT: "/api/v1/internal/mcp/documents/content:read",
+    BackendReadOperation.GET_REPORT_SHARE_STATUS: (
+        "/api/v1/internal/mcp/daily-reports/share-status:get"
+    ),
 }
 
 
