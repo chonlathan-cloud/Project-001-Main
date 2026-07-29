@@ -17,6 +17,8 @@ It contains no token, secret, prompt, document body or private file content.
 | Backend MCP lint | Pass | Ruff passed |
 | Core Golden fixture | Pass | 6/6 cases, 100% (threshold 95%) |
 | BOQ/version fixture exactness | Pass | Exact money, version intervals and stable line identities validated |
+| Wrong client/environment fail-closed | Pass | Focused Backend policy test passed without directory lookup |
+| Assigned-project isolation | Pass | Focused MCP policy and protocol tests denied cross-project access before Backend read |
 
 Reproduce the Golden and BOQ result from `Projects-001-MCP`:
 
@@ -44,19 +46,18 @@ The evaluated Core Phase 2 cases are `G-001-th`, `G-001-en`, `G-003`,
 | Runtime errors | Pass | No Cloud Run ERROR entries in the bounded six-hour window |
 | Sensitive audit leakage | Pass | 18 audit events; zero token/secret/prompt/document-body matches |
 | Runtime write access | Pass | Dedicated MCP identity has logging only and no business-data write role or user-managed key |
+| Audit decision visibility | Pass | Revision `projects-001-mcp-00004-mn4` retained allow/deny decisions with zero sensitive-key matches |
+| Owner revocation and restore | Pass | The existing Inspector session was denied immediately while `external_mcp_enabled=false`, then succeeded after restoring it |
+| Cloud Run rollback and restore | Pass | Traffic moved from `00004-mn4` to `00003-zx8`; health, fail-closed auth and Owner read passed before traffic returned to `00004-mn4` |
 
-## Remaining release gates
+## Remaining release gate
 
-- Deploy the audit redaction fix and confirm live events retain
-  `authorization_decision` while sensitive fields remain absent.
 - Run one real Codex or ChatGPT Desktop Owner flow and record the prompt/tool/result
   evidence separately from deterministic fixture evaluation.
-- Disable or clear the pilot Owner binding, prove that the next call is blocked,
-  then restore the exact binding and prove access returns.
-- Execute a reversible Cloud Run rollback drill and restore the approved revision.
-- Record the final cross-environment denial and project-isolation evidence. The
-  Owner pilot legitimately has all-project scope, so assigned-project isolation
-  remains covered by automated policy tests rather than this Owner account.
+
+The cross-environment and assigned-project isolation gates remain automated for
+this rollout. The Owner pilot legitimately has all-project scope, and the approved
+drill scope explicitly excluded access to Beta.
 
 Phase 3 must not begin until every remaining item is complete and this report is
 updated to show a closed Phase 2 gate.

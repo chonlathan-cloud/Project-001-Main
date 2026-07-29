@@ -10,7 +10,7 @@ The planning baseline remains immutable; implementation status is tracked here.
 |---|---|---|
 | Phase 0 — contracts and ADRs | Complete for the local baseline | Live IAM/OAuth proof remains a Foundation spike |
 | Phase 1 — Demo foundation | Repository implementation complete | Live OAuth, IAM and Demo deployment gates remain |
-| Phase 2 — Core Business Owner Pilot | Demo validation in progress | Inspector OAuth, Core Golden fixture and latency pass; audit-fix deploy, real-client, revocation and rollback evidence remain |
+| Phase 2 — Core Business Owner Pilot | Demo validation in progress | All Demo gates pass except the real Codex/ChatGPT client flow |
 | Phases 3–7 | Not started | Follow the approved gates; no cloud promotion was performed |
 
 ## Phase 0 artifacts
