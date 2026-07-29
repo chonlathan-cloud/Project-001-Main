@@ -22,7 +22,7 @@ def make_settings(environment: str = "demo", **overrides: object) -> Settings:
         "MCP_RESOURCE_URL": (
             "https://beta.testserver/mcp" if beta else "https://testserver/mcp"
         ),
-        "MCP_OAUTH_ISSUER": "https://issuer.test",
+        "MCP_OAUTH_ISSUER": "https://issuer.test/",
         "MCP_OAUTH_AUDIENCE": (
             "https://beta.testserver/mcp" if beta else "https://testserver/mcp"
         ),

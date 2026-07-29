@@ -19,7 +19,7 @@ def rsa_keys() -> tuple[object, object]:
 def issue_token(private_key: object, **overrides: object) -> str:
     now = datetime.now(UTC)
     claims: dict[str, object] = {
-        "iss": "https://issuer.test",
+        "iss": "https://issuer.test/",
         "sub": "oauth-user-001",
         "aud": "https://testserver/mcp",
         "client_id": "codex-client",
@@ -44,6 +44,22 @@ async def test_valid_resource_bound_token_is_accepted(rsa_keys: tuple[object, ob
     assert token.subject == "oauth-user-001"
     assert token.resource == "https://testserver/mcp"
     assert token.scopes == ["mcp:read", "projects:read"]
+
+
+async def test_issuer_trailing_slash_is_matched_exactly(
+    rsa_keys: tuple[object, object],
+) -> None:
+    private_key, public_key = rsa_keys
+    verifier = OidcJwtTokenVerifier(
+        make_settings(MCP_OAUTH_ISSUER="https://issuer.test/"),
+        signing_key_resolver=lambda _token: public_key,
+    )
+
+    assert await verifier.verify_token(issue_token(private_key)) is not None
+    assert (
+        await verifier.verify_token(issue_token(private_key, iss="https://issuer.test"))
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -83,7 +99,7 @@ async def test_missing_environment_claim_is_rejected(rsa_keys: tuple[object, obj
     private_key, public_key = rsa_keys
     now = datetime.now(UTC)
     claims = {
-        "iss": "https://issuer.test",
+        "iss": "https://issuer.test/",
         "sub": "oauth-user-001",
         "aud": "https://testserver/mcp",
         "client_id": "codex-client",

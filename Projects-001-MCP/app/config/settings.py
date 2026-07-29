@@ -250,7 +250,11 @@ class Settings(BaseSettings):
 
     @property
     def canonical_issuer(self) -> str:
-        return str(self.oauth_issuer).rstrip("/")
+        # OAuth issuer identifiers are exact values. In particular, providers
+        # such as Auth0 publish an issuer ending in "/" and sign access tokens
+        # with that exact value, so normalizing the trailing slash would make
+        # otherwise valid tokens fail issuer validation.
+        return str(self.oauth_issuer)
 
     @property
     def canonical_backend_url(self) -> str:
