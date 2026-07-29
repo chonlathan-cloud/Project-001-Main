@@ -55,6 +55,12 @@ def _quoted(value: str) -> str:
     return f'"{value}"'
 
 
+def _field_clause(field: str, value: str) -> str:
+    quoted = _quoted(value)
+    escaped_text = json.dumps(f'"{field}":"{value}"')
+    return f"(jsonPayload.{field}={quoted} OR textPayload:{escaped_text})"
+
+
 def build_audit_filter(
     settings: Settings,
     *,
@@ -78,44 +84,49 @@ def build_audit_filter(
         clauses.append(
             "("
             + " OR ".join(
-                f"jsonPayload.tool_name={_quoted(value)}" for value in tool_names
+                _field_clause("tool_name", value) for value in tool_names
             )
             + ")"
         )
     if decisions:
         clauses.append(
             "(" + " OR ".join(
-                f"jsonPayload.authorization_decision={_quoted(value)}" for value in decisions
+                _field_clause("authorization_decision", value) for value in decisions
             ) + ")"
         )
     if domain:
-        clauses.append(f"jsonPayload.target_domain={_quoted(domain)}")
+        clauses.append(_field_clause("target_domain", domain))
     if subject_id:
-        clauses.append(f"jsonPayload.user_subject_id={_quoted(subject_id)}")
+        clauses.append(_field_clause("user_subject_id", subject_id))
     if event_id:
-        clauses.append(f"jsonPayload.event_id={_quoted(event_id)}")
+        clauses.append(_field_clause("event_id", event_id))
     return " AND ".join(clauses)
+
+
+def _parse_product_audit_text(value: str) -> dict[str, Any] | None:
+    marker = '{"log_type":"product_audit"'
+    start = value.find(marker)
+    if start < 0:
+        return None
+    try:
+        parsed, _end = json.JSONDecoder().raw_decode(value[start:])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _payload_from_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
     payload = entry.get("jsonPayload")
     if isinstance(payload, dict):
         if isinstance(payload.get("message"), str):
-            try:
-                nested = json.loads(payload["message"])
-                if isinstance(nested, dict) and nested.get("log_type") == "product_audit":
-                    payload = nested
-            except json.JSONDecodeError:
-                pass
+            nested = _parse_product_audit_text(payload["message"])
+            if nested is not None:
+                payload = nested
         return payload
     text_payload = entry.get("textPayload")
     if not isinstance(text_payload, str):
         return None
-    try:
-        parsed = json.loads(text_payload)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    return _parse_product_audit_text(text_payload)
 
 
 def _safe_event(entry: dict[str, Any]) -> dict[str, Any] | None:

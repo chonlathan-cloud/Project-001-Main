@@ -27,9 +27,13 @@ def test_audit_filter_is_server_built_and_resource_scoped() -> None:
     assert 'resource.labels.service_name="projects-001-mcp"' in result
     assert 'jsonPayload.log_type="product_audit"' in result
     assert 'jsonPayload.tool_name="read_document_content"' in result
+    assert 'textPayload:"\\\"tool_name\\\":\\\"read_document_content\\\""' in result
     assert 'jsonPayload.authorization_decision="allow"' in result
+    assert 'textPayload:"\\\"authorization_decision\\\":\\\"allow\\\""' in result
     assert 'jsonPayload.target_domain="gcs_files"' in result
+    assert 'textPayload:"\\\"target_domain\\\":\\\"gcs_files\\\""' in result
     assert 'jsonPayload.user_subject_id="user-admin-001"' in result
+    assert 'textPayload:"\\\"user_subject_id\\\":\\\"user-admin-001\\\""' in result
     assert "SELECT" not in result
 
 
@@ -79,3 +83,25 @@ def test_audit_event_parser_allowlists_contract_fields_only() -> None:
     assert result["event_id"] == "audit_event_001"
     assert "document_body" not in result
     assert "prompt" not in result
+
+
+def test_audit_event_parser_accepts_cloud_run_logger_prefixed_text_payload() -> None:
+    text_payload = (
+        "INFO:projects_001_mcp_product_audit_demo:"
+        '{"log_type":"product_audit","event_version":"1.0",'
+        '"event_id":"audit_event_002","request_id":"request-002",'
+        '"timestamp":"2026-07-29T00:00:00Z","environment":"demo",'
+        '"client_channel":"inspector","user_subject_id":"owner-001",'
+        '"effective_role":"owner","tool_name":"list_daily_reports",'
+        '"tool_version":"1.0","authorization_decision":"allow",'
+        '"policy_reason_code":"policy_allow","target_domain":"daily_reports",'
+        '"target_record_ids":[],"target_version_ids":[],"sensitive_content":false,'
+        '"source_systems":["product_backend"],"result_count":1,'
+        '"result_status":"success","latency_class":"lt_1s"}'
+    )
+
+    result = _safe_event({"textPayload": text_payload})
+
+    assert result is not None
+    assert result["event_id"] == "audit_event_002"
+    assert result["tool_name"] == "list_daily_reports"
