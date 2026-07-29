@@ -53,8 +53,13 @@ before attempting authenticated calls.
 ```bash
 ruff check app tests
 pytest
+python -m tests.evals.phase2_evaluator
 docker build --tag projects-001-mcp:local .
 ```
+
+The evaluator reports the Phase 2 Core Golden score and exact BOQ fixture gate
+from the versioned `demo-sanitized` dataset. Real-client OAuth and tool-selection
+evidence remains a separate release gate.
 
 Deployment is intentionally separate from the Backend lifecycle. From the
 repository root, copy the matching `mcp.deploy.*.example` and

@@ -15,6 +15,7 @@ SENSITIVE_KEY = re.compile(
     r"signed_?url|share_?token|storage_?key|gcs_?path|authorization",
     re.IGNORECASE,
 )
+SAFE_AUDIT_KEYS = frozenset({"authorization_decision"})
 SENSITIVE_VALUE = re.compile(
     r"(?:gs://|https?://[^\s?]+\?[^\s]*(?:signature|token|credential)=|"
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----)",
@@ -33,7 +34,12 @@ class AuditEmitter(Protocol):
 def redact(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            str(key): "[REDACTED]" if SENSITIVE_KEY.search(str(key)) else redact(item)
+            str(key): (
+                "[REDACTED]"
+                if str(key).casefold() not in SAFE_AUDIT_KEYS
+                and SENSITIVE_KEY.search(str(key))
+                else redact(item)
+            )
             for key, item in value.items()
         }
     if isinstance(value, list | tuple | set):

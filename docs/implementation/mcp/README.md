@@ -10,7 +10,7 @@ The planning baseline remains immutable; implementation status is tracked here.
 |---|---|---|
 | Phase 0 — contracts and ADRs | Complete for the local baseline | Live IAM/OAuth proof remains a Foundation spike |
 | Phase 1 — Demo foundation | Repository implementation complete | Live OAuth, IAM and Demo deployment gates remain |
-| Phase 2 — Core Business Owner Pilot | Repository implementation complete | Live Owner OAuth flow, Golden evaluation, latency and Demo pilot evidence remain |
+| Phase 2 — Core Business Owner Pilot | Demo validation in progress | Inspector OAuth, Core Golden fixture and latency pass; audit-fix deploy, real-client, revocation and rollback evidence remain |
 | Phases 3–7 | Not started | Follow the approved gates; no cloud promotion was performed |
 
 ## Phase 0 artifacts
@@ -26,6 +26,9 @@ The planning baseline remains immutable; implementation status is tracked here.
   `Projects-001-MCP/contracts/tool-input-schemas-v1.json`
 - Sanitized evaluation cases in
   `Projects-001-MCP/tests/evals/golden-evaluation-set-v1.json`
+- Reproducible Phase 2 evaluator in
+  `Projects-001-MCP/tests/evals/phase2_evaluator.py`
+- [Demo release evidence](phase2-demo-release-evidence.md)
 
 ## Guardrails
 
