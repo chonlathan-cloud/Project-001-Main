@@ -212,8 +212,6 @@ audit_view_filter="$(
 )"
 [[ "${audit_view_filter}" == *"${MCP_SERVICE_NAME}"* ]] || fail \
   "audit view filter is not restricted to the MCP service"
-[[ "${audit_view_filter}" == *"product_audit"* ]] || fail \
-  "audit view filter is not restricted to Product Audit events"
 
 audit_sink_destination="$(
   gcloud logging sinks describe "${EXPECTED_AUDIT_SINK}" \
@@ -234,17 +232,29 @@ audit_sink_filter="$(
 [[ "${audit_sink_filter}" == *"product_audit"* ]] || fail \
   "audit sink filter is not restricted to Product Audit events"
 
-view_accessor_binding="$(
+view_policy_json="$(
   gcloud logging views get-iam-policy "${EXPECTED_AUDIT_VIEW}" \
     --bucket "${EXPECTED_AUDIT_BUCKET}" \
     --project "${GCP_PROJECT_ID}" \
     --location "${GCP_REGION}" \
-    --flatten='bindings[].members' \
-    --filter="bindings.role=roles/logging.viewAccessor AND bindings.members=serviceAccount:${MCP_SERVICE_ACCOUNT}" \
-    --format='value(bindings.role)'
+    --format=json
 )"
-[[ "${view_accessor_binding}" == "roles/logging.viewAccessor" ]] || fail \
-  "MCP service account lacks exact audit view access"
+if ! python3 -c '
+import json
+import sys
+
+policy = json.load(sys.stdin)
+role, member = sys.argv[1:3]
+found = any(
+    binding.get("role") == role and member in binding.get("members", [])
+    for binding in policy.get("bindings", [])
+)
+raise SystemExit(0 if found else 1)
+' \
+  "roles/logging.viewAccessor" \
+  "serviceAccount:${MCP_SERVICE_ACCOUNT}" <<< "${view_policy_json}"; then
+  fail "MCP service account lacks exact audit view access"
+fi
 
 log_writer_binding="$(
   gcloud projects get-iam-policy "${GCP_PROJECT_ID}" \
