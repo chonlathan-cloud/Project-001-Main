@@ -1462,6 +1462,33 @@ def list_reports(
     )
 
 
+def list_reports_for_mcp(
+    *,
+    project_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Return a bounded project report scan for MCP-side filtering."""
+
+    bounded_limit = max(1, min(int(limit), 1000))
+    snapshots = (
+        _client()
+        .collection(REPORTS_COLLECTION)
+        .where("project_id", "==", project_id)
+        .order_by("report_date", direction="DESCENDING")
+        .limit(bounded_limit)
+        .stream()
+    )
+    return sorted(
+        [_public(snapshot) for snapshot in snapshots],
+        key=lambda item: (
+            _clean_text(item.get("report_date")),
+            _sort_datetime(item.get("updated_at")),
+            _clean_text(item.get("id")),
+        ),
+        reverse=True,
+    )[:bounded_limit]
+
+
 def update_report_draft(
     *,
     report_id: str,
@@ -1695,6 +1722,57 @@ def list_versions(report_id: str) -> list[dict[str, Any]]:
         if item.get("report_id") == report_id
     ]
     return sorted(items, key=lambda item: int(item.get("version") or 0), reverse=True)
+
+
+def list_versions_for_mcp(
+    *,
+    report_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Return bounded immutable version records for one report."""
+
+    bounded_limit = max(1, min(int(limit), 1000))
+    snapshots = (
+        _client()
+        .collection(VERSIONS_COLLECTION)
+        .where("report_id", "==", report_id)
+        .order_by("version", direction="DESCENDING")
+        .limit(bounded_limit)
+        .stream()
+    )
+    return sorted(
+        [_public(snapshot) for snapshot in snapshots],
+        key=lambda item: (int(item.get("version") or 0), _clean_text(item.get("id"))),
+        reverse=True,
+    )[:bounded_limit]
+
+
+def get_report_for_mcp(*, report_id: str) -> dict[str, Any]:
+    """Return the mutable report header without expanding source submissions."""
+
+    return get_report(report_id, include_sources=False)
+
+
+def get_report_version_for_mcp(
+    *,
+    report_id: str,
+    version: str,
+) -> dict[str, Any]:
+    """Resolve one immutable publication version using an opaque version selector."""
+
+    normalized = _clean_text(version)
+    if normalized.lower().startswith("v") and normalized[1:].isdigit():
+        normalized = normalized[1:]
+    if normalized.isdigit() and int(normalized) >= 1:
+        version_id = f"{report_id}-v{int(normalized)}"
+    elif re.fullmatch(rf"{re.escape(report_id)}-v[1-9][0-9]*", normalized):
+        version_id = normalized
+    else:
+        raise _not_found("Daily report version", normalized)
+    payload = _get_doc(VERSIONS_COLLECTION, version_id, "Daily report version")
+    if payload.get("report_id") != report_id:
+        raise _not_found("Daily report version", version_id)
+    return payload
 
 
 def _strip_known_source_labels(value: object, source_names: set[str]) -> str | None:

@@ -460,11 +460,16 @@ def list_defects(
     project_id: str,
     round_id: str | None,
     filters: dict[str, Any] | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     filters = filters or {}
     query = _client().collection(DEFECTS_COLLECTION).where("project_id", "==", project_id)
     if round_id:
         query = query.where("round_id", "==", round_id)
+    if limit is not None:
+        query = query.order_by("created_at", direction="DESCENDING").limit(
+            max(1, min(int(limit), 1000))
+        )
 
     defects = [_public_doc(snapshot) for snapshot in query.stream()]
 
@@ -573,6 +578,18 @@ def create_defect(
 
 def get_defect(project_id: str, round_id: str, defect_id: str) -> dict[str, Any]:
     return _get_defect(project_id, round_id, defect_id)
+
+
+def get_defect_for_mcp(*, project_id: str, defect_id: str) -> dict[str, Any]:
+    """Resolve one defect while binding the opaque identifier to a project."""
+
+    snapshot = _defect_ref(defect_id).get()
+    if not snapshot.exists:
+        raise _not_found("Inspection defect", defect_id)
+    payload = _public_doc(snapshot)
+    if payload.get("project_id") != project_id:
+        raise _not_found("Inspection defect", defect_id)
+    return payload
 
 
 def update_defect(
@@ -801,6 +818,30 @@ def list_events(
         query = query.where("defect_id", "==", defect_id)
     events = [_public_doc(snapshot) for snapshot in query.stream()]
     return sorted(events, key=lambda item: item.get("created_at") or datetime.min.replace(tzinfo=UTC))
+
+
+def list_events_for_mcp(
+    *,
+    project_id: str,
+    round_id: str,
+    defect_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Return a bounded event history for an already-authorized defect."""
+
+    bounded_limit = max(1, min(int(limit), 100))
+    query = (
+        _project_round_query(EVENTS_COLLECTION, project_id, round_id)
+        .where("defect_id", "==", defect_id)
+        .order_by("created_at", direction="DESCENDING")
+        .limit(bounded_limit)
+    )
+    events = [_public_doc(snapshot) for snapshot in query.stream()]
+    return sorted(
+        events,
+        key=lambda item: item.get("created_at") or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )[:bounded_limit]
 
 
 def create_event(

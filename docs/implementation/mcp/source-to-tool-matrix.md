@@ -4,7 +4,7 @@
 contract. It does not mean the current public endpoint is safe to call unchanged.
 All backend routes below are under `/api/v1`.
 
-## Phase 3 implementation status
+## Phase 4 implementation status
 
 The Core Pilot plus Finance and Document Gateway contracts are implemented under
 `/internal/mcp`:
@@ -20,10 +20,16 @@ The Core Pilot plus Finance and Document Gateway contracts are implemented under
 | Payments | `POST /internal/mcp/payments:get`, `payments/document-status:get` |
 | Document Gateway | `POST /internal/mcp/documents:search`, `documents/metadata:get`, `documents/content:read` |
 | Daily Report share status | `POST /internal/mcp/daily-reports/share-status:get` |
+| Inspection | `POST /internal/mcp/inspection/items:list`, `inspection/items:get` |
+| Daily Reports | `POST /internal/mcp/daily-reports:list`, `daily-reports:get`, `daily-reports/versions:list` |
+| Dashboard/Insights | `POST /internal/mcp/dashboard:summary`, `projects/insights:get` |
+| Product Audit | Direct MCP adapter to the environment-locked dedicated Cloud Logging view |
 
-These are service-authenticated POST reads. They do not mutate Business Data;
-POST is used so verified principal context never appears in URLs or intermediary
-query logs. Phase 4 and later-domain rows below still describe required work.
+The Backend routes are service-authenticated POST reads. They do not mutate
+Business Data; POST is used so verified principal context never appears in URLs
+or intermediary query logs. The Product Audit adapter is independently bounded,
+permission gated and restricted to a dedicated log view. Phase 5 rows below
+still describe required work.
 
 | Tool | Source of truth | Existing contract / reusable source | Required new contract or adapter |
 |---|---|---|---|
@@ -45,19 +51,19 @@ query logs. Phase 4 and later-domain rows below still describe required work.
 | `get_payment_document_status` | Product payment/document state | Accounting readiness and payment-confirmation records | Implemented: status only; no storage key, signed URL or FlowAccount identifier |
 | `list_project_access` | Product authorization | Settings Admin/Subcontractor/Customer reads; Daily Report memberships | Project-centric access view with PII minimization |
 | `get_user_access` | Product authorization | Settings directory reads | Opaque user lookup, authorized visibility and MCP entitlements |
-| `list_inspection_items` | Inspection business service | Inspection rounds/zones/defects GET routes | Bounded project-scoped internal read, no signed URLs |
-| `get_inspection_item` | Inspection business service | Defect and event GET routes | Stable item contract with authorized file metadata only |
-| `list_daily_reports` | Daily Report business service | `GET /daily-reports/queue` and customer/staff reads | Project/date/status filters with cursor pagination |
-| `get_daily_report` | Daily Report business service | `GET /daily-reports/reports/{report_id}` | Current-published semantics and Product citation URL |
-| `list_daily_report_versions` | Firestore immutable snapshots | `GET /daily-reports/reports/{report_id}/versions` | Stable version references and source timestamps |
-| `get_report_share_status` | Share-link state | `GET /daily-reports/projects/{project_id}/share-link` | Backend status-only contract implemented for Phase 4 tool release; no token/link material |
+| `list_inspection_items` | Inspection business service | Inspection rounds/zones/defects GET routes | Implemented: bounded project-scoped internal read, signed filter cursor and no signed URLs |
+| `get_inspection_item` | Inspection business service | Defect and event GET routes | Implemented: stable item, bounded event history and opaque Document Gateway IDs |
+| `list_daily_reports` | Daily Report business service | `GET /daily-reports/queue` and customer/staff reads | Implemented: project/date/status filters with signed cursor pagination |
+| `get_daily_report` | Daily Report business service | `GET /daily-reports/reports/{report_id}` | Implemented: current content or explicitly selected immutable publication snapshot |
+| `list_daily_report_versions` | Firestore immutable snapshots | `GET /daily-reports/reports/{report_id}/versions` | Implemented: stable immutable version references and source timestamps |
+| `get_report_share_status` | Share-link state | `GET /daily-reports/projects/{project_id}/share-link` | Implemented: status only; no token, link or token-version material |
 | `search_documents` | Product metadata | Receipt, inspection and daily-report metadata are fragmented | Implemented: unified opaque metadata search across approved sources |
 | `get_document_metadata` | Product metadata | Fragmented file metadata | Implemented: classification, block flag, extraction state and Product citation |
 | `read_document_content` | Existing Product extraction + access policy | Existing endpoints issue signed URLs | Implemented: bounded existing receipt extraction, mandatory sensitive audit and no URL/path response |
-| `get_dashboard_summary` | Backend derived calculations | `GET /dashboard/summary` | Authorized scope, Decimal values and calculation/source metadata |
-| `get_project_insights` | Backend derived calculations | `GET /insights/summary` and Chat analytics | Project-scoped bounded result with source references |
-| `search_audit_events` | Product Audit log bucket | None | Dedicated Logging view adapter with allowlisted filters |
-| `get_audit_event` | Product Audit log bucket | None | Opaque event lookup; `NOT_FOUND_OR_FORBIDDEN` semantics |
+| `get_dashboard_summary` | Backend derived calculations | `GET /dashboard/summary` | Implemented: authorized scope, exact Decimal values and calculation/source metadata |
+| `get_project_insights` | Backend derived calculations | `GET /insights/summary` and Chat analytics | Implemented: independently sourced finance/inspection/report signals with partial/conflict warnings |
+| `search_audit_events` | Product Audit log bucket/view | None | Implemented: dedicated Logging view adapter with server-built allowlisted filters |
+| `get_audit_event` | Product Audit log bucket/view | None | Implemented: opaque allowlisted event lookup and `NOT_FOUND_OR_FORBIDDEN` semantics |
 | `get_system_health` | Health adapters/GCP APIs | Backend `/health` | Curated aggregate status with no raw resource enumeration |
 | `get_gcp_resource_summary` | GCP APIs | Local diagnostic MCP is reference only | Hard-coded Demo/Beta resource allowlist adapter |
 | `get_cloud_run_status` | Cloud Run API | Local diagnostic MCP validation patterns | Exact allowed service aliases only |

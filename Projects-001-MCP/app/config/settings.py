@@ -26,6 +26,7 @@ class EnvironmentProfile:
         cloud_sql_instance: str,
         firestore_database_id: str,
         buckets: set[str],
+        audit_log_view: str,
     ) -> None:
         self.app_env = app_env
         self.service_name = service_name
@@ -33,6 +34,7 @@ class EnvironmentProfile:
         self.cloud_sql_instance = cloud_sql_instance
         self.firestore_database_id = firestore_database_id
         self.buckets = frozenset(buckets)
+        self.audit_log_view = audit_log_view
 
 
 ENVIRONMENT_PROFILES = {
@@ -49,6 +51,10 @@ ENVIRONMENT_PROFILES = {
             "project001-489710-work-inspection",
             "project001-489710-daily-reports-demo",
         },
+        audit_log_view=(
+            "projects/project001-489710/locations/asia-southeast1/buckets/"
+            "projects-001-mcp-audit-demo/views/projects-001-mcp-audit-demo-view"
+        ),
     ),
     Environment.BETA: EnvironmentProfile(
         app_env="prod-beta",
@@ -63,6 +69,10 @@ ENVIRONMENT_PROFILES = {
             "project001-489710-work-inspection-beta",
             "project001-489710-daily-reports-beta",
         },
+        audit_log_view=(
+            "projects/project001-489710/locations/asia-southeast1/buckets/"
+            "projects-001-mcp-audit-beta/views/projects-001-mcp-audit-beta-view"
+        ),
     ),
 }
 
@@ -137,6 +147,13 @@ class Settings(BaseSettings):
         alias="MCP_ALLOWED_BUCKETS",
     )
     audit_log_name: str = Field(alias="MCP_AUDIT_LOG_NAME")
+    audit_log_view: str = Field(alias="MCP_AUDIT_LOG_VIEW")
+    audit_read_max_days: int = Field(
+        default=90,
+        ge=1,
+        le=365,
+        alias="MCP_AUDIT_READ_MAX_DAYS",
+    )
     operational_log_name: str = Field(alias="MCP_OPERATIONAL_LOG_NAME")
     log_level: str = Field(default="INFO", alias="MCP_LOG_LEVEL")
 
@@ -196,6 +213,7 @@ class Settings(BaseSettings):
                 self.firestore_database_id,
                 profile.firestore_database_id,
             ),
+            "MCP_AUDIT_LOG_VIEW": (self.audit_log_view, profile.audit_log_view),
         }
         mismatches = [name for name, (actual, wanted) in expected.items() if actual != wanted]
         if mismatches:
@@ -237,6 +255,7 @@ class Settings(BaseSettings):
                 self.backend_service_name,
                 self.cloud_sql_instance,
                 self.firestore_database_id,
+                self.audit_log_view,
                 *self.allowed_buckets,
             ]
         ).lower()

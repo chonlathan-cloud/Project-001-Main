@@ -37,6 +37,13 @@ class BackendReadOperation(StrEnum):
     GET_DOCUMENT_METADATA = "get_document_metadata"
     READ_DOCUMENT_CONTENT = "read_document_content"
     GET_REPORT_SHARE_STATUS = "get_report_share_status"
+    LIST_INSPECTION_ITEMS = "list_inspection_items"
+    GET_INSPECTION_ITEM = "get_inspection_item"
+    LIST_DAILY_REPORTS = "list_daily_reports"
+    GET_DAILY_REPORT = "get_daily_report"
+    LIST_DAILY_REPORT_VERSIONS = "list_daily_report_versions"
+    GET_DASHBOARD_SUMMARY = "get_dashboard_summary"
+    GET_PROJECT_INSIGHTS = "get_project_insights"
 
 
 ENDPOINTS = {
@@ -65,6 +72,15 @@ ENDPOINTS = {
     BackendReadOperation.GET_REPORT_SHARE_STATUS: (
         "/api/v1/internal/mcp/daily-reports/share-status:get"
     ),
+    BackendReadOperation.LIST_INSPECTION_ITEMS: "/api/v1/internal/mcp/inspection/items:list",
+    BackendReadOperation.GET_INSPECTION_ITEM: "/api/v1/internal/mcp/inspection/items:get",
+    BackendReadOperation.LIST_DAILY_REPORTS: "/api/v1/internal/mcp/daily-reports:list",
+    BackendReadOperation.GET_DAILY_REPORT: "/api/v1/internal/mcp/daily-reports:get",
+    BackendReadOperation.LIST_DAILY_REPORT_VERSIONS: (
+        "/api/v1/internal/mcp/daily-reports/versions:list"
+    ),
+    BackendReadOperation.GET_DASHBOARD_SUMMARY: "/api/v1/internal/mcp/dashboard:summary",
+    BackendReadOperation.GET_PROJECT_INSIGHTS: "/api/v1/internal/mcp/projects/insights:get",
 }
 
 

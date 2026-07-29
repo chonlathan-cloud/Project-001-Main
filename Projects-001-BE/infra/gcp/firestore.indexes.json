@@ -19,6 +19,40 @@
       ]
     },
     {
+      "collectionGroup": "daily_reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "project_id", "order": "ASCENDING"},
+        {"fieldPath": "report_date", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "daily_report_versions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "report_id", "order": "ASCENDING"},
+        {"fieldPath": "version", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "inspection_defects",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "project_id", "order": "ASCENDING"},
+        {"fieldPath": "created_at", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "inspection_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "project_id", "order": "ASCENDING"},
+        {"fieldPath": "round_id", "order": "ASCENDING"},
+        {"fieldPath": "defect_id", "order": "ASCENDING"},
+        {"fieldPath": "created_at", "order": "DESCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "daily_report_notifications",
       "queryScope": "COLLECTION",
       "fields": [

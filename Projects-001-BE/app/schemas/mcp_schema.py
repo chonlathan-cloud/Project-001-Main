@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -193,3 +193,95 @@ class McpDocumentContentRequest(McpDocumentRequest):
     page: int | None = Field(default=None, ge=1, le=500)
     section: str | None = Field(default=None, min_length=1, max_length=200)
     max_content_chars: int = Field(default=4000, ge=1, le=20000)
+
+
+class McpInspectionListRequest(McpProjectRequest):
+    statuses: list[Annotated[str, Field(min_length=1, max_length=32)]] = Field(
+        default_factory=list,
+        max_length=10,
+    )
+    severities: list[Annotated[str, Field(min_length=1, max_length=32)]] = Field(
+        default_factory=list,
+        max_length=10,
+    )
+    due_before: date | None = None
+    overdue: bool | None = None
+    cursor: str | None = Field(default=None, max_length=1024)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class McpInspectionRequest(McpProjectRequest):
+    item_id: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )
+
+
+class McpDailyReportsListRequest(McpProjectRequest):
+    date_from: date | None = None
+    date_to: date | None = None
+    statuses: list[Annotated[str, Field(min_length=1, max_length=32)]] = Field(
+        default_factory=list,
+        max_length=10,
+    )
+    cursor: str | None = Field(default=None, max_length=1024)
+    limit: int = Field(default=20, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> McpDailyReportsListRequest:
+        if self.date_from and self.date_to:
+            if self.date_from > self.date_to:
+                raise ValueError("date_from must not be after date_to.")
+            if (self.date_to - self.date_from).days > 366:
+                raise ValueError("Daily Report date range cannot exceed 366 days.")
+        return self
+
+
+class McpDailyReportRequest(McpPrincipalRequest):
+    report_id: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )
+    version: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class McpDailyReportVersionsRequest(McpPrincipalRequest):
+    report_id: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )
+    cursor: str | None = Field(default=None, max_length=1024)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class McpDashboardSummaryRequest(McpPrincipalRequest):
+    project_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    date_from: date | None = None
+    date_to: date | None = None
+    fresh: bool = True
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> McpDashboardSummaryRequest:
+        if self.date_from and self.date_to:
+            if self.date_from > self.date_to:
+                raise ValueError("date_from must not be after date_to.")
+            if (self.date_to - self.date_from).days > 366:
+                raise ValueError("Dashboard date range cannot exceed 366 days.")
+        return self
+
+
+class McpProjectInsightsRequest(McpProjectRequest):
+    date_from: date | None = None
+    date_to: date | None = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> McpProjectInsightsRequest:
+        if self.date_from and self.date_to:
+            if self.date_from > self.date_to:
+                raise ValueError("date_from must not be after date_to.")
+            if (self.date_to - self.date_from).days > 366:
+                raise ValueError("Insight date range cannot exceed 366 days.")
+        return self

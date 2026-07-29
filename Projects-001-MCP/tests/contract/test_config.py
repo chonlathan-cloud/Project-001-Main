@@ -43,3 +43,9 @@ def test_symmetric_oauth_algorithm_is_rejected() -> None:
 def test_tool_rate_limit_is_bounded() -> None:
     with pytest.raises(ValidationError):
         make_settings(MCP_RATE_LIMIT_PER_MINUTE=1001)
+
+
+def test_audit_retention_window_is_bounded() -> None:
+    assert make_settings().audit_read_max_days == 90
+    with pytest.raises(ValidationError):
+        make_settings(MCP_AUDIT_READ_MAX_DAYS=366)

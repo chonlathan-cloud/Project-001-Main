@@ -8,6 +8,7 @@ from app.adapters.backend.client import BackendReadOperation
 from app.server.factory import create_app, create_mcp_server
 from tests.fakes import (
     MemoryAuditEmitter,
+    StaticAuditReadClient,
     StaticBackendReadClient,
     StaticPolicyClient,
     StaticTokenVerifier,
@@ -47,7 +48,7 @@ def test_health_is_public_and_contains_no_business_data() -> None:
     assert response.json() == {
         "status": "ok",
         "service": "projects-001-mcp",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "environment": "demo",
     }
     assert response.headers["x-request-id"]
@@ -147,6 +148,16 @@ def test_authorized_initialize_and_tool_inventory() -> None:
         "search_documents",
         "get_document_metadata",
         "read_document_content",
+        "list_inspection_items",
+        "get_inspection_item",
+        "list_daily_reports",
+        "get_daily_report",
+        "list_daily_report_versions",
+        "get_report_share_status",
+        "get_dashboard_summary",
+        "get_project_insights",
+        "search_audit_events",
+        "get_audit_event",
     }
     for item in tool_items:
         assert item["annotations"]["readOnlyHint"] is True
@@ -450,7 +461,7 @@ async def test_registered_tools_have_read_only_annotations() -> None:
         audit_emitter=MemoryAuditEmitter(),
     )
     tools = await server.list_tools()
-    assert len(tools) == 21
+    assert len(tools) == 31
     assert all(tool.annotations.readOnlyHint for tool in tools)
     assert all(tool.annotations.destructiveHint is False for tool in tools)
 
@@ -743,3 +754,212 @@ def test_financial_document_metadata_requires_finance_permission_before_backend(
     result = response.json()["result"]["structuredContent"]
     assert result["error"]["code"] == "NOT_FOUND_OR_FORBIDDEN"
     assert backend.calls == []
+
+
+def test_project_insights_surfaces_partial_sources_without_silent_merge() -> None:
+    project_id = "10000000-0000-4000-8000-000000000001"
+    backend = StaticBackendReadClient(
+        {
+            BackendReadOperation.GET_PROJECT_INSIGHTS: {
+                "project_id": project_id,
+                "financial": {
+                    "budget": {"amount": "160000.00", "currency": "THB"},
+                    "actual": {"amount": "90000.00", "currency": "THB"},
+                },
+                "inspection": None,
+                "daily_reports": {"latest_progress_percent": 62},
+                "source_status": {
+                    "finance": "available",
+                    "inspection": "unavailable",
+                    "daily_reports": "available",
+                },
+                "calculation_method": (
+                    "independent_finance_inspection_daily_report_signals_v1"
+                ),
+                "source_references": [
+                    {
+                        "domain": "finance_payments",
+                        "record_id": project_id,
+                        "source_system": "product_backend",
+                    },
+                    {
+                        "domain": "daily_reports",
+                        "record_id": project_id,
+                        "source_system": "firestore",
+                    },
+                ],
+                "warnings": [
+                    {
+                        "code": "SOURCE_UNAVAILABLE",
+                        "message": "Inspection facts were unavailable; no conclusion was inferred.",
+                    }
+                ],
+                "partial": True,
+                "source_read_at": "2026-07-29T00:00:00Z",
+            }
+        }
+    )
+    app = create_app(
+        make_settings(),
+        token_verifier=StaticTokenVerifier(),
+        policy_client=StaticPolicyClient(
+            admin_access("mcp_access", "financial_data_read")
+        ),
+        audit_emitter=MemoryAuditEmitter(),
+        backend_read_client=backend,
+    )
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.post(
+            "/mcp",
+            headers=auth_headers(),
+            json=rpc(
+                "tools/call",
+                params={
+                    "name": "get_project_insights",
+                    "arguments": {"project_id": project_id},
+                },
+            ),
+        )
+
+    result = response.json()["result"]["structuredContent"]
+    assert result["partial"] is True
+    assert result["warnings"][0]["code"] == "SOURCE_UNAVAILABLE"
+    assert {source["source_system"] for source in result["sources"]} == {
+        "product_backend",
+        "firestore",
+    }
+    assert result["data"]["calculation_method"].startswith("independent_")
+
+
+def test_dashboard_permission_and_cross_project_scope_deny_before_backend() -> None:
+    backend = StaticBackendReadClient()
+    calls = [
+        (admin_access("mcp_access"), []),
+        (
+            admin_access("mcp_access", "financial_data_read"),
+            ["20000000-0000-4000-8000-000000000002"],
+        ),
+    ]
+    for access, project_ids in calls:
+        app = create_app(
+            make_settings(),
+            token_verifier=StaticTokenVerifier(),
+            policy_client=StaticPolicyClient(access),
+            audit_emitter=MemoryAuditEmitter(),
+            backend_read_client=backend,
+        )
+        with TestClient(app, base_url="https://testserver") as client:
+            response = client.post(
+                "/mcp",
+                headers=auth_headers(),
+                json=rpc(
+                    "tools/call",
+                    params={
+                        "name": "get_dashboard_summary",
+                        "arguments": {"project_ids": project_ids},
+                    },
+                ),
+            )
+        assert (
+            response.json()["result"]["structuredContent"]["error"]["code"]
+            == "NOT_FOUND_OR_FORBIDDEN"
+        )
+    assert backend.calls == []
+
+
+def _audit_event(**overrides: object) -> dict[str, object]:
+    event: dict[str, object] = {
+        "event_version": "1.0",
+        "event_id": "audit_event_001",
+        "request_id": "request-001",
+        "timestamp": "2026-07-29T00:00:00Z",
+        "environment": "demo",
+        "client_channel": "inspector",
+        "user_subject_id": "user-admin-001",
+        "effective_role": "admin",
+        "tool_name": "read_document_content",
+        "tool_version": "1.0",
+        "authorization_decision": "allow",
+        "policy_reason_code": "policy_allow",
+        "target_domain": "gcs_files",
+        "target_record_ids": ["doc_opaque_001"],
+        "target_version_ids": [],
+        "sensitive_content": True,
+        "source_systems": ["product_backend"],
+        "result_count": 1,
+        "result_status": "success",
+        "latency_class": "lt_1s",
+        "error_code": None,
+    }
+    event.update(overrides)
+    return event
+
+
+def test_audit_tools_require_permission_and_mandatory_audit_before_reader() -> None:
+    reader = StaticAuditReadClient()
+    policies = [
+        (admin_access("mcp_access"), MemoryAuditEmitter()),
+        (owner_access(), MemoryAuditEmitter(fail=True)),
+    ]
+    for access, emitter in policies:
+        app = create_app(
+            make_settings(),
+            token_verifier=StaticTokenVerifier(),
+            policy_client=StaticPolicyClient(access),
+            audit_emitter=emitter,
+            audit_read_client=reader,
+        )
+        with TestClient(app, base_url="https://testserver") as client:
+            response = client.post(
+                "/mcp",
+                headers=auth_headers(),
+                json=rpc(
+                    "tools/call",
+                    params={"name": "search_audit_events", "arguments": {}},
+                ),
+            )
+        code = response.json()["result"]["structuredContent"]["error"]["code"]
+        assert code in {"NOT_FOUND_OR_FORBIDDEN", "SOURCE_UNAVAILABLE"}
+    assert reader.calls == []
+
+
+def test_audit_search_returns_allowlisted_metadata_without_document_body() -> None:
+    reader = StaticAuditReadClient(
+        search_response={
+            "items": [
+                _audit_event(
+                    document_body="must not leave the audit adapter",
+                    prompt="also forbidden",
+                )
+            ],
+            "returned_count": 1,
+            "next_cursor": None,
+            "source_read_at": "2026-07-29T00:00:01Z",
+        }
+    )
+    app = create_app(
+        make_settings(),
+        token_verifier=StaticTokenVerifier(),
+        policy_client=StaticPolicyClient(
+            admin_access("mcp_access", "audit_log_read")
+        ),
+        audit_emitter=MemoryAuditEmitter(),
+        audit_read_client=reader,
+    )
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.post(
+            "/mcp",
+            headers=auth_headers(),
+            json=rpc(
+                "tools/call",
+                params={"name": "search_audit_events", "arguments": {}},
+            ),
+        )
+
+    result = response.json()["result"]["structuredContent"]
+    assert result["data"]["items"][0]["event_id"] == "audit_event_001"
+    assert result["sources"][0]["source_system"] == "cloud_logging"
+    serialized = str(result).lower()
+    assert "document_body" not in serialized
+    assert "must not leave" not in serialized
+    assert "prompt" not in serialized

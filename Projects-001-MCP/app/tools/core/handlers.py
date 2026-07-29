@@ -86,6 +86,14 @@ def _fetch_definition(
                 project_id = str(UUID(parts[1]))
             except ValueError:
                 pass
+    elif domain_name in {DomainName.INSPECTION.value, DomainName.DAILY_REPORTS.value}:
+        definition = replace(definition, domain=DomainName(domain_name))
+        project_value, separator, _record_id = opaque_id.partition(".")
+        if separator:
+            try:
+                project_id = str(UUID(project_value))
+            except ValueError:
+                pass
     return definition, project_id
 
 
@@ -117,29 +125,36 @@ def _payload(
     source_read_at = data.pop("source_read_at", None)
     returned_count = data.get("returned_count")
     next_cursor = data.get("next_cursor")
-    partial = bool(data.get("truncated", False))
-    warnings = (
-        [
+    partial = bool(data.pop("partial", False) or data.get("truncated", False))
+    raw_warnings = data.pop("warnings", [])
+    warnings = [WarningItem.model_validate(item) for item in raw_warnings]
+    if partial and not warnings:
+        warnings.append(
             WarningItem(
                 code="PARTIAL_RESULT",
                 message="The bounded result was truncated; narrow the request before reading more.",
             )
-        ]
-        if partial
-        else []
+        )
+    raw_sources = data.pop("source_references", [])
+    sources = [SourceReference.model_validate(item) for item in raw_sources]
+    default_source = SourceReference(
+        domain=domain.value,
+        record_id=record_id,
+        source_system="product_backend",
+        version=version,
+        last_updated_at=source_read_at,
+        product_url=data.get("product_url"),
     )
+    if not any(
+        item.domain == default_source.domain
+        and item.record_id == default_source.record_id
+        and item.source_system == default_source.source_system
+        for item in sources
+    ):
+        sources.insert(0, default_source)
     return ToolPayload(
         data=data,
-        sources=[
-            SourceReference(
-                domain=domain.value,
-                record_id=record_id,
-                source_system="product_backend",
-                version=version,
-                last_updated_at=source_read_at,
-                product_url=data.get("product_url"),
-            )
-        ],
+        sources=sources,
         pagination=(
             Pagination(returned_count=int(returned_count or 0), next_cursor=next_cursor)
             if returned_count is not None

@@ -82,5 +82,80 @@
     "unsupported_content_status": "unsupported",
     "large_content_status": "too_large",
     "unprocessed_content_status": "unprocessed"
+  },
+  "inspection_items": [
+    {
+      "item_id": "defect-demo-001",
+      "project_id": "10000000-0000-4000-8000-000000000001",
+      "title": "Wall crack at Level 2",
+      "status": "OPEN",
+      "severity": "MAJOR",
+      "due_date": "2026-07-20",
+      "overdue": true,
+      "document_ids": ["inspection.10000000-0000-4000-8000-000000000001.file-demo-001"]
+    },
+    {
+      "item_id": "defect-demo-002",
+      "project_id": "10000000-0000-4000-8000-000000000001",
+      "title": "Paint touch-up",
+      "status": "RESOLVED",
+      "severity": "COSMETIC",
+      "due_date": "2026-07-18",
+      "overdue": false,
+      "document_ids": []
+    }
+  ],
+  "daily_reports": [
+    {
+      "report_id": "report-demo-2026-07-28",
+      "project_id": "10000000-0000-4000-8000-000000000001",
+      "report_date": "2026-07-28",
+      "status": "PUBLISHED",
+      "summary": "Structure work continued on Level 2.",
+      "progress_percent": 62,
+      "published_version": 2,
+      "versions": [
+        {"version_id": "report-demo-2026-07-28-v2", "version_number": 2, "immutable": true},
+        {"version_id": "report-demo-2026-07-28-v1", "version_number": 1, "immutable": true}
+      ]
+    }
+  ],
+  "dashboard": {
+    "totals": {
+      "budget": {"amount": "160000.00", "currency": "THB"},
+      "actual": {"amount": "90000.00", "currency": "THB"},
+      "remaining": {"amount": "70000.00", "currency": "THB"}
+    },
+    "calculation_method": "current_customer_boq_and_exact_approved_request_totals_v1",
+    "sources": [
+      {"domain": "finance_payments", "source_system": "product_backend"},
+      {"domain": "inspection", "source_system": "firestore"},
+      {"domain": "daily_reports", "source_system": "firestore"}
+    ]
+  },
+  "audit_events": [
+    {
+      "event_id": "audit-demo-001",
+      "timestamp": "2026-07-29T00:00:00Z",
+      "user_subject_id": "user-owner-001",
+      "tool_name": "read_document_content",
+      "authorization_decision": "allow",
+      "target_domain": "gcs_files",
+      "target_record_ids": ["doc-safe-001"],
+      "sensitive_content": true,
+      "result_status": "success"
+    }
+  ],
+  "phase4_controls": {
+    "project_scope_checked_before_source_read": true,
+    "daily_report_share_tokens_omitted": true,
+    "audit_body_and_prompt_omitted": true,
+    "audit_read_requires_permission": true,
+    "sensitive_audit_read_fails_closed": true,
+    "partial_source_failures_are_explicit": true,
+    "backend_is_primary_for_business_calculations": true,
+    "cross_domain_sources_remain_distinct": true,
+    "source_inconsistency_warning": "SOURCE_INCONSISTENCY",
+    "operations_p95_target_seconds": 15
   }
 }

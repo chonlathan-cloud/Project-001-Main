@@ -52,6 +52,13 @@ def make_settings(environment: str = "demo", **overrides: object) -> Settings:
             "project001-489710-daily-reports-demo"
         ),
         "MCP_AUDIT_LOG_NAME": "test_product_audit",
+        "MCP_AUDIT_LOG_VIEW": (
+            "projects/project001-489710/locations/asia-southeast1/buckets/"
+            "projects-001-mcp-audit-beta/views/projects-001-mcp-audit-beta-view"
+            if beta
+            else "projects/project001-489710/locations/asia-southeast1/buckets/"
+            "projects-001-mcp-audit-demo/views/projects-001-mcp-audit-demo-view"
+        ),
         "MCP_OPERATIONAL_LOG_NAME": "test_operational",
         "MCP_LOG_LEVEL": "INFO",
     }
@@ -178,3 +185,28 @@ class StaticBackendReadClient:
             {"operation": operation, "access": access, "payload": payload}
         )
         return dict(self.responses.get(operation, {}))
+
+
+class StaticAuditReadClient:
+    def __init__(
+        self,
+        *,
+        search_response: dict | None = None,
+        get_response: dict | None = None,
+    ) -> None:
+        self.search_response = search_response or {
+            "items": [],
+            "returned_count": 0,
+            "next_cursor": None,
+            "source_read_at": "2026-07-29T00:00:00Z",
+        }
+        self.get_response = get_response or {}
+        self.calls: list[dict] = []
+
+    async def search(self, **kwargs: object) -> dict:
+        self.calls.append({"operation": "search", **kwargs})
+        return dict(self.search_response)
+
+    async def get(self, **kwargs: object) -> dict:
+        self.calls.append({"operation": "get", **kwargs})
+        return dict(self.get_response)

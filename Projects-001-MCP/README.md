@@ -3,7 +3,8 @@
 Standalone, read-only Product MCP service for Projects-001. The service provides
 a Streamable HTTP `/mcp` endpoint, OAuth resource-server validation, per-call
 Product policy resolution, common envelopes, separated audit telemetry, and the
-Phase 2 Core Business Owner Pilot and Phase 3 Finance/Document Gateway tools.
+Phase 2 Core Business, Phase 3 Finance/Document Gateway, and Phase 4 Project
+Operations/Product Audit tools.
 
 ## Current scope
 
@@ -30,6 +31,16 @@ Implemented tools:
 - `search_documents`
 - `get_document_metadata`
 - `read_document_content`
+- `list_inspection_items`
+- `get_inspection_item`
+- `list_daily_reports`
+- `get_daily_report`
+- `list_daily_report_versions`
+- `get_report_share_status`
+- `get_dashboard_summary`
+- `get_project_insights`
+- `search_audit_events`
+- `get_audit_event`
 
 They require a valid OAuth access token and a successful response from the
 service-authenticated Backend contracts. The MCP forwards only the verified OAuth
@@ -62,12 +73,14 @@ ruff check app tests
 pytest
 python -m tests.evals.phase2_evaluator
 python -m tests.evals.phase3_evaluator
+python -m tests.evals.phase4_evaluator
 docker build --tag projects-001-mcp:local .
 ```
 
-The evaluators report the Phase 2 Core Golden/BOQ gate and the Phase 3 exact
-Finance/Document security gate from the versioned `demo-sanitized` dataset.
-Real-client Phase 3 tool-selection evidence remains a separate release gate.
+The evaluators report the Phase 2 Core Golden/BOQ gate, Phase 3 exact
+Finance/Document security gate, and Phase 4 Project Operations/Audit gate from
+the versioned `demo-sanitized` dataset. Real-client Phase 4 tool selection,
+audit-view access, and operations p95 remain separate Demo release gates.
 
 Deployment is intentionally separate from the Backend lifecycle. From the
 repository root, copy the matching `mcp.deploy.*.example` and
@@ -91,5 +104,12 @@ deployment has been explicitly approved.
 - Bounded inputs plus per-verified-subject and Backend defense-in-depth rate
   limits.
 - Audit and operational log schemas are separate and recursively redacted.
+- Audit reads require Product `audit_log_read`, mandatory pre-read audit, and
+  access to the exact environment-locked Product Audit log view. Results are
+  validated against the allowlisted event schema and never include prompts or
+  document bodies.
+- Dashboard and project insights require `financial_data_read` for Admins,
+  preserve exact money strings, cite independent sources, and mark missing or
+  inconsistent sources explicitly.
 
 See `docs/implementation/mcp/` for contracts, ADRs and phase status.

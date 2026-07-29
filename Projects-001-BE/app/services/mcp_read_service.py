@@ -906,6 +906,16 @@ async def search(
                 settings=app_settings,
             )
         )
+    if domains.intersection({"inspection", "daily_reports"}):
+        from app.services.mcp_project_operations_service import search_phase4_hits
+
+        hits.extend(
+            await search_phase4_hits(
+                db,
+                request,
+                settings=app_settings,
+            )
+        )
     hits.sort(key=lambda item: (item["title"].lower(), item["reference"]))
     page = hits[offset : offset + request.limit]
     has_more = offset + len(page) < len(hits)
@@ -1007,6 +1017,16 @@ async def fetch(
         from app.services.mcp_finance_document_service import fetch_phase3
 
         result = await fetch_phase3(
+            db,
+            request,
+            settings=settings or get_settings(),
+        )
+        if result is not None:
+            return result
+    if domain in {"inspection", "daily_reports"}:
+        from app.services.mcp_project_operations_service import fetch_phase4
+
+        result = await fetch_phase4(
             db,
             request,
             settings=settings or get_settings(),

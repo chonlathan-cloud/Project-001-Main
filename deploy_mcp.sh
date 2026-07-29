@@ -74,6 +74,10 @@ case "${MCP_ENVIRONMENT}" in
     EXPECTED_CLOUDSQL="project001-489710:asia-southeast1:project-001"
     EXPECTED_FIRESTORE="(default)"
     EXPECTED_BUCKETS="kyc_id_cards,temp_bills,perm_bills,project001-489710-work-inspection,project001-489710-daily-reports-demo"
+    EXPECTED_AUDIT_BUCKET="projects-001-mcp-audit-demo"
+    EXPECTED_AUDIT_SINK="projects-001-mcp-audit-demo-sink"
+    EXPECTED_AUDIT_VIEW="projects-001-mcp-audit-demo-view"
+    EXPECTED_AUDIT_LOG_VIEW="projects/project001-489710/locations/asia-southeast1/buckets/projects-001-mcp-audit-demo/views/projects-001-mcp-audit-demo-view"
     ;;
   beta)
     EXPECTED_APP_ENV="prod-beta"
@@ -82,6 +86,10 @@ case "${MCP_ENVIRONMENT}" in
     EXPECTED_CLOUDSQL="project001-489710:asia-southeast1:project-001-beta"
     EXPECTED_FIRESTORE="prod-beta"
     EXPECTED_BUCKETS="kyc_id_cards-beta,temp_bills-beta,perm_bills-beta,project001-489710-work-inspection-beta,project001-489710-daily-reports-beta"
+    EXPECTED_AUDIT_BUCKET="projects-001-mcp-audit-beta"
+    EXPECTED_AUDIT_SINK="projects-001-mcp-audit-beta-sink"
+    EXPECTED_AUDIT_VIEW="projects-001-mcp-audit-beta-view"
+    EXPECTED_AUDIT_LOG_VIEW="projects/project001-489710/locations/asia-southeast1/buckets/projects-001-mcp-audit-beta/views/projects-001-mcp-audit-beta-view"
     ;;
   *) fail "MCP_ENVIRONMENT must be demo or beta" ;;
 esac
@@ -152,6 +160,8 @@ validate_yaml_value MCP_CLOUD_SQL_INSTANCE "${MCP_CLOUDSQL_INSTANCE}"
 validate_yaml_value MCP_FIRESTORE_DATABASE_ID "${MCP_FIRESTORE_DATABASE_ID}"
 validate_yaml_value MCP_ALLOWED_BUCKETS "${MCP_ALLOWED_BUCKETS}"
 validate_yaml_value MCP_RATE_LIMIT_PER_MINUTE "${MCP_RATE_LIMIT_PER_MINUTE}"
+validate_yaml_value MCP_AUDIT_LOG_VIEW "${EXPECTED_AUDIT_LOG_VIEW}"
+validate_yaml_value MCP_AUDIT_READ_MAX_DAYS "90"
 
 for url_key in MCP_OAUTH_ISSUER MCP_OAUTH_JWKS_URL MCP_BACKEND_URL MCP_BACKEND_AUDIENCE; do
   url_value="$(yaml_value "${url_key}")"
@@ -188,6 +198,62 @@ for bucket_name in "${allowed_bucket_items[@]}"; do
   gcloud storage buckets describe "gs://${bucket_name}" \
     --project "${GCP_PROJECT_ID}" >/dev/null
 done
+
+gcloud logging buckets describe "${EXPECTED_AUDIT_BUCKET}" \
+  --project "${GCP_PROJECT_ID}" \
+  --location "${GCP_REGION}" >/dev/null
+
+audit_view_filter="$(
+  gcloud logging views describe "${EXPECTED_AUDIT_VIEW}" \
+    --bucket "${EXPECTED_AUDIT_BUCKET}" \
+    --project "${GCP_PROJECT_ID}" \
+    --location "${GCP_REGION}" \
+    --format='value(filter)'
+)"
+[[ "${audit_view_filter}" == *"${MCP_SERVICE_NAME}"* ]] || fail \
+  "audit view filter is not restricted to the MCP service"
+[[ "${audit_view_filter}" == *"product_audit"* ]] || fail \
+  "audit view filter is not restricted to Product Audit events"
+
+audit_sink_destination="$(
+  gcloud logging sinks describe "${EXPECTED_AUDIT_SINK}" \
+    --project "${GCP_PROJECT_ID}" \
+    --format='value(destination)'
+)"
+expected_audit_sink_destination="logging.googleapis.com/projects/${GCP_PROJECT_ID}/locations/${GCP_REGION}/buckets/${EXPECTED_AUDIT_BUCKET}"
+[[ "${audit_sink_destination}" == "${expected_audit_sink_destination}" ]] || fail \
+  "audit sink destination mismatch"
+
+audit_sink_filter="$(
+  gcloud logging sinks describe "${EXPECTED_AUDIT_SINK}" \
+    --project "${GCP_PROJECT_ID}" \
+    --format='value(filter)'
+)"
+[[ "${audit_sink_filter}" == *"${MCP_SERVICE_NAME}"* ]] || fail \
+  "audit sink filter is not restricted to the MCP service"
+[[ "${audit_sink_filter}" == *"product_audit"* ]] || fail \
+  "audit sink filter is not restricted to Product Audit events"
+
+view_accessor_binding="$(
+  gcloud logging views get-iam-policy "${EXPECTED_AUDIT_VIEW}" \
+    --bucket "${EXPECTED_AUDIT_BUCKET}" \
+    --project "${GCP_PROJECT_ID}" \
+    --location "${GCP_REGION}" \
+    --flatten='bindings[].members' \
+    --filter="bindings.role=roles/logging.viewAccessor AND bindings.members=serviceAccount:${MCP_SERVICE_ACCOUNT}" \
+    --format='value(bindings.role)'
+)"
+[[ "${view_accessor_binding}" == "roles/logging.viewAccessor" ]] || fail \
+  "MCP service account lacks exact audit view access"
+
+log_writer_binding="$(
+  gcloud projects get-iam-policy "${GCP_PROJECT_ID}" \
+    --flatten='bindings[].members' \
+    --filter="bindings.role=roles/logging.logWriter AND bindings.members=serviceAccount:${MCP_SERVICE_ACCOUNT}" \
+    --format='value(bindings.role)'
+)"
+[[ "${log_writer_binding}" == "roles/logging.logWriter" ]] || fail \
+  "MCP service account lacks logging.logWriter"
 
 echo "MCP live resource preflight passed."
 
