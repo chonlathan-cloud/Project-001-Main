@@ -8,9 +8,9 @@ The planning baseline remains immutable; implementation status is tracked here.
 
 | Phase | Status | Notes |
 |---|---|---|
-| Phase 0 — contracts and ADRs | Complete for the local baseline | Live IAM/OAuth proof remains a Foundation spike |
-| Phase 1 — Demo foundation | Repository implementation complete | Live OAuth, IAM and Demo deployment gates remain |
-| Phase 2 — Core Business Owner Pilot | Demo validation in progress | All Demo gates pass except the real Codex/ChatGPT client flow |
+| Phase 0 — contracts and ADRs | Complete | Auth0 compatibility spike proven in Demo; the temporary RFC 9207 response-issuer workaround is recorded in the release evidence |
+| Phase 1 — Demo foundation | Complete | Isolated IAM, deployment, OAuth, audit and rollback gates passed in Demo |
+| Phase 2 — Core Business Owner Pilot | Complete | All Demo gates passed, including MCP Inspector and direct Codex Owner flows |
 | Phases 3–7 | Not started | Follow the approved gates; no cloud promotion was performed |
 
 ## Phase 0 artifacts

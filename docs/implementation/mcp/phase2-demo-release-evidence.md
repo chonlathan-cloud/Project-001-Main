@@ -37,6 +37,8 @@ The evaluated Core Phase 2 cases are `G-001-th`, `G-001-en`, `G-003`,
 |---|---:|---|
 | OAuth Owner login | Pass | Auth0 Authorization Code flow completed with consent |
 | MCP Inspector initialization | Pass | Streamable HTTP connected and tool inventory loaded |
+| Direct Codex OAuth | Pass | Codex CLI 0.145.0 completed Authorization Code with PKCE S256 as the existing public Demo client with `mcp:read` |
+| Real Codex Owner flow | Pass | A sandboxed read-only Codex run called access, catalog, project-list and current-BOQ tools through the live Demo MCP |
 | Search and fetch | Pass | Authorized project search returned a stable reference and fetch resolved it |
 | BOQ current/history/as-of | Pass | Current v3 and point-in-time v2 resolved with source/version metadata |
 | BOQ comparison | Pass | v2 to v3: 41 added, 37 removed and 6 changed lines |
@@ -50,14 +52,27 @@ The evaluated Core Phase 2 cases are `G-001-th`, `G-001-en`, `G-003`,
 | Owner revocation and restore | Pass | The existing Inspector session was denied immediately while `external_mcp_enabled=false`, then succeeded after restoring it |
 | Cloud Run rollback and restore | Pass | Traffic moved from `00004-mn4` to `00003-zx8`; health, fail-closed auth and Owner read passed before traffic returned to `00004-mn4` |
 
-## Remaining release gate
+The bounded Codex checks returned the expected Demo Owner scope, 10 catalog
+domains, 14 currently available tools, eight authorized projects and the current
+`TEST-PRE-GO-LIVE` BOQ v3 with 338 lines and a THB 1,933,895.00 customer budget.
+Only these compact non-sensitive facts were retained as evidence.
 
-- Run one real Codex or ChatGPT Desktop Owner flow and record the prompt/tool/result
-  evidence separately from deterministic fixture evaluation.
+## Auth compatibility result
+
+- The existing Inspector application is configured as a public client
+  (`Authentication Method: None`) and uses Authorization Code with PKCE S256.
+- `Include Issuer in Authorization Responses` is disabled in the Demo Auth0
+  tenant as a temporary Codex 0.145.0 compatibility workaround. The MCP resource
+  server still validates the JWT `iss`, audience/resource, signature, expiry,
+  scope, client and Product authorization binding.
+- This Demo-only workaround must be reviewed again before any Beta promotion;
+  it is not an approval to copy the tenant setting to Beta or Production.
+
+## Release decision
+
+All Phase 2 release gates are closed. Phase 3 may begin in Demo while the rollout
+remains Owner-only. No Beta promotion is included in this decision.
 
 The cross-environment and assigned-project isolation gates remain automated for
 this rollout. The Owner pilot legitimately has all-project scope, and the approved
 drill scope explicitly excluded access to Beta.
-
-Phase 3 must not begin until every remaining item is complete and this report is
-updated to show a closed Phase 2 gate.
