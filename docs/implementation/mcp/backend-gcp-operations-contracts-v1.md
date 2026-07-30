@@ -127,6 +127,13 @@ Before deploying MCP `0.5.0` in Demo:
    `logging.views.get` and `logging.logEntries.list`. Use resource-scoped or
    conditional bindings where supported; do not grant BigQuery, Secret Manager,
    business-data write, arbitrary object-read or excluded SaaS access.
+   Demo uses the project custom role
+   `projects001McpMetadataReader`. Bind it directly to the three Demo Cloud Run
+   services, five allowlisted Demo buckets, the compiled Artifact Registry
+   repository and the exact operational log view. Bind the same role at project
+   level only with separate exact-name IAM Conditions for Cloud SQL
+   `project-001` and Firestore `(default)`; do not use an unconditional
+   project-level grant.
 4. Deploy Backend first, then MCP, and verify all 28 internal routes remain
    service-identity-only.
 5. Keep the initial live verification Owner-only. Enable selected Admins only

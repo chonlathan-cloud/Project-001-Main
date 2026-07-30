@@ -104,6 +104,11 @@ case "${MCP_ENVIRONMENT}" in
   *) fail "MCP_ENVIRONMENT must be demo or beta" ;;
 esac
 
+EXPECTED_METADATA_ROLE_ID="projects001McpMetadataReader"
+EXPECTED_METADATA_ROLE="projects/${GCP_PROJECT_ID}/roles/${EXPECTED_METADATA_ROLE_ID}"
+EXPECTED_SQL_METADATA_CONDITION="resource.type == \"sqladmin.googleapis.com/Instance\" && resource.name == \"projects/${GCP_PROJECT_ID}/instances/${EXPECTED_CLOUDSQL##*:}\""
+EXPECTED_FIRESTORE_METADATA_CONDITION="resource.type == \"firestore.googleapis.com/Database\" && resource.name == \"projects/${GCP_PROJECT_ID}/databases/${EXPECTED_FIRESTORE}\""
+
 [[ "${MCP_SERVICE_NAME}" == "${EXPECTED_MCP_SERVICE}" ]] || fail "MCP service mismatch"
 [[ "${ARTIFACT_REPO}" == "projects-001" ]] || fail "Artifact Registry mapping mismatch"
 [[ "${MCP_BACKEND_SERVICE_NAME}" == "${EXPECTED_BACKEND_SERVICE}" ]] || fail \
@@ -175,6 +180,33 @@ validate_operational_filter() {
   fi
 }
 
+validate_metadata_role() {
+  if ! python3 \
+    "${MCP_SOURCE_PATH}/app/config/metadata_iam_policy.py" \
+    role <<< "$1"; then
+    fail "MCP metadata role must contain exactly the seven approved read permissions"
+  fi
+}
+
+validate_metadata_binding() {
+  local policy_json="$1"
+  local binding_target="$2"
+  local condition_expression="${3:-}"
+  local arguments=(
+    binding
+    "${EXPECTED_METADATA_ROLE}"
+    "serviceAccount:${MCP_SERVICE_ACCOUNT}"
+  )
+  if [[ -n "${condition_expression}" ]]; then
+    arguments+=("${condition_expression}")
+  fi
+  if ! python3 \
+    "${MCP_SOURCE_PATH}/app/config/metadata_iam_policy.py" \
+    "${arguments[@]}" <<< "${policy_json}"; then
+    fail "MCP service account lacks exact metadata role binding on ${binding_target}"
+  fi
+}
+
 # Keep this compatible with the Bash 3.2 shipped on macOS so preflight can run
 # on a clean developer machine without an additional shell dependency.
 validate_yaml_value MCP_ENVIRONMENT "${MCP_ENVIRONMENT}"
@@ -222,6 +254,25 @@ done
 gcloud iam service-accounts describe "${MCP_SERVICE_ACCOUNT}" \
   --project "${GCP_PROJECT_ID}" >/dev/null
 
+metadata_role_json="$(
+  gcloud iam roles describe "${EXPECTED_METADATA_ROLE_ID}" \
+    --project "${GCP_PROJECT_ID}" \
+    --format=json
+)"
+validate_metadata_role "${metadata_role_json}"
+
+project_policy_json="$(
+  gcloud projects get-iam-policy "${GCP_PROJECT_ID}" --format=json
+)"
+validate_metadata_binding \
+  "${project_policy_json}" \
+  "Demo Cloud SQL instance" \
+  "${EXPECTED_SQL_METADATA_CONDITION}"
+validate_metadata_binding \
+  "${project_policy_json}" \
+  "Demo Firestore database" \
+  "${EXPECTED_FIRESTORE_METADATA_CONDITION}"
+
 cloud_sql_name="${MCP_CLOUDSQL_INSTANCE##*:}"
 gcloud sql instances describe "${cloud_sql_name}" \
   --project "${GCP_PROJECT_ID}" >/dev/null
@@ -233,7 +284,38 @@ IFS=',' read -r -a allowed_bucket_items <<< "${MCP_ALLOWED_BUCKETS}"
 for bucket_name in "${allowed_bucket_items[@]}"; do
   gcloud storage buckets describe "gs://${bucket_name}" \
     --project "${GCP_PROJECT_ID}" >/dev/null
+  bucket_policy_json="$(
+    gcloud storage buckets get-iam-policy "gs://${bucket_name}" \
+      --project "${GCP_PROJECT_ID}" \
+      --format=json
+  )"
+  validate_metadata_binding "${bucket_policy_json}" "Demo bucket ${bucket_name}"
 done
+
+for cloud_run_service in \
+  "${EXPECTED_FRONTEND_SERVICE}" \
+  "${EXPECTED_BACKEND_SERVICE}" \
+  "${EXPECTED_MCP_SERVICE}"; do
+  cloud_run_policy_json="$(
+    gcloud run services get-iam-policy "${cloud_run_service}" \
+      --project "${GCP_PROJECT_ID}" \
+      --region "${GCP_REGION}" \
+      --format=json
+  )"
+  validate_metadata_binding \
+    "${cloud_run_policy_json}" \
+    "Demo Cloud Run service ${cloud_run_service}"
+done
+
+artifact_policy_json="$(
+  gcloud artifacts repositories get-iam-policy "${ARTIFACT_REPO}" \
+    --project "${GCP_PROJECT_ID}" \
+    --location "${GCP_REGION}" \
+    --format=json
+)"
+validate_metadata_binding \
+  "${artifact_policy_json}" \
+  "compiled Artifact Registry repository"
 
 gcloud logging buckets describe "${EXPECTED_AUDIT_BUCKET}" \
   --project "${GCP_PROJECT_ID}" \
@@ -369,6 +451,9 @@ raise SystemExit(0 if found else 1)
   "serviceAccount:${MCP_SERVICE_ACCOUNT}" <<< "${operational_view_policy_json}"; then
   fail "MCP service account lacks exact operational view access"
 fi
+validate_metadata_binding \
+  "${operational_view_policy_json}" \
+  "exact operational log view"
 
 log_writer_binding="$(
   gcloud projects get-iam-policy "${GCP_PROJECT_ID}" \
