@@ -37,6 +37,19 @@ def test_role_rejects_missing_extra_or_disabled_permissions() -> None:
     )
 
 
+def test_role_rejects_transaction_permission_in_place_of_firestore_metadata() -> None:
+    permissions = sorted(
+        "datastore.databases.get"
+        if permission == "datastore.databases.getMetadata"
+        else permission
+        for permission in REQUIRED_METADATA_PERMISSIONS
+    )
+
+    assert not role_has_exact_permissions(
+        {"includedPermissions": permissions, "stage": "GA"}
+    )
+
+
 def test_policy_accepts_exact_unconditional_resource_binding() -> None:
     policy = {"bindings": [{"role": ROLE, "members": [MEMBER]}]}
     assert policy_has_exact_binding(

@@ -122,7 +122,7 @@ Before deploying MCP `0.5.0` in Demo:
 2. Grant the Demo MCP service account `roles/logging.viewAccessor` on that exact
    operational view. Retain the separate exact Product Audit view binding.
 3. Grant only the metadata permissions required by the compiled resources:
-   `run.services.get`, `cloudsql.instances.get`, `datastore.databases.get`,
+   `run.services.get`, `cloudsql.instances.get`, `datastore.databases.getMetadata`,
    `storage.buckets.get`, `artifactregistry.repositories.get`,
    `logging.views.get` and `logging.logEntries.list`. Use resource-scoped or
    conditional bindings where supported; do not grant BigQuery, Secret Manager,

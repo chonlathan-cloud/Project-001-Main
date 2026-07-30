@@ -11,7 +11,7 @@ REQUIRED_METADATA_PERMISSIONS = frozenset(
     {
         "artifactregistry.repositories.get",
         "cloudsql.instances.get",
-        "datastore.databases.get",
+        "datastore.databases.getMetadata",
         "logging.logEntries.list",
         "logging.views.get",
         "run.services.get",
