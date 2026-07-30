@@ -60,6 +60,14 @@ def make_settings(environment: str = "demo", **overrides: object) -> Settings:
             "projects-001-mcp-audit-demo/views/projects-001-mcp-audit-demo-view"
         ),
         "MCP_OPERATIONAL_LOG_NAME": "test_operational",
+        "MCP_OPERATIONAL_LOG_VIEW": (
+            "projects/project001-489710/locations/asia-southeast1/buckets/"
+            "projects-001-mcp-ops-beta/views/projects-001-mcp-ops-beta-view"
+            if beta
+            else "projects/project001-489710/locations/asia-southeast1/buckets/"
+            "projects-001-mcp-ops-demo/views/projects-001-mcp-ops-demo-view"
+        ),
+        "MCP_OPERATIONAL_LOG_READ_MAX_DAYS": 30,
         "MCP_LOG_LEVEL": "INFO",
     }
     values.update(overrides)
@@ -210,3 +218,28 @@ class StaticAuditReadClient:
     async def get(self, **kwargs: object) -> dict:
         self.calls.append({"operation": "get", **kwargs})
         return dict(self.get_response)
+
+
+class StaticGcpOperationsClient:
+    def __init__(self, responses: dict[str, dict] | None = None) -> None:
+        self.responses = responses or {}
+        self.calls: list[dict] = []
+
+    async def _response(self, operation: str, **kwargs: object) -> dict:
+        self.calls.append({"operation": operation, **kwargs})
+        return dict(self.responses.get(operation, {}))
+
+    async def get_system_health(self, **kwargs: object) -> dict:
+        return await self._response("get_system_health", **kwargs)
+
+    async def get_resource_summary(self, **kwargs: object) -> dict:
+        return await self._response("get_resource_summary", **kwargs)
+
+    async def get_cloud_run_status(self, **kwargs: object) -> dict:
+        return await self._response("get_cloud_run_status", **kwargs)
+
+    async def search_application_errors(self, **kwargs: object) -> dict:
+        return await self._response("search_application_errors", **kwargs)
+
+    async def get_data_source_health(self, **kwargs: object) -> dict:
+        return await self._response("get_data_source_health", **kwargs)

@@ -70,6 +70,7 @@ case "${MCP_ENVIRONMENT}" in
   demo)
     EXPECTED_APP_ENV="production"
     EXPECTED_MCP_SERVICE="projects-001-mcp"
+    EXPECTED_FRONTEND_SERVICE="projects-001-fe"
     EXPECTED_BACKEND_SERVICE="projects-001-be"
     EXPECTED_CLOUDSQL="project001-489710:asia-southeast1:project-001"
     EXPECTED_FIRESTORE="(default)"
@@ -78,10 +79,15 @@ case "${MCP_ENVIRONMENT}" in
     EXPECTED_AUDIT_SINK="projects-001-mcp-audit-demo-sink"
     EXPECTED_AUDIT_VIEW="projects-001-mcp-audit-demo-view"
     EXPECTED_AUDIT_LOG_VIEW="projects/project001-489710/locations/asia-southeast1/buckets/projects-001-mcp-audit-demo/views/projects-001-mcp-audit-demo-view"
+    EXPECTED_OPERATIONAL_BUCKET="projects-001-mcp-ops-demo"
+    EXPECTED_OPERATIONAL_SINK="projects-001-mcp-ops-demo-sink"
+    EXPECTED_OPERATIONAL_VIEW="projects-001-mcp-ops-demo-view"
+    EXPECTED_OPERATIONAL_LOG_VIEW="projects/project001-489710/locations/asia-southeast1/buckets/projects-001-mcp-ops-demo/views/projects-001-mcp-ops-demo-view"
     ;;
   beta)
     EXPECTED_APP_ENV="prod-beta"
     EXPECTED_MCP_SERVICE="projects-001-mcp-beta"
+    EXPECTED_FRONTEND_SERVICE="projects-001-fe-beta"
     EXPECTED_BACKEND_SERVICE="projects-001-be-beta"
     EXPECTED_CLOUDSQL="project001-489710:asia-southeast1:project-001-beta"
     EXPECTED_FIRESTORE="prod-beta"
@@ -90,11 +96,16 @@ case "${MCP_ENVIRONMENT}" in
     EXPECTED_AUDIT_SINK="projects-001-mcp-audit-beta-sink"
     EXPECTED_AUDIT_VIEW="projects-001-mcp-audit-beta-view"
     EXPECTED_AUDIT_LOG_VIEW="projects/project001-489710/locations/asia-southeast1/buckets/projects-001-mcp-audit-beta/views/projects-001-mcp-audit-beta-view"
+    EXPECTED_OPERATIONAL_BUCKET="projects-001-mcp-ops-beta"
+    EXPECTED_OPERATIONAL_SINK="projects-001-mcp-ops-beta-sink"
+    EXPECTED_OPERATIONAL_VIEW="projects-001-mcp-ops-beta-view"
+    EXPECTED_OPERATIONAL_LOG_VIEW="projects/project001-489710/locations/asia-southeast1/buckets/projects-001-mcp-ops-beta/views/projects-001-mcp-ops-beta-view"
     ;;
   *) fail "MCP_ENVIRONMENT must be demo or beta" ;;
 esac
 
 [[ "${MCP_SERVICE_NAME}" == "${EXPECTED_MCP_SERVICE}" ]] || fail "MCP service mismatch"
+[[ "${ARTIFACT_REPO}" == "projects-001" ]] || fail "Artifact Registry mapping mismatch"
 [[ "${MCP_BACKEND_SERVICE_NAME}" == "${EXPECTED_BACKEND_SERVICE}" ]] || fail \
   "Backend service mismatch"
 [[ "${MCP_CLOUDSQL_INSTANCE}" == "${EXPECTED_CLOUDSQL}" ]] || fail \
@@ -146,6 +157,45 @@ validate_yaml_value() {
     "runtime YAML mismatch for ${yaml_key}"
 }
 
+validate_operational_filter() {
+  local filter_text="$1"
+  if ! python3 -c '
+import re
+import sys
+
+text = sys.stdin.read()
+expected_services = set(sys.argv[1:4])
+expected_region = sys.argv[4]
+services = set(
+    re.findall(
+        r"resource\.labels\.service_name\s*=\s*\"([^\"]+)\"",
+        text,
+    )
+)
+has_resource_type = bool(
+    re.search(r"resource\.type\s*=\s*\"cloud_run_revision\"", text)
+)
+has_region = bool(
+    re.search(
+        r"resource\.labels\.location\s*=\s*\"" + re.escape(expected_region) + r"\"",
+        text,
+    )
+)
+has_severity = bool(re.search(r"severity\s*>=\s*WARNING", text, re.IGNORECASE))
+raise SystemExit(
+    0
+    if services == expected_services and has_resource_type and has_region and has_severity
+    else 1
+)
+' \
+    "${EXPECTED_FRONTEND_SERVICE}" \
+    "${EXPECTED_BACKEND_SERVICE}" \
+    "${EXPECTED_MCP_SERVICE}" \
+    "${GCP_REGION}" <<< "${filter_text}"; then
+    fail "operational filter must contain exactly the Product Cloud Run services, region, resource type and severity bound"
+  fi
+}
+
 # Keep this compatible with the Bash 3.2 shipped on macOS so preflight can run
 # on a clean developer machine without an additional shell dependency.
 validate_yaml_value MCP_ENVIRONMENT "${MCP_ENVIRONMENT}"
@@ -162,6 +212,8 @@ validate_yaml_value MCP_ALLOWED_BUCKETS "${MCP_ALLOWED_BUCKETS}"
 validate_yaml_value MCP_RATE_LIMIT_PER_MINUTE "${MCP_RATE_LIMIT_PER_MINUTE}"
 validate_yaml_value MCP_AUDIT_LOG_VIEW "${EXPECTED_AUDIT_LOG_VIEW}"
 validate_yaml_value MCP_AUDIT_READ_MAX_DAYS "90"
+validate_yaml_value MCP_OPERATIONAL_LOG_VIEW "${EXPECTED_OPERATIONAL_LOG_VIEW}"
+validate_yaml_value MCP_OPERATIONAL_LOG_READ_MAX_DAYS "30"
 
 for url_key in MCP_OAUTH_ISSUER MCP_OAUTH_JWKS_URL MCP_BACKEND_URL MCP_BACKEND_AUDIENCE; do
   url_value="$(yaml_value "${url_key}")"
@@ -180,9 +232,14 @@ gcloud projects describe "${GCP_PROJECT_ID}" --format='value(projectId)' >/dev/n
 gcloud artifacts repositories describe "${ARTIFACT_REPO}" \
   --project "${GCP_PROJECT_ID}" \
   --location "${GCP_REGION}" >/dev/null
-gcloud run services describe "${MCP_BACKEND_SERVICE_NAME}" \
-  --project "${GCP_PROJECT_ID}" \
-  --region "${GCP_REGION}" >/dev/null
+for cloud_run_service in \
+  "${EXPECTED_FRONTEND_SERVICE}" \
+  "${EXPECTED_BACKEND_SERVICE}" \
+  "${EXPECTED_MCP_SERVICE}"; do
+  gcloud run services describe "${cloud_run_service}" \
+    --project "${GCP_PROJECT_ID}" \
+    --region "${GCP_REGION}" >/dev/null
+done
 gcloud iam service-accounts describe "${MCP_SERVICE_ACCOUNT}" \
   --project "${GCP_PROJECT_ID}" >/dev/null
 
@@ -254,6 +311,88 @@ raise SystemExit(0 if found else 1)
   "roles/logging.viewAccessor" \
   "serviceAccount:${MCP_SERVICE_ACCOUNT}" <<< "${view_policy_json}"; then
   fail "MCP service account lacks exact audit view access"
+fi
+
+operational_retention_days="$(
+  gcloud logging buckets describe "${EXPECTED_OPERATIONAL_BUCKET}" \
+    --project "${GCP_PROJECT_ID}" \
+    --location "${GCP_REGION}" \
+    --format='value(retentionDays)'
+)"
+[[ "${operational_retention_days}" == "30" ]] || fail \
+  "operational log bucket retention must be exactly 30 days"
+
+operational_view_filter="$(
+  gcloud logging views describe "${EXPECTED_OPERATIONAL_VIEW}" \
+    --bucket "${EXPECTED_OPERATIONAL_BUCKET}" \
+    --project "${GCP_PROJECT_ID}" \
+    --location "${GCP_REGION}" \
+    --format='value(filter)'
+)"
+validate_operational_filter "${operational_view_filter}"
+for cloud_run_service in \
+  "${EXPECTED_FRONTEND_SERVICE}" \
+  "${EXPECTED_BACKEND_SERVICE}" \
+  "${EXPECTED_MCP_SERVICE}"; do
+  [[ "${operational_view_filter}" == *"${cloud_run_service}"* ]] || fail \
+    "operational view filter is missing an allowed Product service"
+done
+[[ "${operational_view_filter}" == *"severity>=WARNING"* ]] || fail \
+  "operational view filter must exclude lower-severity application logs"
+if [[ "${operational_view_filter}" == *"project-saas-001"* ]]; then
+  fail "operational view filter references an excluded SaaS service"
+fi
+
+operational_sink_destination="$(
+  gcloud logging sinks describe "${EXPECTED_OPERATIONAL_SINK}" \
+    --project "${GCP_PROJECT_ID}" \
+    --format='value(destination)'
+)"
+expected_operational_sink_destination="logging.googleapis.com/projects/${GCP_PROJECT_ID}/locations/${GCP_REGION}/buckets/${EXPECTED_OPERATIONAL_BUCKET}"
+[[ "${operational_sink_destination}" == "${expected_operational_sink_destination}" ]] || fail \
+  "operational sink destination mismatch"
+
+operational_sink_filter="$(
+  gcloud logging sinks describe "${EXPECTED_OPERATIONAL_SINK}" \
+    --project "${GCP_PROJECT_ID}" \
+    --format='value(filter)'
+)"
+validate_operational_filter "${operational_sink_filter}"
+for cloud_run_service in \
+  "${EXPECTED_FRONTEND_SERVICE}" \
+  "${EXPECTED_BACKEND_SERVICE}" \
+  "${EXPECTED_MCP_SERVICE}"; do
+  [[ "${operational_sink_filter}" == *"${cloud_run_service}"* ]] || fail \
+    "operational sink filter is missing an allowed Product service"
+done
+[[ "${operational_sink_filter}" == *"severity>=WARNING"* ]] || fail \
+  "operational sink filter must exclude lower-severity application logs"
+if [[ "${operational_sink_filter}" == *"project-saas-001"* ]]; then
+  fail "operational sink filter references an excluded SaaS service"
+fi
+
+operational_view_policy_json="$(
+  gcloud logging views get-iam-policy "${EXPECTED_OPERATIONAL_VIEW}" \
+    --bucket "${EXPECTED_OPERATIONAL_BUCKET}" \
+    --project "${GCP_PROJECT_ID}" \
+    --location "${GCP_REGION}" \
+    --format=json
+)"
+if ! python3 -c '
+import json
+import sys
+
+policy = json.load(sys.stdin)
+role, member = sys.argv[1:3]
+found = any(
+    binding.get("role") == role and member in binding.get("members", [])
+    for binding in policy.get("bindings", [])
+)
+raise SystemExit(0 if found else 1)
+' \
+  "roles/logging.viewAccessor" \
+  "serviceAccount:${MCP_SERVICE_ACCOUNT}" <<< "${operational_view_policy_json}"; then
+  fail "MCP service account lacks exact operational view access"
 fi
 
 log_writer_binding="$(

@@ -17,6 +17,7 @@ from starlette.types import ASGIApp
 from app import __version__
 from app.adapters.audit.client import AuditReadClientProtocol, GoogleCloudAuditReadClient
 from app.adapters.backend.client import BackendReadClient, BackendReadClientProtocol
+from app.adapters.gcp.client import GcpOperationsClientProtocol, GoogleCloudOperationsClient
 from app.audit.emitter import AuditEmitter, StructuredAuditEmitter
 from app.auth.oidc import OidcJwtTokenVerifier
 from app.config.settings import Settings
@@ -28,6 +29,7 @@ from app.tools.audit.handlers import register_audit_tools
 from app.tools.core.handlers import register_core_tools
 from app.tools.discovery.handlers import register_discovery_tools
 from app.tools.finance_documents.handlers import register_finance_document_tools
+from app.tools.gcp_operations.handlers import register_gcp_operation_tools
 from app.tools.project_operations.handlers import register_project_operation_tools
 from app.tools.registry import ToolRegistry
 from app.tools.runtime import ToolRuntime
@@ -41,6 +43,7 @@ def create_mcp_server(
     audit_emitter: AuditEmitter | None = None,
     backend_read_client: BackendReadClientProtocol | None = None,
     audit_read_client: AuditReadClientProtocol | None = None,
+    gcp_operations_client: GcpOperationsClientProtocol | None = None,
 ) -> FastMCP:
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
     verifier = token_verifier or OidcJwtTokenVerifier(settings)
@@ -48,6 +51,7 @@ def create_mcp_server(
     audit = audit_emitter or StructuredAuditEmitter(settings)
     backend = backend_read_client or BackendReadClient(settings)
     audit_reader = audit_read_client or GoogleCloudAuditReadClient(settings)
+    gcp_operations = gcp_operations_client or GoogleCloudOperationsClient(settings)
 
     mcp = ClosedInputFastMCP(
         name="Projects-001 Product MCP",
@@ -80,6 +84,7 @@ def create_mcp_server(
     register_finance_document_tools(mcp, runtime, registry, backend)
     register_project_operation_tools(mcp, runtime, registry, backend)
     register_audit_tools(mcp, runtime, registry, audit_reader, settings)
+    register_gcp_operation_tools(mcp, runtime, registry, gcp_operations, backend, settings)
 
     @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
     async def health(_request: Request) -> JSONResponse:
@@ -104,6 +109,7 @@ def create_app(
     audit_emitter: AuditEmitter | None = None,
     backend_read_client: BackendReadClientProtocol | None = None,
     audit_read_client: AuditReadClientProtocol | None = None,
+    gcp_operations_client: GcpOperationsClientProtocol | None = None,
 ) -> ASGIApp:
     mcp = create_mcp_server(
         settings,
@@ -112,5 +118,6 @@ def create_app(
         audit_emitter=audit_emitter,
         backend_read_client=backend_read_client,
         audit_read_client=audit_read_client,
+        gcp_operations_client=gcp_operations_client,
     )
     return RequestIdMiddleware(mcp.streamable_http_app())

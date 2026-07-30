@@ -10,17 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps.auth import AuthenticatedUser, require_owner_user
+from app.api.deps.auth import AuthenticatedUser, require_admin_user, require_owner_user
 from app.core.database import get_db
 from app.schemas.responses import StandardResponse
-from app.services.ai_service import ask_strategic_question
-from app.services.chat_analytics_service import analyze_chat_question
 from app.services.chat_history_service import (
     CHAT_HISTORY_RETENTION_LIMIT,
     clear_chat_history,
     list_recent_chat_history,
     save_chat_history_exchange,
 )
+from app.services.internal_chat_adapter import analyze_internal_chat_question
 
 router = APIRouter(prefix="/chat", tags=["AI Strategic Chat"])
 
@@ -78,35 +77,22 @@ async def chat_history_clear(
 async def chat_ask(
     request: ChatRequest,
     db: AsyncSession = Depends(get_db),
-    _user: AuthenticatedUser = Depends(require_owner_user),
+    user: AuthenticatedUser = Depends(require_admin_user),
 ):
     """
     Executive asks a strategic question.
     Flow:
       1. Detect the user's analytics intent.
-      2. Aggregate grounded metrics from the database.
-      3. Optionally ask Gemini to polish the grounded answer.
-      4. Return structured summary + sources + next actions.
+      2. Invoke the shared policy-scoped dashboard or insight contract.
+      3. Return deterministic grounded facts, sources, and next actions.
     """
     try:
-        analysis = await analyze_chat_question(
+        analysis = await analyze_internal_chat_question(
             db,
+            user=user,
             question=request.message,
             project_id=request.project_id,
         )
-
-        # Use LLM polishing as a best-effort step. If it fails, keep the grounded reply.
-        try:
-            ai_response = await ask_strategic_question(
-                question=request.message,
-                context_data=analysis["llm_context"],
-                project_name=analysis.get("project_name"),
-            )
-            polished_reply = (ai_response.get("reply") or "").strip()
-            if polished_reply:
-                analysis["reply"] = polished_reply
-        except Exception:
-            pass
 
         analysis.pop("llm_context", None)
 
@@ -121,6 +107,8 @@ async def chat_ask(
 
         return StandardResponse(data=analysis)
 
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -468,12 +468,14 @@ async def get_dashboard_summary(
     request: McpDashboardSummaryRequest,
     *,
     settings: Settings | None = None,
+    access_context: Any | None = None,
 ) -> dict[str, Any]:
     app_settings = settings or get_settings()
     access = _authorize(
         request,
         required_permissions=FINANCE_PERMISSION,
         settings=app_settings,
+        access_context=access_context,
     )
     allowed = _project_scope(access)
     requested = {str(value) for value in request.project_ids}
@@ -724,6 +726,7 @@ async def get_project_insights(
     request: McpProjectInsightsRequest,
     *,
     settings: Settings | None = None,
+    access_context: Any | None = None,
 ) -> dict[str, Any]:
     app_settings = settings or get_settings()
     _authorize(
@@ -731,6 +734,7 @@ async def get_project_insights(
         project_id=str(request.project_id),
         required_permissions=FINANCE_PERMISSION,
         settings=app_settings,
+        access_context=access_context,
     )
     financial = await get_project_financial_summary(
         db,
@@ -738,6 +742,7 @@ async def get_project_insights(
             **_principal(request), project_id=request.project_id, fresh=True
         ),
         settings=app_settings,
+        access_context=access_context,
     )
     inspection_result, report_result = await asyncio.gather(
         asyncio.to_thread(

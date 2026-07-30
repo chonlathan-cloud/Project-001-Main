@@ -22,25 +22,32 @@ class EnvironmentProfile:
         *,
         app_env: str,
         service_name: str,
+        frontend_service_name: str,
         backend_service_name: str,
         cloud_sql_instance: str,
         firestore_database_id: str,
         buckets: set[str],
         audit_log_view: str,
+        operational_log_view: str,
+        artifact_repository: str,
     ) -> None:
         self.app_env = app_env
         self.service_name = service_name
+        self.frontend_service_name = frontend_service_name
         self.backend_service_name = backend_service_name
         self.cloud_sql_instance = cloud_sql_instance
         self.firestore_database_id = firestore_database_id
         self.buckets = frozenset(buckets)
         self.audit_log_view = audit_log_view
+        self.operational_log_view = operational_log_view
+        self.artifact_repository = artifact_repository
 
 
 ENVIRONMENT_PROFILES = {
     Environment.DEMO: EnvironmentProfile(
         app_env="production",
         service_name="projects-001-mcp",
+        frontend_service_name="projects-001-fe",
         backend_service_name="projects-001-be",
         cloud_sql_instance="project001-489710:asia-southeast1:project-001",
         firestore_database_id="(default)",
@@ -55,10 +62,16 @@ ENVIRONMENT_PROFILES = {
             "projects/project001-489710/locations/asia-southeast1/buckets/"
             "projects-001-mcp-audit-demo/views/projects-001-mcp-audit-demo-view"
         ),
+        operational_log_view=(
+            "projects/project001-489710/locations/asia-southeast1/buckets/"
+            "projects-001-mcp-ops-demo/views/projects-001-mcp-ops-demo-view"
+        ),
+        artifact_repository="projects-001",
     ),
     Environment.BETA: EnvironmentProfile(
         app_env="prod-beta",
         service_name="projects-001-mcp-beta",
+        frontend_service_name="projects-001-fe-beta",
         backend_service_name="projects-001-be-beta",
         cloud_sql_instance="project001-489710:asia-southeast1:project-001-beta",
         firestore_database_id="prod-beta",
@@ -73,6 +86,11 @@ ENVIRONMENT_PROFILES = {
             "projects/project001-489710/locations/asia-southeast1/buckets/"
             "projects-001-mcp-audit-beta/views/projects-001-mcp-audit-beta-view"
         ),
+        operational_log_view=(
+            "projects/project001-489710/locations/asia-southeast1/buckets/"
+            "projects-001-mcp-ops-beta/views/projects-001-mcp-ops-beta-view"
+        ),
+        artifact_repository="projects-001",
     ),
 }
 
@@ -155,6 +173,13 @@ class Settings(BaseSettings):
         alias="MCP_AUDIT_READ_MAX_DAYS",
     )
     operational_log_name: str = Field(alias="MCP_OPERATIONAL_LOG_NAME")
+    operational_log_view: str = Field(alias="MCP_OPERATIONAL_LOG_VIEW")
+    operational_log_read_max_days: int = Field(
+        default=30,
+        ge=1,
+        le=30,
+        alias="MCP_OPERATIONAL_LOG_READ_MAX_DAYS",
+    )
     log_level: str = Field(default="INFO", alias="MCP_LOG_LEVEL")
 
     @field_validator(
@@ -214,6 +239,10 @@ class Settings(BaseSettings):
                 profile.firestore_database_id,
             ),
             "MCP_AUDIT_LOG_VIEW": (self.audit_log_view, profile.audit_log_view),
+            "MCP_OPERATIONAL_LOG_VIEW": (
+                self.operational_log_view,
+                profile.operational_log_view,
+            ),
         }
         mismatches = [name for name, (actual, wanted) in expected.items() if actual != wanted]
         if mismatches:
@@ -256,6 +285,9 @@ class Settings(BaseSettings):
                 self.cloud_sql_instance,
                 self.firestore_database_id,
                 self.audit_log_view,
+                self.operational_log_view,
+                profile.frontend_service_name,
+                profile.artifact_repository,
                 *self.allowed_buckets,
             ]
         ).lower()
@@ -289,6 +321,19 @@ class Settings(BaseSettings):
     def allowed_origins(self) -> list[str]:
         parsed = urlparse(self.canonical_resource_url)
         return [f"{parsed.scheme}://{parsed.netloc}"]
+
+    @property
+    def allowed_cloud_run_services(self) -> dict[str, str]:
+        profile = ENVIRONMENT_PROFILES[self.environment]
+        return {
+            "frontend": profile.frontend_service_name,
+            "backend": profile.backend_service_name,
+            "mcp": profile.service_name,
+        }
+
+    @property
+    def allowed_artifact_repository(self) -> str:
+        return ENVIRONMENT_PROFILES[self.environment].artifact_repository
 
 
 @lru_cache(maxsize=1)

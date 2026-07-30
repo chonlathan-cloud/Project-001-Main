@@ -78,7 +78,7 @@ These are the API Endpoints that the Backend must develop so the Frontend can co
 **Internal Admin Roles**
 
 - **Owner:** Full access. Can view Dashboard/Chat AI and can mutate projects, BOQ sync, settings, and approval states.
-- **Admin:** Limited operational access. Can view Projects, Approval queues/details, Insights, Settings list data, Profile, and KYC previews. Cannot view Dashboard or Chat AI and cannot approve/reject/mark-paid or mutate Settings/Projects/BOQ.
+- **Admin:** Limited operational access. Can view Projects, Approval queues/details, Insights, Settings list data, Profile, and KYC previews. Cannot view Dashboard and cannot approve/reject/mark-paid or mutate Settings/Projects/BOQ. Phase 5 Chat requires explicit `mcp_access` and `financial_data_read`.
 - **Default assignment:** First-time internal users allowed by `ADMIN_EMAILS` or `ADMIN_EMAIL_DOMAIN` are created as `admin` by default. Owner access requires an existing Firestore admin record with `role = "owner"` or a role change by another Owner.
 
 * **Router 1: Dashboard (Overall Overview)**
@@ -143,7 +143,7 @@ These are the API Endpoints that the Backend must develop so the Frontend can co
     * **Logic:** Read-only grouped integration status for Backend/API, Google Cloud, Firebase, LINE/LIFF, private storage, AI services, and admin access configuration. Sensitive values are not returned.
 
 ### **🤖 Router 8: AI Strategic Chat (Executive Assistant Brain)**
-* **POST `/api/v1/chat/ask` (Owner only)**
+* **POST `/api/v1/chat/ask` (Owner or Phase 5 authorized Admin with `mcp_access` + `financial_data_read`)**
 * **GET `/api/v1/chat/history` (Owner only)**
 * **DELETE `/api/v1/chat/history` (Owner only)**
 * **Function:** Receive questions from executives, search for relevant information (RAG), and have Gemini summarize the answer.

@@ -32,7 +32,7 @@ def test_forbidden_generic_tools_are_absent() -> None:
     assert names.isdisjoint(forbidden)
 
 
-def test_foundation_through_phase4_tools_are_implemented() -> None:
+def test_foundation_through_phase5_tools_are_implemented() -> None:
     assert {tool.name for tool in TOOLS if tool.implemented} == {
         "get_system_catalog",
         "describe_domain",
@@ -65,4 +65,10 @@ def test_foundation_through_phase4_tools_are_implemented() -> None:
         "get_project_insights",
         "search_audit_events",
         "get_audit_event",
+        "get_system_health",
+        "get_gcp_resource_summary",
+        "get_cloud_run_status",
+        "search_application_errors",
+        "get_data_source_health",
+        "get_processing_status",
     }

@@ -231,6 +231,7 @@ async def get_project_financial_summary(
     request: McpProjectFinancialSummaryRequest,
     *,
     settings: Settings | None = None,
+    access_context: Any | None = None,
 ) -> dict[str, Any]:
     app_settings = settings or get_settings()
     _authorize(
@@ -238,6 +239,7 @@ async def get_project_financial_summary(
         project_id=str(request.project_id),
         required_permissions=FINANCE_PERMISSION,
         settings=app_settings,
+        access_context=access_context,
     )
     project = (
         await db.execute(

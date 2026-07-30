@@ -36,7 +36,7 @@ This is the standard JSON structure that Backend will send to Frontend (FE can t
 Internal role behavior:
 
 - `Owner`: full access, including Dashboard, Chat AI, BOQ sync, settings mutation, and approval/reject/mark-paid actions.
-- `Admin`: operational read/review access. Can view Projects, Approvals, Insights, Profile, and Settings list data, but cannot view Dashboard/Chat AI or perform mutation/approval actions.
+- `Admin`: operational read/review access. Can view Projects, Approvals, Insights, Profile, and Settings list data, but cannot view Dashboard or perform mutation/approval actions. Phase 5 Chat requires explicit `mcp_access` and `financial_data_read`.
 
 📊 Router 1: Dashboard (Overview)
 **GET `/api/v1/dashboard/summary`** - Owner only
@@ -171,7 +171,9 @@ Internal role behavior:
 ```
 
 ### **🤖 Router 8: AI Strategic Chat (Intelligence Engine)**
-**POST `/api/v1/chat/ask`** - Owner only
+**POST `/api/v1/chat/ask`** - Owner or Phase 5 authorized Admin with
+`mcp_access` and `financial_data_read`; the service re-resolves directory and
+project scope before each shared-contract read
 
 ```json
 {

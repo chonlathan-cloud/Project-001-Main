@@ -12,7 +12,9 @@ The planning baseline remains immutable; implementation status is tracked here.
 | Phase 1 — Demo foundation | Complete | Isolated IAM, deployment, OAuth, audit and rollback gates passed in Demo |
 | Phase 2 — Core Business Owner Pilot | Complete | All Demo gates passed, including MCP Inspector and direct Codex Owner flows |
 | Phase 3 — Finance and Document Gateway | Complete in Demo | Seven public tools and eight Backend contracts deployed; Owner, audit, privacy and latency gates passed |
-| Phases 4–7 | Not started | Follow the approved gates; Beta remains unchanged |
+| Phase 4 — Project Operations and Product Audit | Complete in Demo | Ten tools, 27 Backend contracts, exact audit view, rollback and p95 gates passed |
+| Phase 5 — Curated GCP Operations and Internal Chat | Repository complete; Demo pending | Six tools, shared Chat contracts and Admin controls pass locally; live operations IAM/pilot evidence remains |
+| Phases 6–7 | Not started | Private Plugin and Beta remain gated by Phase 5 Demo evidence |
 
 ## Phase 0 artifacts
 
@@ -23,6 +25,8 @@ The planning baseline remains immutable; implementation status is tracked here.
 - [Work packages](work-packages.md)
 - [Backend Core read contracts v1](backend-core-read-contracts-v1.md)
 - [Backend Finance and Document read contracts v1](backend-finance-document-contracts-v1.md)
+- [Backend Project Operations and Product Audit contracts v1](backend-project-operations-contracts-v1.md)
+- [Backend GCP Operations and Internal Chat contracts v1](backend-gcp-operations-contracts-v1.md)
 - ADRs in [`adr/`](adr/)
 - Machine-readable tool input schemas in
   `Projects-001-MCP/contracts/tool-input-schemas-v1.json`
@@ -32,9 +36,16 @@ The planning baseline remains immutable; implementation status is tracked here.
   `Projects-001-MCP/tests/evals/phase2_evaluator.py`
 - Reproducible Phase 3 evaluator in
   `Projects-001-MCP/tests/evals/phase3_evaluator.py`
+- Reproducible Phase 4 and Phase 5 evaluators in
+  `Projects-001-MCP/tests/evals/phase4_evaluator.py` and
+  `Projects-001-MCP/tests/evals/phase5_evaluator.py`
 - [Demo release evidence](phase2-demo-release-evidence.md)
 - [Phase 3 repository evidence](phase3-repository-evidence.md)
 - [Phase 3 Demo release evidence](phase3-demo-release-evidence.md)
+- [Phase 4 repository evidence](phase4-repository-evidence.md)
+- [Phase 4 Demo release evidence](phase4-demo-release-evidence.md)
+- [Phase 5 repository evidence](phase5-repository-evidence.md)
+- [Phase 5 Demo release evidence checklist](phase5-demo-release-evidence.md)
 
 ## Guardrails
 
@@ -50,13 +61,13 @@ The planning baseline remains immutable; implementation status is tracked here.
 
 ## Repository verification
 
-- 58 MCP tests cover protocol metadata/init, OAuth JWT vectors, required scopes,
-  environment isolation, Backend service-identity delegation, closed inputs,
-  Product policy, all 21 implemented tool contracts, exact Finance responses,
-  document defenses and audit redaction/outage behavior.
-- 100 Backend tests cover service identity, entitlement resolution, Owner rollout,
-  project-scope sanitation, atomic OAuth bindings, signed cursors, exact
-  BOQ/Finance money, Document Gateway limits/redaction and share-status secrecy.
+- 88 MCP tests cover protocol metadata/init, OAuth vectors, environment
+  isolation, Backend delegation, all 37 tool contracts, exact business data,
+  Product/operational audit boundaries, GCP allowlists, Admin matrices and
+  redaction/outage behavior.
+- 114 Backend tests cover service identity, per-call entitlement/revocation,
+  project scope, exact shared Chat facts, signed cursors, BOQ/Finance money,
+  Document Gateway controls and safe processing status.
 - Ruff passes for all MCP code/tests and every changed Backend file. Python
   byte-compilation passes for the changed service and route modules.
 - Both production containers build; the MCP image runs as a non-root user.
@@ -66,4 +77,5 @@ The planning baseline remains immutable; implementation status is tracked here.
   required environment-specific configuration is absent.
 
 Repository verification is supplemented by the environment-specific release
-evidence above. Phase 3 was promoted only to Demo; Beta was not changed.
+evidence above. Phase 4 was promoted only to Demo; Phase 5 and Beta cloud state
+were not changed.

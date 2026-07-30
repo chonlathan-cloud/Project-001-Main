@@ -285,3 +285,17 @@ class McpProjectInsightsRequest(McpProjectRequest):
             if (self.date_to - self.date_from).days > 366:
                 raise ValueError("Insight date range cannot exceed 366 days.")
         return self
+
+
+class McpProcessingStatusRequest(McpPrincipalRequest):
+    workflow: Literal[
+        "boq_sync",
+        "receipt_ocr",
+        "daily_report_delivery",
+        "flowaccount_sync",
+    ]
+    job_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )

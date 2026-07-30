@@ -44,6 +44,7 @@ class BackendReadOperation(StrEnum):
     LIST_DAILY_REPORT_VERSIONS = "list_daily_report_versions"
     GET_DASHBOARD_SUMMARY = "get_dashboard_summary"
     GET_PROJECT_INSIGHTS = "get_project_insights"
+    GET_PROCESSING_STATUS = "get_processing_status"
 
 
 ENDPOINTS = {
@@ -81,6 +82,7 @@ ENDPOINTS = {
     ),
     BackendReadOperation.GET_DASHBOARD_SUMMARY: "/api/v1/internal/mcp/dashboard:summary",
     BackendReadOperation.GET_PROJECT_INSIGHTS: "/api/v1/internal/mcp/projects/insights:get",
+    BackendReadOperation.GET_PROCESSING_STATUS: "/api/v1/internal/mcp/processing/status:get",
 }
 
 

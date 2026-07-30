@@ -4,7 +4,7 @@
 contract. It does not mean the current public endpoint is safe to call unchanged.
 All backend routes below are under `/api/v1`.
 
-## Phase 4 implementation status
+## Phase 5 implementation status
 
 The Core Pilot plus Finance and Document Gateway contracts are implemented under
 `/internal/mcp`:
@@ -23,13 +23,16 @@ The Core Pilot plus Finance and Document Gateway contracts are implemented under
 | Inspection | `POST /internal/mcp/inspection/items:list`, `inspection/items:get` |
 | Daily Reports | `POST /internal/mcp/daily-reports:list`, `daily-reports:get`, `daily-reports/versions:list` |
 | Dashboard/Insights | `POST /internal/mcp/dashboard:summary`, `projects/insights:get` |
+| Processing status | `POST /internal/mcp/processing/status:get` |
 | Product Audit | Direct MCP adapter to the environment-locked dedicated Cloud Logging view |
+| GCP Operations | Direct MCP adapter to environment-compiled metadata APIs and the dedicated operational Logging view |
 
 The Backend routes are service-authenticated POST reads. They do not mutate
 Business Data; POST is used so verified principal context never appears in URLs
 or intermediary query logs. The Product Audit adapter is independently bounded,
-permission gated and restricted to a dedicated log view. Phase 5 rows below
-still describe required work.
+permission gated and restricted to a dedicated log view. Phase 5 GCP Operations
+uses a separate 30-day view and strict resource aliases; no generic diagnostic
+adapter is deployed.
 
 | Tool | Source of truth | Existing contract / reusable source | Required new contract or adapter |
 |---|---|---|---|
@@ -64,12 +67,12 @@ still describe required work.
 | `get_project_insights` | Backend derived calculations | `GET /insights/summary` and Chat analytics | Implemented: independently sourced finance/inspection/report signals with partial/conflict warnings |
 | `search_audit_events` | Product Audit log bucket/view | None | Implemented: dedicated Logging view adapter with server-built allowlisted filters |
 | `get_audit_event` | Product Audit log bucket/view | None | Implemented: opaque allowlisted event lookup and `NOT_FOUND_OR_FORBIDDEN` semantics |
-| `get_system_health` | Health adapters/GCP APIs | Backend `/health` | Curated aggregate status with no raw resource enumeration |
-| `get_gcp_resource_summary` | GCP APIs | Local diagnostic MCP is reference only | Hard-coded Demo/Beta resource allowlist adapter |
-| `get_cloud_run_status` | Cloud Run API | Local diagnostic MCP validation patterns | Exact allowed service aliases only |
-| `search_application_errors` | Cloud Logging | Local diagnostic MCP redaction patterns | Bounded time/severity/workflow filters; server-generated query |
-| `get_data_source_health` | Backend/GCP health | Backend `/health` plus platform APIs | Named allowlisted source checks |
-| `get_processing_status` | Backend/GCP task state | BOQ sync job GET and approved processing sources | Curated workflow/status enum; no arbitrary job system access |
+| `get_system_health` | Health adapters/GCP APIs | Backend `/health` | Implemented: curated aggregate status with no raw resource enumeration |
+| `get_gcp_resource_summary` | GCP APIs | Local diagnostic MCP is reference only | Implemented: hard-coded Demo/Beta resource aliases and safe counts |
+| `get_cloud_run_status` | Cloud Run API | Local diagnostic MCP validation patterns | Implemented: exact `frontend`/`backend`/`mcp` aliases only |
+| `search_application_errors` | Cloud Logging | Local diagnostic MCP redaction patterns | Implemented: exact operational view, 30-day/50-row bounds, server query and redaction |
+| `get_data_source_health` | Backend/GCP health | Backend `/health` plus platform APIs | Implemented: named allowlisted source checks with explicit partial state |
+| `get_processing_status` | Backend/GCP task state | BOQ sync and approved processing sources | Implemented: service-authenticated fixed workflow/status contract; no arbitrary job access |
 
 ## Ownership conclusions
 

@@ -157,5 +157,56 @@
     "cross_domain_sources_remain_distinct": true,
     "source_inconsistency_warning": "SOURCE_INCONSISTENCY",
     "operations_p95_target_seconds": 15
+  },
+  "phase5_operations": {
+    "allowed_cloud_run_aliases": ["frontend", "backend", "mcp"],
+    "error_sample": {
+      "event_id": "op_demo_001",
+      "timestamp": "2026-07-30T00:00:00Z",
+      "severity": "ERROR",
+      "service_alias": "backend",
+      "workflow": "payment",
+      "error_code": "PAYMENT_READ_FAILED",
+      "summary": "Payment workflow failed validation."
+    },
+    "processing_status": {
+      "workflow": "boq_sync",
+      "job_id": "job-demo-001",
+      "status": "COMPLETED",
+      "processed_count": 12,
+      "failed_count": 0
+    }
+  },
+  "phase5_controls": {
+    "excluded_resources_omitted": true,
+    "operational_log_view_locked": true,
+    "operational_query_max_days": 30,
+    "operational_errors_redacted": true,
+    "revocation_effective_next_call": true,
+    "existing_chat_history_separate": true,
+    "internal_chat_metrics": {
+      "budget": "160000.00",
+      "actual": "90000.00",
+      "remaining": "70000.00"
+    },
+    "external_mcp_metrics": {
+      "budget": "160000.00",
+      "actual": "90000.00",
+      "remaining": "70000.00"
+    },
+    "admin_allow_deny_matrix": {
+      "get_system_health_allow": true,
+      "get_system_health_deny": true,
+      "get_gcp_resource_summary_allow": true,
+      "get_gcp_resource_summary_deny": true,
+      "get_cloud_run_status_allow": true,
+      "get_cloud_run_status_deny": true,
+      "search_application_errors_allow": true,
+      "search_application_errors_deny": true,
+      "get_data_source_health_allow": true,
+      "get_data_source_health_deny": true,
+      "get_processing_status_allow": true,
+      "get_processing_status_deny": true
+    }
   }
 }

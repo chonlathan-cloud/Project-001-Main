@@ -1967,6 +1967,21 @@ def create_delivery_job(*, report: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def get_delivery_job_for_mcp(job_id: str) -> dict[str, Any]:
+    """Return only bounded delivery-state metadata for an exact job."""
+    job = _get_doc(DELIVERY_JOBS_COLLECTION, job_id, "Daily report delivery job")
+    return {
+        "job_id": str(job.get("id") or job_id),
+        "report_id": str(job.get("report_id") or ""),
+        "project_id": str(job.get("project_id") or ""),
+        "version": job.get("version"),
+        "status": str(job.get("status") or "UNKNOWN").upper(),
+        "attempt_count": min(max(int(job.get("attempt_count") or 0), 0), 1000),
+        "created_at": job.get("created_at"),
+        "updated_at": job.get("updated_at"),
+    }
+
+
 def update_delivery_status(
     *,
     report_id: str,

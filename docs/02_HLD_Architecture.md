@@ -74,7 +74,7 @@ To ensure the system supports Business Logic V2.0 securely and cost-effectively,
 
 | Component | Technology Choice | Justification (Why choose this?) |
 | :--- | :--- | :--- |
-| **Frontend (Internal Portal)** | React / Next.js | To build the Owner/Admin portal. Owners get Dashboard, Chat AI, approvals, BOQ sync, and settings mutation; Admin/PM users get operational read/review screens. Hosted on Firebase Hosting. |
+| **Frontend (Internal Portal)** | React / Next.js | To build the Owner/Admin portal. Owners get Dashboard, Chat AI, approvals, BOQ sync, and settings mutation; Admin/PM users get operational read/review screens, with Phase 5 Chat available only after explicit MCP/finance entitlement. Hosted on Firebase Hosting. |
 | **Frontend (SubCon)** | LINE LIFF App | **Zero-Friction UX:** Subcontractors don't need to download an app or remember passwords. They can access the Web App immediately via the Rich Menu in LINE OA. |
 | **Auth Provider** | Firebase Auth | Used for Custom Token Authentication by converting the LINE User ID from LIFF into a Firebase Token for secure backend communication. |
 | **Backend API** | Cloud Run (Python/FastAPI) | **Serverless:** Auto-scales to handle traffic spikes during month-end billing. Python is chosen for its superior AI libraries (LangChain) and data validation (Pydantic). |
@@ -113,8 +113,8 @@ To illustrate how the Backend (Cloud Run) handles the complexity of Business Log
 **Workflow D: Internal Role Enforcement**
 
   * **Owner:** Full access. Can view Dashboard and Chat AI, mutate projects/BOQ/settings, and approve/reject/mark paid requests.
-  * **Admin / PM:** Operational read/review access. Can view Projects, Approvals, Insights, Settings list data, receipts, and KYC signed URLs, but cannot access Dashboard/Chat AI or perform approval/configuration mutations.
-  * **Backend Enforcement:** Cloud Run resolves the effective internal role during login and applies Owner-only guards to Dashboard, Chat AI, approval mutation, project mutation, BOQ sync, and settings mutation endpoints.
+  * **Admin / PM:** Operational read/review access. Can view Projects, Approvals, Insights, Settings list data, receipts, and KYC signed URLs, but cannot access Dashboard or perform approval/configuration mutations. Phase 5 Chat requires explicit MCP and finance entitlement.
+  * **Backend Enforcement:** Cloud Run resolves the effective internal role during login and applies Owner-only guards to Dashboard, approval mutation, project mutation, BOQ sync, and settings mutation endpoints. Phase 5 Chat AI additionally admits an active Admin only after current directory, `mcp_access`, `financial_data_read`, and project-scope checks pass.
 
 #### **🛡️ 4. Security & Failure by Design**
 

@@ -4,7 +4,7 @@ Standalone, read-only Product MCP service for Projects-001. The service provides
 a Streamable HTTP `/mcp` endpoint, OAuth resource-server validation, per-call
 Product policy resolution, common envelopes, separated audit telemetry, and the
 Phase 2 Core Business, Phase 3 Finance/Document Gateway, and Phase 4 Project
-Operations/Product Audit tools.
+Operations/Product Audit tools, plus the Phase 5 Curated GCP Operations tools.
 
 ## Current scope
 
@@ -41,15 +41,22 @@ Implemented tools:
 - `get_project_insights`
 - `search_audit_events`
 - `get_audit_event`
+- `get_system_health`
+- `get_gcp_resource_summary`
+- `get_cloud_run_status`
+- `search_application_errors`
+- `get_data_source_health`
+- `get_processing_status`
 
 They require a valid OAuth access token and a successful response from the
 service-authenticated Backend contracts. The MCP forwards only the verified OAuth
 subject, issuer, client ID and locked environment; the Backend re-resolves role,
 permissions and project scope for every call. Production has no auth bypass.
 
-Phase 2 is configured as an Owner-only rollout by default. Admin support remains
-implemented behind the Backend `MCP_ALLOWED_ROLES` rollout gate and must not be
-enabled before the Admin pilot gate.
+The deployed Phase 4 baseline remains Owner-only. Phase 5 Admin permission,
+scope and revocation support is implemented behind the Backend
+`MCP_ALLOWED_ROLES` rollout gate and must not be enabled before the explicit
+Demo Admin pilot.
 
 ## Local setup
 
@@ -74,13 +81,16 @@ pytest
 python -m tests.evals.phase2_evaluator
 python -m tests.evals.phase3_evaluator
 python -m tests.evals.phase4_evaluator
+python -m tests.evals.phase5_evaluator
 docker build --tag projects-001-mcp:local .
 ```
 
 The evaluators report the Phase 2 Core Golden/BOQ gate, Phase 3 exact
 Finance/Document security gate, and Phase 4 Project Operations/Audit gate from
-the versioned `demo-sanitized` dataset. Real-client Phase 4 tool selection,
-audit-view access, and operations p95 remain separate Demo release gates.
+the versioned `demo-sanitized` dataset. Phase 5 additionally gates G-014,
+operations allowlists/redaction, shared Internal Chat facts, the Admin matrix and
+next-call revocation. Real-client operational-view access, Admin consent and
+operations p95 remain separate Demo release gates.
 
 Deployment is intentionally separate from the Backend lifecycle. From the
 repository root, copy the matching `mcp.deploy.*.example` and
@@ -111,5 +121,14 @@ deployment has been explicitly approved.
 - Dashboard and project insights require `financial_data_read` for Admins,
   preserve exact money strings, cite independent sources, and mark missing or
   inconsistent sources explicitly.
+- GCP Operations requires `infrastructure_read`, uses only compiled
+  Demo/Beta aliases, and never exposes arbitrary GCP inventory or a raw Logging
+  query.
+- Application-error reads use a separate exact operational view, a maximum
+  30-day range and 50 rows, and redact credentials, URLs, email, GCS paths and
+  record identifiers.
+- Internal Chat invokes the same Backend dashboard/insight calculation services
+  and policy scope as External MCP. Existing Chat history remains separate; MCP
+  does not persist prompts or full responses.
 
 See `docs/implementation/mcp/` for contracts, ADRs and phase status.

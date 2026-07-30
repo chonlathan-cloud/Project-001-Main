@@ -33,6 +33,7 @@ from app.schemas.mcp_schema import (
     McpProjectSummaryRequest,
     McpProjectFinancialSummaryRequest,
     McpProjectInsightsRequest,
+    McpProcessingStatusRequest,
     McpSearchRequest,
     McpUserAccessRequest,
 )
@@ -40,6 +41,7 @@ from app.schemas.responses import StandardResponse
 from app.services import mcp_read_service
 from app.services import mcp_finance_document_service
 from app.services import mcp_project_operations_service
+from app.services import mcp_processing_service
 from app.services.mcp_access_service import resolve_mcp_access
 
 router = APIRouter(prefix="/internal/mcp", tags=["Internal Product MCP"])
@@ -331,3 +333,12 @@ async def get_project_insights(
     return await _read(
         lambda: mcp_project_operations_service.get_project_insights(db, request)
     )
+
+
+@router.post("/processing/status:get", response_model=StandardResponse[dict])
+async def get_processing_status(
+    request: McpProcessingStatusRequest,
+    _caller: ServicePrincipal = Depends(require_mcp_service),
+    db: AsyncSession = Depends(get_db),
+) -> StandardResponse[dict]:
+    return await _read(lambda: mcp_processing_service.get_processing_status(db, request))

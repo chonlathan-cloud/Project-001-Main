@@ -317,24 +317,28 @@ TOOLS = (
         DomainName.GCP_OPERATIONS,
         "gcp_operations",
         "infrastructure_read",
+        implemented=True,
     ),
     _tool(
         "get_gcp_resource_summary",
         DomainName.GCP_OPERATIONS,
         "gcp_operations",
         "infrastructure_read",
+        implemented=True,
     ),
     _tool(
         "get_cloud_run_status",
         DomainName.GCP_OPERATIONS,
         "gcp_operations",
         "infrastructure_read",
+        implemented=True,
     ),
     _tool(
         "search_application_errors",
         DomainName.GCP_OPERATIONS,
         "gcp_operations",
         "infrastructure_read",
+        implemented=True,
         sensitive=True,
     ),
     _tool(
@@ -342,12 +346,14 @@ TOOLS = (
         DomainName.GCP_OPERATIONS,
         "gcp_operations",
         "infrastructure_read",
+        implemented=True,
     ),
     _tool(
         "get_processing_status",
         DomainName.GCP_OPERATIONS,
         "gcp_operations",
         "infrastructure_read",
+        implemented=True,
     ),
 )
 

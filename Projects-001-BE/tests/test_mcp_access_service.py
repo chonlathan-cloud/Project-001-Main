@@ -142,6 +142,38 @@ def test_owner_only_rollout_disables_admin_even_when_directory_flag_is_enabled()
     assert access.external_mcp_enabled is False
 
 
+def test_external_revocation_is_re_resolved_on_the_next_access_call() -> None:
+    enabled = admin_entry(
+        external_mcp_enabled=True,
+        mcp_permissions=["mcp_access", "infrastructure_read"],
+    )
+    revoked = admin_entry(
+        external_mcp_enabled=False,
+        mcp_permissions=[],
+        updated_at=datetime(2026, 7, 30, tzinfo=UTC),
+    )
+    with (
+        patch(
+            "app.services.mcp_access_service.get_admin_by_mcp_principal",
+            side_effect=[enabled, revoked],
+        ) as lookup,
+        patch(
+            "app.services.mcp_access_service.daily_report_service."
+            "list_membership_project_ids",
+            return_value=[],
+        ),
+    ):
+        before = resolve_mcp_access(request(), settings=settings())
+        after = resolve_mcp_access(request(), settings=settings())
+
+    assert lookup.call_count == 2
+    assert before.external_mcp_enabled is True
+    assert set(before.permissions) == {"infrastructure_read", "mcp_access"}
+    assert after.external_mcp_enabled is False
+    assert after.permissions == []
+    assert before.authorization_revision != after.authorization_revision
+
+
 def test_invalid_membership_project_ids_are_excluded_from_authorization_scope() -> None:
     valid_project_id = "10000000-0000-4000-8000-000000000001"
     with (

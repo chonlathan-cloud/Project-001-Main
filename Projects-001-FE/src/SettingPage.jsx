@@ -39,6 +39,7 @@ import {
 import { canMutateAdminData, canMutateSubcontractorData, getStoredAuthUser } from './auth';
 import Loading from './components/Loading';
 import CustomerManagementSection from './components/settings/CustomerManagementSection';
+import McpAccessControls from './components/settings/McpAccessControls';
 import {
   SettingsAccordionItem,
   SettingsAvatar,
@@ -82,6 +83,11 @@ const emptyAdminForm = {
   role: 'admin',
   roles: ['admin'],
   assigned_project_ids: [],
+  external_mcp_enabled: false,
+  mcp_oauth_issuer: '',
+  mcp_oauth_subject: '',
+  mcp_permissions: [],
+  mcp_all_projects_read: false,
   is_active: true,
 };
 
@@ -205,6 +211,11 @@ const buildAdminForm = (item = {}) => ({
   role: item.role || 'admin',
   roles: Array.isArray(item.roles) && item.roles.length > 0 ? item.roles : [item.role || 'admin'],
   assigned_project_ids: Array.isArray(item.assigned_project_ids) ? item.assigned_project_ids : [],
+  external_mcp_enabled: Boolean(item.external_mcp_enabled),
+  mcp_oauth_issuer: item.mcp_oauth_issuer || '',
+  mcp_oauth_subject: item.mcp_oauth_subject || '',
+  mcp_permissions: Array.isArray(item.mcp_permissions) ? item.mcp_permissions : [],
+  mcp_all_projects_read: Boolean(item.mcp_all_projects_read),
   is_active: item.is_active !== false,
 });
 
@@ -571,6 +582,32 @@ function SettingPage() {
     });
   };
 
+  const toggleAdminMcpPermission = (permissionId) => {
+    if (!canMutateSettings) return;
+    setAdminForm((current) => {
+      const permissions = Array.isArray(current.mcp_permissions) ? current.mcp_permissions : [];
+      return {
+        ...current,
+        mcp_permissions: permissions.includes(permissionId)
+          ? permissions.filter((item) => item !== permissionId)
+          : [...permissions, permissionId],
+      };
+    });
+  };
+
+  const revokeAdminMcpAccess = () => {
+    if (!canMutateSettings) return;
+    setAdminForm((current) => ({
+      ...current,
+      external_mcp_enabled: false,
+      mcp_oauth_issuer: '',
+      mcp_oauth_subject: '',
+      mcp_permissions: [],
+      mcp_all_projects_read: false,
+    }));
+    setMessage('MCP access will be revoked and unbound when you save this admin.');
+  };
+
   const updateAccessDecisionField = (field, value) => {
     if (!canMutateSubcontractors) return;
     setAccessDecision((current) => ({ ...current, [field]: value }));
@@ -739,6 +776,24 @@ function SettingPage() {
     setError('');
     try {
       const roles = normalizeRoleList(adminForm.roles, adminForm.role);
+      const primaryRole = primaryRoleForRoles(roles);
+      const issuer = String(adminForm.mcp_oauth_issuer || '').trim();
+      const subject = String(adminForm.mcp_oauth_subject || '').trim();
+      const permissions = Array.isArray(adminForm.mcp_permissions)
+        ? adminForm.mcp_permissions
+        : [];
+      if (adminForm.external_mcp_enabled && (!issuer || !subject)) {
+        setError('OAuth issuer and subject are required before enabling External MCP.');
+        return;
+      }
+      if (
+        adminForm.external_mcp_enabled
+        && primaryRole !== 'owner'
+        && !permissions.includes('mcp_access')
+      ) {
+        setError('Admin External MCP access requires the External MCP access permission.');
+        return;
+      }
       const isSelfAdmin = selectedAdmin && currentProfileEmail && normalize(selectedAdmin.email) === currentProfileEmail;
       const staffPayload = {
         display_name: adminForm.display_name,
@@ -748,13 +803,18 @@ function SettingPage() {
         time: adminForm.time,
         bank_account: adminForm.bank_account,
         assigned_project_ids: adminForm.assigned_project_ids,
+        external_mcp_enabled: adminForm.external_mcp_enabled,
+        mcp_oauth_issuer: issuer || null,
+        mcp_oauth_subject: subject || null,
+        mcp_permissions: permissions,
+        mcp_all_projects_read: adminForm.mcp_all_projects_read,
       };
       if (selectedAdmin) {
         const updated = await updateSettingAdmin(selectedAdmin.id, isSelfAdmin
           ? staffPayload
           : {
               ...staffPayload,
-              role: primaryRoleForRoles(roles),
+              role: primaryRole,
               roles,
               is_active: adminForm.is_active,
             });
@@ -764,7 +824,7 @@ function SettingPage() {
         const created = await createSettingAdmin({
           ...staffPayload,
           email: adminForm.email,
-          role: primaryRoleForRoles(roles),
+          role: primaryRole,
           roles,
           is_active: adminForm.is_active,
         });
@@ -1450,6 +1510,14 @@ function SettingPage() {
                         { label: 'Bank Name', value: displayValue(bankAccount.bank_name) },
                         { label: 'Account No.', value: maskIdentifier(bankAccount.account_no) },
                         { label: 'Account Name', value: displayValue(bankAccount.account_name) },
+                        {
+                          label: 'External MCP',
+                          value: item.external_mcp_enabled ? 'Enabled' : 'Disabled',
+                        },
+                        {
+                          label: 'OAuth Binding',
+                          value: item.mcp_oauth_issuer && item.mcp_oauth_subject ? 'Bound' : 'Unbound',
+                        },
                       ]}
                     />
 
@@ -1541,6 +1609,15 @@ function SettingPage() {
                           </div>
                         </div>
                       ) : null}
+
+                      <McpAccessControls
+                        form={adminForm}
+                        disabled={!canMutateSettings}
+                        isOwnerRole={normalizeRoleList(adminForm.roles, adminForm.role).includes('owner')}
+                        onFieldChange={updateAdminField}
+                        onPermissionToggle={toggleAdminMcpPermission}
+                        onRevoke={revokeAdminMcpAccess}
+                      />
 
                       <div className="settings-form-grid three">
                         <label className="settings-field">
@@ -1718,6 +1795,15 @@ function SettingPage() {
               </div>
             </div>
           ) : null}
+
+          <McpAccessControls
+            form={adminForm}
+            disabled={!canMutateSettings}
+            isOwnerRole={normalizeRoleList(adminForm.roles, adminForm.role).includes('owner')}
+            onFieldChange={updateAdminField}
+            onPermissionToggle={toggleAdminMcpPermission}
+            onRevoke={revokeAdminMcpAccess}
+          />
 
           <div className="settings-form-grid three">
             <label className="settings-field">

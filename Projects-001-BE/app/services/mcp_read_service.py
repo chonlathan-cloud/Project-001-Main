@@ -119,11 +119,12 @@ def _authorize(
     project_id: str | None = None,
     required_permissions: frozenset[str] = frozenset(),
     settings: Settings | None = None,
+    access_context: Any | None = None,
 ) -> McpAccessContext:
-    access = resolve_mcp_access(request, settings=settings)
+    access = access_context or resolve_mcp_access(request, settings=settings)
     if (
         not access.active
-        or not access.external_mcp_enabled
+        or (access_context is None and not access.external_mcp_enabled)
         or access.role not in {"owner", "admin"}
         or (access.role == "admin" and "mcp_access" not in access.permissions)
     ):

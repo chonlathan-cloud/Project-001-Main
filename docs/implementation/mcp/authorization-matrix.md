@@ -14,12 +14,14 @@ re-resolving Product access. Token role/permission claims never grant access.
 | Sensitive document body | Yes, unless `external_ai_blocked` | `sensitive_documents_read`, unless blocked | Deny |
 | Infrastructure | Yes | `infrastructure_read` | Deny |
 | Product Audit | Yes | `audit_log_read` | Deny |
+| GCP Operations | Yes | `infrastructure_read` | Deny |
+| Internal Chat dashboard/insights | Yes | `mcp_access` + `financial_data_read` | Deny |
 | Enable External MCP / grant access | Product Settings only | Deny | Deny |
 
 OAuth scopes are coarse client grants. Product permissions are the final gate;
 having a scope never elevates Product access.
 
-The Phase 2 Demo cohort is additionally constrained by Backend
+The deployed Phase 4 Demo cohort is additionally constrained by Backend
 `MCP_ALLOWED_ROLES=owner`. Admin behavior in this matrix describes the designed
 post-Owner-pilot capability; it remains denied until that explicit rollout gate
 is changed and the Admin pilot is approved.
@@ -38,7 +40,7 @@ is changed and the Admin pilot is approved.
 | Same Admin reads Project B by guessed ID | `NOT_FOUND_OR_FORBIDDEN` |
 | Admin with finance scope but no Product finance permission | Deny |
 | Admin with Product finance permission but OAuth scope absent | Deny |
-| Disabled/revoked account after a previously valid call | Next call denied after no more than the approved short cache TTL |
+| Disabled/revoked account after a previously valid call | Immediately subsequent call is re-resolved and denied before source access |
 | Inspector/staff/subcontractor/customer/pending/public user | Deny all Product MCP tools |
 | User-supplied role, permission or project in arguments | Ignore as untrusted; schema rejects unknown fields |
 | Policy source unavailable | Fail closed; no business data returned |

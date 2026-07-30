@@ -48,7 +48,7 @@ def test_health_is_public_and_contains_no_business_data() -> None:
     assert response.json() == {
         "status": "ok",
         "service": "projects-001-mcp",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "environment": "demo",
     }
     assert response.headers["x-request-id"]
@@ -158,6 +158,12 @@ def test_authorized_initialize_and_tool_inventory() -> None:
         "get_project_insights",
         "search_audit_events",
         "get_audit_event",
+        "get_system_health",
+        "get_gcp_resource_summary",
+        "get_cloud_run_status",
+        "search_application_errors",
+        "get_data_source_health",
+        "get_processing_status",
     }
     for item in tool_items:
         assert item["annotations"]["readOnlyHint"] is True
@@ -461,7 +467,7 @@ async def test_registered_tools_have_read_only_annotations() -> None:
         audit_emitter=MemoryAuditEmitter(),
     )
     tools = await server.list_tools()
-    assert len(tools) == 31
+    assert len(tools) == 37
     assert all(tool.annotations.readOnlyHint for tool in tools)
     assert all(tool.annotations.destructiveHint is False for tool in tools)
 

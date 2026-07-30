@@ -2212,6 +2212,130 @@ body {
   transform: translateX(20px);
 }
 
+.settings-mcp-card {
+  margin-top: 18px;
+  padding: 20px;
+  border: 1px solid #e8e3df;
+  border-radius: 12px;
+  background: #fdfbf9;
+}
+
+.settings-mcp-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: flex-start;
+  gap: 14px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e8e3df;
+}
+
+.settings-mcp-header h4 {
+  margin: 5px 0 0;
+  color: var(--text-main);
+  font-size: 17px;
+  line-height: 1.3;
+  font-weight: 850;
+}
+
+.settings-mcp-header p,
+.settings-mcp-footer p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  font-weight: 550;
+}
+
+.settings-mcp-card > .settings-row-stack {
+  margin-top: 16px;
+}
+
+.settings-mcp-permissions {
+  margin-top: 18px;
+}
+
+.settings-mcp-permissions > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.settings-mcp-permissions > div:first-child strong {
+  color: var(--primary-hover);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.settings-mcp-permission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-mcp-permission-grid label {
+  min-width: 0;
+  min-height: 74px;
+  padding: 12px;
+  border: 1px solid #e8e3df;
+  border-radius: 8px;
+  background: #ffffff;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.settings-mcp-permission-grid label.selected {
+  border-color: rgba(79, 111, 100, 0.5);
+  background: rgba(79, 111, 100, 0.07);
+}
+
+.settings-mcp-permission-grid input {
+  margin-top: 3px;
+  accent-color: var(--primary-hover);
+}
+
+.settings-mcp-permission-grid span {
+  min-width: 0;
+}
+
+.settings-mcp-permission-grid strong,
+.settings-mcp-permission-grid small {
+  display: block;
+}
+
+.settings-mcp-permission-grid strong {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 800;
+}
+
+.settings-mcp-permission-grid small {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  font-weight: 550;
+}
+
+.settings-mcp-footer {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #e8e3df;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.settings-mcp-footer p {
+  max-width: 740px;
+  margin: 0;
+}
+
 .settings-row-field {
   padding: 16px 18px;
   border: 1px solid #e8e3df;
