@@ -171,7 +171,7 @@ validate_operational_filter() {
     if [[ "${filter_target}" == "sink" ]]; then
       fail "operational sink filter must contain exactly the Product Cloud Run services, region, resource type and severity>=WARNING"
     fi
-    fail "operational view filter must contain exactly the Product Cloud Run services, region and resource type without a severity clause"
+    fail "operational view filter must use one exact anchored Product service regex plus the exact region and resource type without a severity clause"
   fi
 }
 
