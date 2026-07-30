@@ -159,40 +159,19 @@ validate_yaml_value() {
 
 validate_operational_filter() {
   local filter_text="$1"
-  if ! python3 -c '
-import re
-import sys
-
-text = sys.stdin.read()
-expected_services = set(sys.argv[1:4])
-expected_region = sys.argv[4]
-services = set(
-    re.findall(
-        r"resource\.labels\.service_name\s*=\s*\"([^\"]+)\"",
-        text,
-    )
-)
-has_resource_type = bool(
-    re.search(r"resource\.type\s*=\s*\"cloud_run_revision\"", text)
-)
-has_region = bool(
-    re.search(
-        r"resource\.labels\.location\s*=\s*\"" + re.escape(expected_region) + r"\"",
-        text,
-    )
-)
-has_severity = bool(re.search(r"severity\s*>=\s*WARNING", text, re.IGNORECASE))
-raise SystemExit(
-    0
-    if services == expected_services and has_resource_type and has_region and has_severity
-    else 1
-)
-' \
+  local filter_target="$2"
+  if ! python3 \
+    "${MCP_SOURCE_PATH}/app/config/operational_logging_filter.py" \
+    "${filter_target}" \
+    "${GCP_REGION}" \
     "${EXPECTED_FRONTEND_SERVICE}" \
     "${EXPECTED_BACKEND_SERVICE}" \
     "${EXPECTED_MCP_SERVICE}" \
-    "${GCP_REGION}" <<< "${filter_text}"; then
-    fail "operational filter must contain exactly the Product Cloud Run services, region, resource type and severity bound"
+    <<< "${filter_text}"; then
+    if [[ "${filter_target}" == "sink" ]]; then
+      fail "operational sink filter must contain exactly the Product Cloud Run services, region, resource type and severity>=WARNING"
+    fi
+    fail "operational view filter must contain exactly the Product Cloud Run services, region and resource type without a severity clause"
   fi
 }
 
@@ -329,7 +308,7 @@ operational_view_filter="$(
     --location "${GCP_REGION}" \
     --format='value(filter)'
 )"
-validate_operational_filter "${operational_view_filter}"
+validate_operational_filter "${operational_view_filter}" "view"
 for cloud_run_service in \
   "${EXPECTED_FRONTEND_SERVICE}" \
   "${EXPECTED_BACKEND_SERVICE}" \
@@ -337,8 +316,6 @@ for cloud_run_service in \
   [[ "${operational_view_filter}" == *"${cloud_run_service}"* ]] || fail \
     "operational view filter is missing an allowed Product service"
 done
-[[ "${operational_view_filter}" == *"severity>=WARNING"* ]] || fail \
-  "operational view filter must exclude lower-severity application logs"
 if [[ "${operational_view_filter}" == *"project-saas-001"* ]]; then
   fail "operational view filter references an excluded SaaS service"
 fi
@@ -357,7 +334,7 @@ operational_sink_filter="$(
     --project "${GCP_PROJECT_ID}" \
     --format='value(filter)'
 )"
-validate_operational_filter "${operational_sink_filter}"
+validate_operational_filter "${operational_sink_filter}" "sink"
 for cloud_run_service in \
   "${EXPECTED_FRONTEND_SERVICE}" \
   "${EXPECTED_BACKEND_SERVICE}" \
@@ -365,8 +342,6 @@ for cloud_run_service in \
   [[ "${operational_sink_filter}" == *"${cloud_run_service}"* ]] || fail \
     "operational sink filter is missing an allowed Product service"
 done
-[[ "${operational_sink_filter}" == *"severity>=WARNING"* ]] || fail \
-  "operational sink filter must exclude lower-severity application logs"
 if [[ "${operational_sink_filter}" == *"project-saas-001"* ]]; then
   fail "operational sink filter references an excluded SaaS service"
 fi

@@ -39,7 +39,7 @@ bringing the service-authenticated internal MCP route set to 28.
 ## Verification results
 
 - Backend full suite: `114 passed`.
-- MCP full suite: `88 passed` (one non-failing Starlette/httpx deprecation
+- MCP full suite: `95 passed` (one non-failing Starlette/httpx deprecation
   warning).
 - Phase 2, Phase 3, Phase 4 and Phase 5 evaluators: `100.0%`, all gates true.
 - MCP Ruff: pass.
@@ -49,6 +49,7 @@ bringing the service-authenticated internal MCP route set to 28.
   non-failing).
 - Backend and non-root MCP production container builds: pass as
   `projects-001-be:phase5-local` and `projects-001-mcp:phase5-local`.
+- Operational sink/view filter regression tests: `7 passed`.
 - `deploy_mcp.sh` Bash syntax and `git diff --check`: pass.
 
 ## Demo release prerequisites
@@ -57,8 +58,10 @@ Repository completion does not authorize cloud or pilot changes. Before Phase 5
 live evidence can be marked complete:
 
 1. Provision the dedicated Demo operational bucket/sink/view with exactly
-   30-day retention and filters limited to `projects-001-fe`, `projects-001-be`,
-   `projects-001-mcp` and `severity>=WARNING`.
+   30-day retention. The sink must be limited to `projects-001-fe`,
+   `projects-001-be`, `projects-001-mcp` and `severity>=WARNING`; the view must
+   repeat the exact resource type, region and service boundary without a
+   severity clause unsupported by Cloud Logging log views.
 2. Grant the Demo MCP identity exact operational-view access plus only the
    required Product resource metadata permissions. Prove excluded SaaS,
    BigQuery, Secret Manager and business-data write access are absent.

@@ -27,7 +27,8 @@ content.
 | Gate | Required evidence | Result |
 |---|---|---:|
 | Operational bucket | `projects-001-mcp-ops-demo`, `asia-southeast1`, exactly 30-day retention | Pending |
-| Sink/view filter | Only the three Demo Product services and `severity>=WARNING` | Pending |
+| Sink filter | Exact resource type, region and three Demo Product services with `severity>=WARNING` | Pending |
+| View filter | Exact resource type, region and three Demo Product services; severity already enforced by the sink | Pending |
 | View IAM | Exact view grants the Demo MCP identity `roles/logging.viewAccessor` | Pending |
 | Metadata IAM | Effective permissions are limited to approved Product resource metadata; no write/secret/BigQuery access | Pending |
 | Excluded resources | No SaaS Cloud Run/Cloud SQL resource is queried, listed or returned | Pending |

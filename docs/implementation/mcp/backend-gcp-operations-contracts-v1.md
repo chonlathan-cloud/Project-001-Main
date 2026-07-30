@@ -114,8 +114,10 @@ Repository completion does not create cloud resources or authorize deployment.
 Before deploying MCP `0.5.0` in Demo:
 
 1. Create the 30-day `projects-001-mcp-ops-demo` Logging bucket, sink and
-   `projects-001-mcp-ops-demo-view`. Restrict both sink and view to the three
-   Demo Product services and `severity>=WARNING`.
+   `projects-001-mcp-ops-demo-view`. Restrict the sink to the three Demo Product
+   services and `severity>=WARNING`. Restrict the view to the same exact
+   resource type, region and three services; the bucket already contains only
+   entries admitted by the severity-bounded sink.
 2. Grant the Demo MCP service account `roles/logging.viewAccessor` on that exact
    operational view. Retain the separate exact Product Audit view binding.
 3. Grant only the metadata permissions required by the compiled resources:
@@ -130,6 +132,6 @@ Before deploying MCP `0.5.0` in Demo:
    after the Owner records their project scope and explicit permission set.
 
 `deploy_mcp.sh --preflight-only` validates the exact runtime mapping, all three
-Cloud Run services, 30-day operational retention, sink/view filters,
-destinations, exact view IAM and the existing Product Audit boundary before a
-deployment can start.
+Cloud Run services, 30-day operational retention, the severity-bounded sink,
+the resource-bounded view, destinations, exact view IAM and the existing
+Product Audit boundary before a deployment can start.
