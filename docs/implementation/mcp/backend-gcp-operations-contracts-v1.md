@@ -134,6 +134,11 @@ Before deploying MCP `0.5.0` in Demo:
    level only with separate exact-name IAM Conditions for Cloud SQL
    `project-001` and Firestore `(default)`; do not use an unconditional
    project-level grant.
+   Runtime Google credentials request the `cloud-platform` OAuth scope because
+   Cloud SQL `instances.get` and Firestore `databases.get` do not accept the
+   `cloud-platform.read-only` scope. Effective access remains read-only because
+   the custom role is limited to these exact seven metadata permissions and the
+   deployment preflight rejects any extra permission.
 4. Deploy Backend first, then MCP, and verify all 28 internal routes remain
    service-identity-only.
 5. Keep the initial live verification Owner-only. Enable selected Admins only

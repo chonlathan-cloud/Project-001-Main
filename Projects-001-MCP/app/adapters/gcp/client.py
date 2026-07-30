@@ -14,7 +14,7 @@ import httpx
 
 from app.config.settings import Settings
 
-CLOUD_PLATFORM_READ_SCOPE = "https://www.googleapis.com/auth/cloud-platform.read-only"
+CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 LOGGING_ENTRIES_URL = "https://logging.googleapis.com/v2/entries:list"
 MAX_GCP_RESPONSE_BYTES = 2 * 1024 * 1024
 
@@ -170,7 +170,7 @@ class GoogleCloudOperationsClient:
             import google.auth
             from google.auth.transport.requests import AuthorizedSession
 
-            credentials, _project = google.auth.default(scopes=[CLOUD_PLATFORM_READ_SCOPE])
+            credentials, _project = google.auth.default(scopes=[CLOUD_PLATFORM_SCOPE])
             session = AuthorizedSession(credentials)
             response = session.request(
                 method,

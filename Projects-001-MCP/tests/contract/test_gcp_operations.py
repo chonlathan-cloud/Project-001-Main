@@ -7,6 +7,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from app.adapters.gcp.client import (
+    CLOUD_PLATFORM_SCOPE,
     GoogleCloudOperationsClient,
     _safe_summary,
     build_application_error_filter,
@@ -39,6 +40,11 @@ def _headers() -> dict[str, str]:
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
     }
+
+
+def test_gcp_metadata_uses_scope_supported_by_cloud_sql_and_firestore() -> None:
+    assert CLOUD_PLATFORM_SCOPE == "https://www.googleapis.com/auth/cloud-platform"
+    assert not CLOUD_PLATFORM_SCOPE.endswith(".read-only")
 
 
 def _call(
