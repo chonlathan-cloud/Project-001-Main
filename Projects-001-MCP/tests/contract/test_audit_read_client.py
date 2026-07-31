@@ -26,7 +26,12 @@ def test_audit_filter_is_server_built_and_resource_scoped() -> None:
     assert 'resource.type="cloud_run_revision"' in result
     assert 'resource.labels.service_name="projects-001-mcp"' in result
     assert 'jsonPayload.log_type="product_audit"' in result
+    assert 'jsonPayload.message:"\\\"log_type\\\":\\\"product_audit\\\""' in result
     assert 'jsonPayload.tool_name="read_document_content"' in result
+    assert (
+        'jsonPayload.message:"\\\"tool_name\\\":\\\"read_document_content\\\""'
+        in result
+    )
     assert 'textPayload:"\\\"tool_name\\\":\\\"read_document_content\\\""' in result
     assert 'jsonPayload.authorization_decision="allow"' in result
     assert 'textPayload:"\\\"authorization_decision\\\":\\\"allow\\\""' in result

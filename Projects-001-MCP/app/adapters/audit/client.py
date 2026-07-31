@@ -58,7 +58,11 @@ def _quoted(value: str) -> str:
 def _field_clause(field: str, value: str) -> str:
     quoted = _quoted(value)
     escaped_text = json.dumps(f'"{field}":"{value}"')
-    return f"(jsonPayload.{field}={quoted} OR textPayload:{escaped_text})"
+    return (
+        f"(jsonPayload.{field}={quoted} OR "
+        f"jsonPayload.message:{escaped_text} OR "
+        f"textPayload:{escaped_text})"
+    )
 
 
 def build_audit_filter(
@@ -76,6 +80,7 @@ def build_audit_filter(
         'resource.type="cloud_run_revision"',
         f"resource.labels.service_name={_quoted(settings.service_name)}",
         "(jsonPayload.log_type=\"product_audit\" OR "
+        'jsonPayload.message:"\\\"log_type\\\":\\\"product_audit\\\"" OR '
         'textPayload:"\\\"log_type\\\":\\\"product_audit\\\"")',
         f'timestamp>={_quoted(_utc(date_from).isoformat().replace("+00:00", "Z"))}',
         f'timestamp<={_quoted(_utc(date_to).isoformat().replace("+00:00", "Z"))}',

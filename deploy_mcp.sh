@@ -180,6 +180,15 @@ validate_operational_filter() {
   fi
 }
 
+validate_audit_sink_filter() {
+  if ! python3 \
+    "${MCP_SOURCE_PATH}/app/config/audit_logging_filter.py" \
+    "${EXPECTED_MCP_SERVICE}" \
+    <<< "$1"; then
+    fail "audit sink filter must capture direct, nested jsonPayload.message and text Product Audit events from the exact MCP service"
+  fi
+}
+
 validate_metadata_role() {
   if ! python3 \
     "${MCP_SOURCE_PATH}/app/config/metadata_iam_policy.py" \
@@ -345,10 +354,7 @@ audit_sink_filter="$(
     --project "${GCP_PROJECT_ID}" \
     --format='value(filter)'
 )"
-[[ "${audit_sink_filter}" == *"${MCP_SERVICE_NAME}"* ]] || fail \
-  "audit sink filter is not restricted to the MCP service"
-[[ "${audit_sink_filter}" == *"product_audit"* ]] || fail \
-  "audit sink filter is not restricted to Product Audit events"
+validate_audit_sink_filter "${audit_sink_filter}"
 
 view_policy_json="$(
   gcloud logging views get-iam-policy "${EXPECTED_AUDIT_VIEW}" \

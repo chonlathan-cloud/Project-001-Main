@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config.settings import Environment
+
+_CANONICAL_UUID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def opaque_target_record_id(value: str) -> str:
+    """Keep audit correlation without storing a canonical record UUID."""
+
+    if _CANONICAL_UUID.fullmatch(value) is None:
+        return value
+    digest = hashlib.sha256(
+        f"product-audit-record-v1:{value.casefold()}".encode()
+    ).hexdigest()[:24]
+    return f"rid_{digest}"
 
 
 class ProductAuditEvent(BaseModel):
@@ -35,3 +53,7 @@ class ProductAuditEvent(BaseModel):
     latency_class: Literal["lt_1s", "1s_to_5s", "5s_to_15s", "gte_15s"]
     error_code: str | None = Field(default=None, max_length=64)
 
+    @field_validator("target_record_ids")
+    @classmethod
+    def obscure_record_uuids(cls, values: list[str]) -> list[str]:
+        return [opaque_target_record_id(value) for value in values]
