@@ -1,9 +1,9 @@
 # Phase 5 Demo release evidence
 
-Evidence date: pending
+Evidence date: 2026-07-31
 Environment: Demo (`project001-489710`, `asia-southeast1`)
 Pilot roles: Owner, then one explicitly authorized Admin
-Status: pending
+Status: live validation in progress; targeted audit, latency and rollback gates passed
 
 This file is the live release gate for Curated GCP Operations, Internal Chat and
 Admin MCP access. Do not mark a row passed from repository tests alone. Evidence
@@ -15,11 +15,11 @@ content.
 
 | Item | Evidence | Result |
 |---|---|---:|
-| Repository commit | Pending | Pending |
-| Database safety point | Pending | Pending |
-| Backend revision | Pending; must expose 28 service-authenticated MCP contracts | Pending |
-| MCP revision | Pending; must report `0.5.0` and list 37 tools | Pending |
-| Frontend revision | Pending; must expose Owner MCP controls | Pending |
+| Repository commit | `4d4010a`; Product Audit routing and opaque record correlation hardening | Passed |
+| Database safety point | Successful pre-Phase 5 Demo backup `1785386813588` recorded before rollout | Passed |
+| Backend revision | `projects-001-be-00123-thg`; 28 service-authenticated MCP contracts | Passed |
+| MCP revision | `projects-001-mcp-00012-sbs`; reports `0.5.0` and lists 37 tools | Passed |
+| Frontend revision | `projects-001-fe-00051-7f6`; Owner MCP controls deployed | Passed |
 | Rollout cohort | Owner first; one named-by-opaque-ID assigned Admin only after Owner pass | Pending |
 
 ## Operational Logging and IAM
@@ -38,12 +38,12 @@ content.
 
 | Tool | Required assertion | Latency | Result |
 |---|---|---:|---:|
-| `get_system_health` | Fixed components and safe status only | Pending | Pending |
-| `get_gcp_resource_summary` | Safe aliases/counts only; no enumeration or excluded resource | Pending | Pending |
-| `get_cloud_run_status` | Each of `frontend`, `backend`, `mcp`; no raw config/IAM/env | Pending | Pending |
-| `search_application_errors` | G-014 bounded to the dedicated view; safe redacted fields only | Pending | Pending |
-| `get_data_source_health` | Fixed sources and explicit partial/unavailable state | Pending | Pending |
-| `get_processing_status` | One safe status per approved workflow; no mutation/external IDs/body | Pending | Pending |
+| `get_system_health` | Fixed components and safe status only; 13 correlated successful calls | p95 835 ms | Passed |
+| `get_gcp_resource_summary` | Safe aliases/counts only; no enumeration or excluded resource; 13 correlated successful calls | p95 1,336 ms | Passed |
+| `get_cloud_run_status` | Existing all-alias check covered `frontend`, `backend` and `mcp`; 10 correlated successful calls in the final batch omitted raw config/IAM/env | p95 422 ms | Passed |
+| `search_application_errors` | G-014 bounded to the dedicated view; 21 successful, redacted calls with a non-future one-hour interval | p95 863 ms | Passed |
+| `get_data_source_health` | Fixed sources and explicit partial/unavailable state; 12 correlated successful calls | p95 872 ms | Passed |
+| `get_processing_status` | Existing Demo job read without mutation, external IDs or body; 13 correlated successful calls | p95 829 ms | Passed |
 
 ## Internal Chat consistency
 
@@ -70,12 +70,12 @@ content.
 
 | Gate | Required evidence | Result |
 |---|---|---:|
-| Redaction scan | Zero token, credential, URL, email, path, UUID, prompt/body or service-identity leakage | Pending |
-| Audit coverage | Sensitive operations have matching start/terminal Product Audit events | Pending |
-| Cloud errors | Zero unexpected Backend/MCP errors in the bounded release window | Pending |
-| Operations p95 | `<=15,000 ms` across successful Phase 5 operations | Pending |
-| Backend rollback/restore | Prior revision health, then candidate restored to 100% | Pending |
-| MCP rollback/restore | Prior revision health/401 boundary, then candidate restored to 100% | Pending |
+| Redaction scan | 144 Product Audit events scanned; zero token, credential, URL, email, path, raw UUID or prompt/body matches. Canonical record IDs were emitted only as `rid_` opaque correlations. | Passed |
+| Audit coverage | 39 sensitive requests had 39 matching terminal events; missing pairs: 0. The Audit sink/preflight accepts direct `jsonPayload`, nested `jsonPayload.message` and `textPayload` Product Audit records. | Passed |
+| Cloud errors | Backend/MCP runtime severity `ERROR` count: 0; failed release-window control-plane operations: 0 | Passed |
+| Operations p95 | 82/82 audit-correlated successful calls; p95 1,287 ms; max 1,336 ms | Passed |
+| Backend rollback/restore | Prior revision healthy; candidate `projects-001-be-00123-thg` restored to 100% and healthy | Passed |
+| MCP rollback/restore | Prior revision healthy; unauthenticated initialize returned 401; candidate `projects-001-mcp-00012-sbs` restored to 100%; Owner re-initialized with 37 tools | Passed |
 
 ## Release decision
 
