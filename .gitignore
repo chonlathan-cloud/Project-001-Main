@@ -24,6 +24,7 @@ mcp.deploy.demo
 mcp.deploy.beta
 cloudrun-mcp.env.yaml
 cloudrun-mcp-beta.env.yaml
+Projects-001-MCP/.private-plugin-release/
 
 # Editor directories and files
 .vscode/*

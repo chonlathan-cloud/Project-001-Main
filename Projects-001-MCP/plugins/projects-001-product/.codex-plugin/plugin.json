@@ -1,0 +1,32 @@
+{
+  "name": "projects-001-product",
+  "version": "0.6.0",
+  "description": "Private read-only Projects-001 business and operations access through Remote MCP.",
+  "author": {
+    "name": "Projects-001"
+  },
+  "keywords": [
+    "projects",
+    "construction",
+    "boq",
+    "finance",
+    "operations"
+  ],
+  "skills": "./skills/",
+  "apps": "./.app.json",
+  "interface": {
+    "displayName": "Projects-001 Product",
+    "shortDescription": "Read authorized project facts with sources.",
+    "longDescription": "Private, read-only access to authorized Projects-001 project, BOQ, finance, document, operations, audit, and curated GCP facts.",
+    "developerName": "Projects-001",
+    "category": "Productivity",
+    "capabilities": [
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Summarize my authorized projects, risks, and source freshness.",
+      "Compare two BOQ versions and explain the financial impact.",
+      "Find overdue inspections and relevant daily-report evidence."
+    ]
+  }
+}

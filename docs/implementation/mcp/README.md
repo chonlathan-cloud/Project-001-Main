@@ -13,8 +13,9 @@ The planning baseline remains immutable; implementation status is tracked here.
 | Phase 2 — Core Business Owner Pilot | Complete | All Demo gates passed, including MCP Inspector and direct Codex Owner flows |
 | Phase 3 — Finance and Document Gateway | Complete in Demo | Seven public tools and eight Backend contracts deployed; Owner, audit, privacy and latency gates passed |
 | Phase 4 — Project Operations and Product Audit | Complete in Demo | Ten tools, 27 Backend contracts, exact audit view, rollback and p95 gates passed |
-| Phase 5 — Curated GCP Operations and Internal Chat | Repository complete; Demo pending | Six tools, shared Chat contracts and Admin controls pass locally; live operations IAM/pilot evidence remains |
-| Phases 6–7 | Not started | Private Plugin and Beta remain gated by Phase 5 Demo evidence |
+| Phase 5 — Curated GCP Operations and Internal Chat | Demo validation in progress; 7 rows pending | Operational/IAM, Owner/Admin external-MCP, audit, latency and rollback evidence passed; Internal Chat plus exact Admin grant/unbind evidence remains |
+| Phase 6 — Private Plugin and Beta | Repository complete; live rollout blocked | Private package/skill, privacy/runbooks and hardened Beta preflight implemented; Phase 5 closure plus missing Beta MCP identity/service/log buckets remain |
+| Phase 7 — Publish readiness | Not started | Requires successful controlled Beta plus explicit business/security/privacy approval |
 
 ## Phase 0 artifacts
 
@@ -39,6 +40,8 @@ The planning baseline remains immutable; implementation status is tracked here.
 - Reproducible Phase 4 and Phase 5 evaluators in
   `Projects-001-MCP/tests/evals/phase4_evaluator.py` and
   `Projects-001-MCP/tests/evals/phase5_evaluator.py`
+- Reproducible Phase 6 repository/live-boundary evaluator in
+  `Projects-001-MCP/tests/evals/phase6_evaluator.py`
 - [Demo release evidence](phase2-demo-release-evidence.md)
 - [Phase 3 repository evidence](phase3-repository-evidence.md)
 - [Phase 3 Demo release evidence](phase3-demo-release-evidence.md)
@@ -46,6 +49,11 @@ The planning baseline remains immutable; implementation status is tracked here.
 - [Phase 4 Demo release evidence](phase4-demo-release-evidence.md)
 - [Phase 5 repository evidence](phase5-repository-evidence.md)
 - [Phase 5 Demo release evidence checklist](phase5-demo-release-evidence.md)
+- [Phase 6 repository evidence](phase6-repository-evidence.md)
+- [Phase 6 Beta release evidence](phase6-beta-release-evidence.md)
+- [Phase 6 Beta runbook](phase6-beta-runbook.md)
+- [Product MCP privacy notice](phase6-privacy-notice.md)
+- [Private Plugin user guide](../../User_Manual_MCP_Private_Plugin.md)
 
 ## Guardrails
 
@@ -61,15 +69,17 @@ The planning baseline remains immutable; implementation status is tracked here.
 
 ## Repository verification
 
-- 88 MCP tests cover protocol metadata/init, OAuth vectors, environment
+- 131 MCP tests cover protocol metadata/init, OAuth vectors, environment
   isolation, Backend delegation, all 37 tool contracts, exact business data,
-  Product/operational audit boundaries, GCP allowlists, Admin matrices and
-  redaction/outage behavior.
+  Product/operational audit boundaries, GCP allowlists, Admin matrices,
+  redaction/outage behavior, private plugin packaging and Beta release policy.
 - 114 Backend tests cover service identity, per-call entitlement/revocation,
   project scope, exact shared Chat facts, signed cursors, BOQ/Finance money,
   Document Gateway controls and safe processing status.
 - Ruff passes for all MCP code/tests and every changed Backend file. Python
   byte-compilation passes for the changed service and route modules.
+- Full Backend Ruff still reports eight pre-existing findings in unrelated
+  untouched files; Phase 6 changes no Backend source.
 - Both production containers build; the MCP image runs as a non-root user.
 - Container smoke tests return `200` for the public no-data `/health` route and
   `401` plus protected-resource metadata for unauthenticated `/mcp` initialize.
@@ -77,5 +87,6 @@ The planning baseline remains immutable; implementation status is tracked here.
   required environment-specific configuration is absent.
 
 Repository verification is supplemented by the environment-specific release
-evidence above. Phase 4 was promoted only to Demo; Phase 5 and Beta cloud state
-were not changed.
+evidence above. Phase 6 implementation made no GCP mutation. Bounded inventory
+reads found the Beta Backend/frontend and data resources, but the Beta MCP
+identity/service and audit/operational log buckets are not provisioned.

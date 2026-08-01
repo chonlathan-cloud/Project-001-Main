@@ -17,6 +17,7 @@ def test_beta_environment_profile_is_valid() -> None:
     settings = make_settings("beta")
     assert settings.app_env == "prod-beta"
     assert settings.service_name == "projects-001-mcp-beta"
+    assert settings.audit_read_max_days == 365
 
 
 @pytest.mark.parametrize(
@@ -49,3 +50,15 @@ def test_audit_retention_window_is_bounded() -> None:
     assert make_settings().audit_read_max_days == 90
     with pytest.raises(ValidationError):
         make_settings(MCP_AUDIT_READ_MAX_DAYS=366)
+
+
+@pytest.mark.parametrize(
+    ("environment", "days"),
+    [("demo", 365), ("beta", 90)],
+)
+def test_audit_read_window_must_match_environment_retention(
+    environment: str,
+    days: int,
+) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(environment, MCP_AUDIT_READ_MAX_DAYS=days)

@@ -70,6 +70,7 @@ case "${MCP_ENVIRONMENT}" in
   demo)
     EXPECTED_APP_ENV="production"
     EXPECTED_MCP_SERVICE="projects-001-mcp"
+    EXPECTED_MCP_SERVICE_ACCOUNT="projects-001-mcp-demo@project001-489710.iam.gserviceaccount.com"
     EXPECTED_FRONTEND_SERVICE="projects-001-fe"
     EXPECTED_BACKEND_SERVICE="projects-001-be"
     EXPECTED_CLOUDSQL="project001-489710:asia-southeast1:project-001"
@@ -79,6 +80,8 @@ case "${MCP_ENVIRONMENT}" in
     EXPECTED_AUDIT_SINK="projects-001-mcp-audit-demo-sink"
     EXPECTED_AUDIT_VIEW="projects-001-mcp-audit-demo-view"
     EXPECTED_AUDIT_LOG_VIEW="projects/project001-489710/locations/asia-southeast1/buckets/projects-001-mcp-audit-demo/views/projects-001-mcp-audit-demo-view"
+    EXPECTED_AUDIT_RETENTION_DAYS="90"
+    EXPECTED_AUDIT_READ_MAX_DAYS="90"
     EXPECTED_OPERATIONAL_BUCKET="projects-001-mcp-ops-demo"
     EXPECTED_OPERATIONAL_SINK="projects-001-mcp-ops-demo-sink"
     EXPECTED_OPERATIONAL_VIEW="projects-001-mcp-ops-demo-view"
@@ -87,6 +90,7 @@ case "${MCP_ENVIRONMENT}" in
   beta)
     EXPECTED_APP_ENV="prod-beta"
     EXPECTED_MCP_SERVICE="projects-001-mcp-beta"
+    EXPECTED_MCP_SERVICE_ACCOUNT="projects-001-mcp-beta@project001-489710.iam.gserviceaccount.com"
     EXPECTED_FRONTEND_SERVICE="projects-001-fe-beta"
     EXPECTED_BACKEND_SERVICE="projects-001-be-beta"
     EXPECTED_CLOUDSQL="project001-489710:asia-southeast1:project-001-beta"
@@ -96,6 +100,8 @@ case "${MCP_ENVIRONMENT}" in
     EXPECTED_AUDIT_SINK="projects-001-mcp-audit-beta-sink"
     EXPECTED_AUDIT_VIEW="projects-001-mcp-audit-beta-view"
     EXPECTED_AUDIT_LOG_VIEW="projects/project001-489710/locations/asia-southeast1/buckets/projects-001-mcp-audit-beta/views/projects-001-mcp-audit-beta-view"
+    EXPECTED_AUDIT_RETENTION_DAYS="365"
+    EXPECTED_AUDIT_READ_MAX_DAYS="365"
     EXPECTED_OPERATIONAL_BUCKET="projects-001-mcp-ops-beta"
     EXPECTED_OPERATIONAL_SINK="projects-001-mcp-ops-beta-sink"
     EXPECTED_OPERATIONAL_VIEW="projects-001-mcp-ops-beta-view"
@@ -110,6 +116,8 @@ EXPECTED_SQL_METADATA_CONDITION="resource.type == \"sqladmin.googleapis.com/Inst
 EXPECTED_FIRESTORE_METADATA_CONDITION="resource.type == \"firestore.googleapis.com/Database\" && resource.name == \"projects/${GCP_PROJECT_ID}/databases/${EXPECTED_FIRESTORE}\""
 
 [[ "${MCP_SERVICE_NAME}" == "${EXPECTED_MCP_SERVICE}" ]] || fail "MCP service mismatch"
+[[ "${MCP_SERVICE_ACCOUNT}" == "${EXPECTED_MCP_SERVICE_ACCOUNT}" ]] || fail \
+  "MCP service account does not match the environment identity"
 [[ "${ARTIFACT_REPO}" == "projects-001" ]] || fail "Artifact Registry mapping mismatch"
 [[ "${MCP_BACKEND_SERVICE_NAME}" == "${EXPECTED_BACKEND_SERVICE}" ]] || fail \
   "Backend service mismatch"
@@ -122,8 +130,6 @@ EXPECTED_FIRESTORE_METADATA_CONDITION="resource.type == \"firestore.googleapis.c
 [[ "${MCP_RESOURCE_URL}" == https://*/mcp ]] || fail \
   "MCP_RESOURCE_URL must be the stable HTTPS /mcp endpoint"
 [[ "${MCP_RESOURCE_URL}" != *".invalid"* ]] || fail "replace the placeholder MCP URL"
-[[ "${MCP_SERVICE_ACCOUNT}" != *"backend-runtime"* ]] || fail \
-  "MCP must use a dedicated service account"
 [[ "${MCP_RATE_LIMIT_PER_MINUTE}" =~ ^[0-9]+$ ]] || fail \
   "MCP_RATE_LIMIT_PER_MINUTE must be an integer"
 (( MCP_RATE_LIMIT_PER_MINUTE >= 1 && MCP_RATE_LIMIT_PER_MINUTE <= 1000 )) || fail \
@@ -231,7 +237,7 @@ validate_yaml_value MCP_FIRESTORE_DATABASE_ID "${MCP_FIRESTORE_DATABASE_ID}"
 validate_yaml_value MCP_ALLOWED_BUCKETS "${MCP_ALLOWED_BUCKETS}"
 validate_yaml_value MCP_RATE_LIMIT_PER_MINUTE "${MCP_RATE_LIMIT_PER_MINUTE}"
 validate_yaml_value MCP_AUDIT_LOG_VIEW "${EXPECTED_AUDIT_LOG_VIEW}"
-validate_yaml_value MCP_AUDIT_READ_MAX_DAYS "90"
+validate_yaml_value MCP_AUDIT_READ_MAX_DAYS "${EXPECTED_AUDIT_READ_MAX_DAYS}"
 validate_yaml_value MCP_OPERATIONAL_LOG_VIEW "${EXPECTED_OPERATIONAL_LOG_VIEW}"
 validate_yaml_value MCP_OPERATIONAL_LOG_READ_MAX_DAYS "30"
 
@@ -246,12 +252,28 @@ done
 [[ "$(yaml_value MCP_OAUTH_REQUIRED_SCOPES)" == *"mcp:read"* ]] || fail \
   "OAuth scopes must include mcp:read"
 
+if ! python3 \
+  "${MCP_SOURCE_PATH}/app/config/beta_release_policy.py" \
+  profile \
+  "${MCP_ENVIRONMENT}" \
+  "${GCP_PROJECT_ID}" \
+  "${GCP_REGION}" \
+  "${MCP_SERVICE_ACCOUNT}" \
+  "${EXPECTED_AUDIT_READ_MAX_DAYS}" \
+  "${MCP_PROMOTED_IMAGE_URI:-}"; then
+  fail "environment identity, retention or promoted image violates release policy"
+fi
+
 echo "MCP config preflight passed for ${MCP_ENVIRONMENT}."
 
 gcloud projects describe "${GCP_PROJECT_ID}" --format='value(projectId)' >/dev/null
 gcloud artifacts repositories describe "${ARTIFACT_REPO}" \
   --project "${GCP_PROJECT_ID}" \
   --location "${GCP_REGION}" >/dev/null
+if [[ "${MCP_ENVIRONMENT}" == "beta" ]]; then
+  gcloud artifacts docker images describe "${MCP_PROMOTED_IMAGE_URI}" \
+    --project "${GCP_PROJECT_ID}" >/dev/null
+fi
 for cloud_run_service in \
   "${EXPECTED_FRONTEND_SERVICE}" \
   "${EXPECTED_BACKEND_SERVICE}" \
@@ -275,11 +297,11 @@ project_policy_json="$(
 )"
 validate_metadata_binding \
   "${project_policy_json}" \
-  "Demo Cloud SQL instance" \
+  "${MCP_ENVIRONMENT} Cloud SQL instance" \
   "${EXPECTED_SQL_METADATA_CONDITION}"
 validate_metadata_binding \
   "${project_policy_json}" \
-  "Demo Firestore database" \
+  "${MCP_ENVIRONMENT} Firestore database" \
   "${EXPECTED_FIRESTORE_METADATA_CONDITION}"
 
 cloud_sql_name="${MCP_CLOUDSQL_INSTANCE##*:}"
@@ -298,7 +320,7 @@ for bucket_name in "${allowed_bucket_items[@]}"; do
       --project "${GCP_PROJECT_ID}" \
       --format=json
   )"
-  validate_metadata_binding "${bucket_policy_json}" "Demo bucket ${bucket_name}"
+  validate_metadata_binding "${bucket_policy_json}" "${MCP_ENVIRONMENT} bucket ${bucket_name}"
 done
 
 for cloud_run_service in \
@@ -313,7 +335,7 @@ for cloud_run_service in \
   )"
   validate_metadata_binding \
     "${cloud_run_policy_json}" \
-    "Demo Cloud Run service ${cloud_run_service}"
+    "${MCP_ENVIRONMENT} Cloud Run service ${cloud_run_service}"
 done
 
 artifact_policy_json="$(
@@ -329,6 +351,22 @@ validate_metadata_binding \
 gcloud logging buckets describe "${EXPECTED_AUDIT_BUCKET}" \
   --project "${GCP_PROJECT_ID}" \
   --location "${GCP_REGION}" >/dev/null
+
+audit_retention_days="$(
+  gcloud logging buckets describe "${EXPECTED_AUDIT_BUCKET}" \
+    --project "${GCP_PROJECT_ID}" \
+    --location "${GCP_REGION}" \
+    --format='value(retentionDays)'
+)"
+[[ "${audit_retention_days}" == "${EXPECTED_AUDIT_RETENTION_DAYS}" ]] || fail \
+  "audit bucket retention must be exactly ${EXPECTED_AUDIT_RETENTION_DAYS} days"
+if ! python3 \
+  "${MCP_SOURCE_PATH}/app/config/beta_release_policy.py" \
+  retention \
+  "${MCP_ENVIRONMENT}" \
+  "${audit_retention_days}"; then
+  fail "audit bucket retention does not match the environment policy"
+fi
 
 audit_view_filter="$(
   gcloud logging views describe "${EXPECTED_AUDIT_VIEW}" \
@@ -476,10 +514,6 @@ if [[ "${PREFLIGHT_ONLY}" == "true" ]]; then
   exit 0
 fi
 
-IMAGE_TAG="${MCP_IMAGE_TAG:-$(git -C "${ROOT_DIR}" rev-parse --short=12 HEAD)}"
-IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/${MCP_IMAGE_NAME}:${IMAGE_TAG}"
-DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
-
 previous_revision="$(
   gcloud run services describe "${MCP_SERVICE_NAME}" \
     --project "${GCP_PROJECT_ID}" \
@@ -487,13 +521,21 @@ previous_revision="$(
     --format='value(status.latestReadyRevisionName)' 2>/dev/null || true
 )"
 
-echo "Building and pushing ${IMAGE_URI}"
-gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet >/dev/null
-docker buildx build \
-  --platform "${DOCKER_PLATFORM}" \
-  --tag "${IMAGE_URI}" \
-  --push \
-  "${MCP_SOURCE_PATH}"
+if [[ "${MCP_ENVIRONMENT}" == "beta" ]]; then
+  IMAGE_URI="${MCP_PROMOTED_IMAGE_URI}"
+  echo "Promoting tested image ${IMAGE_URI}"
+else
+  IMAGE_TAG="${MCP_IMAGE_TAG:-$(git -C "${ROOT_DIR}" rev-parse --short=12 HEAD)}"
+  IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/${MCP_IMAGE_NAME}:${IMAGE_TAG}"
+  DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
+  echo "Building and pushing ${IMAGE_URI}"
+  gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet >/dev/null
+  docker buildx build \
+    --platform "${DOCKER_PLATFORM}" \
+    --tag "${IMAGE_URI}" \
+    --push \
+    "${MCP_SOURCE_PATH}"
+fi
 
 deploy_args=(
   run deploy "${MCP_SERVICE_NAME}"

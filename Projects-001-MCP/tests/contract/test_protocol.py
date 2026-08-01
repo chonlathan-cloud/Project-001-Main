@@ -48,7 +48,7 @@ def test_health_is_public_and_contains_no_business_data() -> None:
     assert response.json() == {
         "status": "ok",
         "service": "projects-001-mcp",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "environment": "demo",
     }
     assert response.headers["x-request-id"]

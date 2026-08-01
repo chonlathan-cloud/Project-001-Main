@@ -251,6 +251,12 @@ class Settings(BaseSettings):
         if frozenset(self.allowed_buckets) != profile.buckets:
             raise ValueError("MCP_ALLOWED_BUCKETS must exactly match the environment allowlist.")
 
+        expected_audit_read_days = 365 if self.environment is Environment.BETA else 90
+        if self.audit_read_max_days != expected_audit_read_days:
+            raise ValueError(
+                "MCP_AUDIT_READ_MAX_DAYS must match the environment retention policy."
+            )
+
         resource = str(self.resource_url).rstrip("/")
         parsed_resource = urlparse(resource)
         if (

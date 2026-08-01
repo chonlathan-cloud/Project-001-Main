@@ -59,6 +59,7 @@ def make_settings(environment: str = "demo", **overrides: object) -> Settings:
             else "projects/project001-489710/locations/asia-southeast1/buckets/"
             "projects-001-mcp-audit-demo/views/projects-001-mcp-audit-demo-view"
         ),
+        "MCP_AUDIT_READ_MAX_DAYS": 365 if beta else 90,
         "MCP_OPERATIONAL_LOG_NAME": "test_operational",
         "MCP_OPERATIONAL_LOG_VIEW": (
             "projects/project001-489710/locations/asia-southeast1/buckets/"

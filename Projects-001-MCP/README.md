@@ -5,6 +5,8 @@ a Streamable HTTP `/mcp` endpoint, OAuth resource-server validation, per-call
 Product policy resolution, common envelopes, separated audit telemetry, and the
 Phase 2 Core Business, Phase 3 Finance/Document Gateway, and Phase 4 Project
 Operations/Product Audit tools, plus the Phase 5 Curated GCP Operations tools.
+Phase 6 adds the private plugin package, bundled multi-tool workflow skill and
+fail-closed Beta promotion policy without changing the 37 public tool schemas.
 
 ## Current scope
 
@@ -82,6 +84,7 @@ python -m tests.evals.phase2_evaluator
 python -m tests.evals.phase3_evaluator
 python -m tests.evals.phase4_evaluator
 python -m tests.evals.phase5_evaluator
+python -m tests.evals.phase6_evaluator
 docker build --tag projects-001-mcp:local .
 ```
 
@@ -89,14 +92,24 @@ The evaluators report the Phase 2 Core Golden/BOQ gate, Phase 3 exact
 Finance/Document security gate, and Phase 4 Project Operations/Audit gate from
 the versioned `demo-sanitized` dataset. Phase 5 additionally gates G-014,
 operations allowlists/redaction, shared Internal Chat facts, the Admin matrix and
-next-call revocation. Real-client operational-view access, Admin consent and
-operations p95 remain separate Demo release gates.
+next-call revocation. Phase 6 validates the private package/skill and Beta
+identity, retention and digest-promotion contract while explicitly reporting
+live connection/deployment gates as pending.
+
+The private package is in `plugins/projects-001-product`. Its checked-in
+`.app.json` is intentionally unbound until ChatGPT Developer mode creates the
+real `plugin_asdk_app...` connection ID. The `private_plugin prepare` command
+creates a bound ignored release copy while preserving the checked-in package.
+Follow `../docs/User_Manual_MCP_Private_Plugin.md` and never invent or commit a
+placeholder ID.
 
 Deployment is intentionally separate from the Backend lifecycle. From the
 repository root, copy the matching `mcp.deploy.*.example` and
 `cloudrun-mcp*.env.yaml.example`, replace placeholders, then run
 `./deploy_mcp.sh --preflight-only`. Omit `--preflight-only` only when a real
-deployment has been explicitly approved.
+deployment has been explicitly approved. Beta additionally requires the exact
+Demo-tested Artifact Registry digest in `MCP_PROMOTED_IMAGE_URI`; it does not
+rebuild a different image during promotion.
 
 ## Security properties
 

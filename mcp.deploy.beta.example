@@ -2,6 +2,8 @@
 MCP_ENVIRONMENT=beta
 MCP_SERVICE_NAME=projects-001-mcp-beta
 MCP_IMAGE_NAME=projects-001-mcp
+# Required for Beta: promote the exact digest that passed Demo gates.
+MCP_PROMOTED_IMAGE_URI=asia-southeast1-docker.pkg.dev/project001-489710/projects-001/projects-001-mcp@sha256:replace-with-64-hex-digest
 MCP_SOURCE_DIR=Projects-001-MCP
 MCP_ENV_FILE=cloudrun-mcp-beta.env.yaml
 MCP_SERVICE_ACCOUNT=projects-001-mcp-beta@project001-489710.iam.gserviceaccount.com

@@ -36,18 +36,22 @@ Cloud Run, or pilot evidence is not complete until that external evidence exists
 | MCP-304 | Product citation/document routes | Complete through Phase 4 in Demo | Product citations, operation references and opaque Document Gateway IDs; no signed URLs |
 | MCP-400 | Golden Evaluation Set | Complete through Phase 5 locally | Phase 2–5 deterministic evaluators pass at 100% |
 | MCP-401 | Contract tests | Complete through repository Phase 5 scope | Backend and MCP suites cover 37 public tools and 28 Backend routes |
-| MCP-402 | Authorization/isolation tests | Complete locally; live IAM/Admin test pending | Cross-project, environment, six-tool Admin matrix and next-call revocation pass |
+| MCP-402 | Authorization/isolation tests | External-MCP live matrix passed; 3 Admin rows remain | Cross-project, six-tool allow, missing-permission denial and next-call disablement passed; explicit grant, unbind and Internal Chat denial remain |
 | MCP-403 | Security/redaction tests | Complete through repository Phase 5 scope | Operational query bounds and credential/URL/PII/path/UUID redaction join prior controls |
-| MCP-404 | Performance/failure tests | Phase 5 repository failure paths covered; live p95 pending | Operations p95 target <=15 seconds requires deployed Demo evidence |
-| MCP-405–MCP-409 | Pilots and rollout | Phase 4 Demo complete; Phase 5 pending | Phase 5 needs operational view/IAM, Owner live proof, Admin pilot and revocation evidence |
+| MCP-404 | Performance/failure tests | Demo passed; Beta p95 pending | Demo operations p95, audit and rollback gates passed; Beta still requires deployed live evidence |
+| MCP-405 | Owner Demo pilot | External-MCP Phase 5 pass; Internal Chat evidence pending | All six operations tools, audit, latency and rollback passed for Owner |
+| MCP-406 | Admin Demo pilot | External-MCP matrix passed; 3 rows pending | Allow/deny, cross-project and next-call disablement passed; explicit grant, unbind and Internal Chat denial remain |
+| MCP-407 | Private Plugin test | Repository package complete; live test pending | Valid manifest, registered-app binder and bundled workflow skill; Beta connection ID not created |
+| MCP-408 | Beta preflight/deploy | Preflight hardened; provisioning/deploy blocked | Exact SA/digest/365-day audit gates implemented; Beta MCP identity/service/log buckets absent |
+| MCP-409 | Beta controlled rollout | Not started | Requires Phase 5 closure, Beta deploy, Owner pilot, revoke drill, then selected Admins |
 
 ## Remaining release and later-phase gaps
 
-1. Provision the 30-day environment-locked operational bucket/sink/view, exact
-   view IAM and approved Product metadata permissions; repository code does not
-   make these cloud changes.
-2. Deploy and collect Phase 5 Owner evidence for all six tools plus exact
-   Internal/External Chat consistency, then run the selected Admin matrix and
-   immediate revocation proof.
-3. Phase 6 Private Plugin and Beta rollout remain blocked until the Phase 5 Demo
-   evidence is passed.
+1. Close the seven remaining Phase 5 Demo rows: four Internal Chat consistency
+   checks plus Admin explicit grant, unbind and Internal Chat denial.
+2. Build and retest Phase 6 in Demo, then record the exact approved image digest.
+3. Provision the missing Beta MCP service account, MCP service, 365-day Product
+   Audit bucket/sink/view, 30-day operational bucket/sink/view and exact IAM.
+4. Run the exact Beta preflight, deploy only after approval, and test rollback.
+5. Register/bind/test the private plugin and run the Beta Owner → revoke →
+   selected Admin rollout under `phase6-beta-runbook.md`.

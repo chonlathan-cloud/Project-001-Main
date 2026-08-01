@@ -1,0 +1,4 @@
+interface:
+  display_name: "Projects-001 Workflows"
+  short_description: "Grounded read-only project analysis workflows"
+  default_prompt: "Use $projects-001-workflows to summarize my authorized project with sources."
