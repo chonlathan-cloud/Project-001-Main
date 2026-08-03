@@ -108,11 +108,10 @@ def evaluate_phase6() -> dict[str, Any]:
         "live_release_gate_passed": None,
         "live_release_status": "not_evaluated",
         "remaining_live_gates": [
-            "close the seven remaining Phase 5 Demo evidence rows",
             "provision and preflight Beta MCP identity/service/logging resources",
-            "build and approve a Phase 6 Demo image digest",
-            "register and bind the ChatGPT MCP connection",
-            "run Owner, revoke, selected-Admin, performance and rollback evidence",
+            "promote the recorded Demo-tested digest without rebuilding it",
+            "register and bind the stable Beta ChatGPT MCP connection",
+            "run the controlled Beta Owner and selected-Admin cohort",
         ],
     }
 

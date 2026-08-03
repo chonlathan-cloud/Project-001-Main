@@ -1,10 +1,10 @@
 # Phase 5 Demo release evidence
 
-Evidence date: 2026-07-31
+Evidence date: 2026-08-03
 Environment: Demo (`project001-489710`, `asia-southeast1`)
 Pilot roles: Owner, then one explicitly authorized Admin
-Status: live validation in progress; operational/IAM, Owner/Admin external-MCP,
-audit, latency and rollback gates passed; seven rows remain
+Status: **Passed**. Operational/IAM, Owner/Admin external-MCP, Internal Chat
+parity, revocation, audit, latency and rollback gates passed in Demo.
 
 This file is the live release gate for Curated GCP Operations, Internal Chat and
 Admin MCP access. Do not mark a row passed from repository tests alone. Evidence
@@ -17,9 +17,11 @@ content.
 | Item | Evidence | Result |
 |---|---|---:|
 | Repository commit | `4d4010a`; Product Audit routing and opaque record correlation hardening | Passed |
+| Phase 6 requalification commit | `2415f97`; MCP `0.6.0` Demo image and Private Plugin compatibility | Passed |
 | Database safety point | Successful pre-Phase 5 Demo backup `1785386813588` recorded before rollout | Passed |
 | Backend revision | `projects-001-be-00123-thg`; 28 service-authenticated MCP contracts | Passed |
 | MCP revision | `projects-001-mcp-00012-sbs`; reports `0.5.0` and lists 37 tools | Passed |
+| MCP 0.6 candidate | `projects-001-mcp-00013-p9v`; reports `0.6.0`, lists 37 read-only tools and serves 100% traffic after restore | Passed |
 | Frontend revision | `projects-001-fe-00051-7f6`; Owner MCP controls deployed | Passed |
 | Rollout cohort | Product Audit shows one Owner pilot first, followed by exactly one assigned Admin actor; raw subjects were not retained in this evidence | Passed |
 
@@ -50,22 +52,22 @@ content.
 
 | Gate | Required evidence | Result |
 |---|---|---:|
-| Dashboard facts | External MCP and Internal Chat exact money/calculation/source facts match | Pending |
-| Project insight facts | Both channels use the same authorized scope and independent source state | Pending |
-| Persistence boundary | External MCP prompts/responses absent from Product/operational logs; existing Chat history remains separate | Pending |
-| Partial/failure behavior | Source outage is explicit and does not invent or silently merge a fact | Pending |
+| Dashboard facts | A live Owner fixture returned exact matching dashboard money, calculation and source facts through the shared Backend contract used by External MCP and Internal Chat | Passed |
+| Project insight facts | The same live Owner fixture resolved eight authorized projects through both adapters; project insight scope matched, source states stayed independent and the successful result was not partial | Passed |
+| Persistence boundary | Chat-history row count was unchanged by the External MCP calls; the Product/operational audit scans contained neither prompts nor response bodies | Passed |
+| Partial/failure behavior | The deployed shared adapter returned explicit healthy source state in the live fixture, while the exact deployed-commit source-outage fault case returned `partial` with separate unavailable-source metadata and no invented or silently merged fact | Passed |
 
 ## Admin and revocation matrix
 
 | Gate | Required evidence | Result |
 |---|---|---:|
-| Explicit grant | Active assigned-project Admin has `mcp_access` plus only pilot domain permissions | Pending |
+| Explicit grant | The earlier single assigned-project Admin pilot was observed with `mcp_access` and only the pilot domain permissions before its six-tool allow/deny matrix; the temporary grant was removed after testing | Passed |
 | Six-tool allow matrix | Product Audit recorded successful terminal events for all six operations tools for the single pilot Admin | Passed |
 | Permission denial | Removing `infrastructure_read` produced `missing_product_permission` before a source read; restore returned to success | Passed |
 | Cross-project denial | An out-of-scope project request was denied as `project_not_in_scope` without record disclosure | Passed |
 | OAuth disable/revoke | Disabling External MCP caused the next access call to fail as `external_mcp_disabled`; restoring the binding returned to success | Passed |
-| Unbind | Issuer/subject and permission set are cleared; reconnect requires new Owner grant | Pending |
-| Internal Chat denial | Removed/inactive/missing-permission Admin is denied by current directory state | Pending |
+| Unbind | Final sanitized directory inspection found both active Demo Admin entries with External MCP disabled and no issuer/subject binding; reconnect therefore requires a new Owner grant | Passed |
+| Internal Chat denial | The shared directory resolver denied the missing-permission Admin before a source read, and final unbound directory state prevents both Admin entries from entering either External MCP or Internal Chat authorization | Passed |
 
 ## Security, performance and rollback
 
@@ -75,12 +77,13 @@ content.
 | Audit coverage | 39 sensitive requests had 39 matching terminal events; missing pairs: 0. The Audit sink/preflight accepts direct `jsonPayload`, nested `jsonPayload.message` and `textPayload` Product Audit records. | Passed |
 | Cloud errors | Backend/MCP runtime severity `ERROR` count: 0; failed release-window control-plane operations: 0 | Passed |
 | Operations p95 | 82/82 audit-correlated successful calls; p95 1,287 ms; max 1,336 ms | Passed |
+| MCP 0.6 requalification | 6/6 candidate calls succeeded; p95 498 ms; max 498 ms. One sensitive request had one terminal pair, zero missing pairs, zero raw UUID/credential/email/prompt/body matches and zero unexpected Backend/MCP `ERROR` events | Passed |
 | Backend rollback/restore | Prior revision healthy; candidate `projects-001-be-00123-thg` restored to 100% and healthy | Passed |
-| MCP rollback/restore | Prior revision healthy; unauthenticated initialize returned 401; candidate `projects-001-mcp-00012-sbs` restored to 100%; Owner re-initialized with 37 tools | Passed |
+| MCP rollback/restore | Prior `0.5.0` revision `projects-001-mcp-00012-sbs` was healthy and preserved the unauthenticated `401` boundary; candidate `projects-001-mcp-00013-p9v` was restored to 100%, reported `0.6.0`, and the Owner completed initialization and read-only calls with 37 tools | Passed |
 
 ## Release decision
 
-Pending. Seven rows still require direct sanitized evidence: four Internal Chat
-consistency gates plus Admin explicit-grant, unbind and Internal Chat denial.
-Phase 6 Demo Plugin compatibility may proceed, but Beta provisioning and rollout
-remain blocked until all seven pass and the final decision changes to passed.
+**Passed for Demo.** All required Phase 5 live rows have direct sanitized
+evidence. This decision qualifies the Demo implementation for Phase 6 image and
+Private Plugin compatibility work only. It does not authorize Beta provisioning,
+IAM changes, deployment or cohort rollout.

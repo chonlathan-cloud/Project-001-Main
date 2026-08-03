@@ -12,7 +12,7 @@ def test_phase6_repository_gate_does_not_claim_live_beta_release() -> None:
     assert report["beta_profile_ready"] is True
     assert report["deployment_policy_ready"] is True
     assert report["documentation_ready"] is True
-    assert report["phase5_evidence_pending_rows"] == 7
+    assert report["phase5_evidence_pending_rows"] == 0
     assert report["repository_gate_passed"] is True
     assert report["live_release_gate_passed"] is None
     assert report["live_release_status"] == "not_evaluated"

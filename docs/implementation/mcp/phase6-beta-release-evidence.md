@@ -1,6 +1,6 @@
 # Phase 6 Beta release evidence
 
-Evidence date: 2026-08-01
+Evidence date: 2026-08-03
 
 Environment: Beta (`project001-489710`, `asia-southeast1`)
 
@@ -11,11 +11,27 @@ progress/validation, but this file does not authorize a GCP write or rollout.
 
 | Gate | Evidence | Status |
 |---|---|---|
-| Phase 5 Demo release | `phase5-demo-release-evidence.md` still contains required pending rows | Blocked |
+| Phase 5 Demo release | All required live rows in `phase5-demo-release-evidence.md` are passed with sanitized evidence | Passed |
 | Critical/High findings | Attach final security review with zero open Critical/High | Pending |
 | Named incident contacts | Record named release, OAuth, GCP, security/privacy and support contacts in private ticket | Pending |
-| Tested immutable image | Build Phase 6 in Demo and record exact approved digest | Pending |
-| Plugin package | Manifest and bundled workflow skill validate; live ChatGPT app binding intentionally absent | Repository pass / live pending |
+| Tested immutable image | Commit `2415f97` deployed as MCP `0.6.0`; promotion digest `sha256:3aa32fc5cf14e38798e6cdeaba5f0ba04bf6b2276f488015263604da9b5bff97` recorded after Demo validation | Demo passed |
+| Plugin package | Manifest and bundled workflow skill validate; an ignored release copy validates as bound without storing or exposing its private app ID in tracked evidence | Demo passed / Beta pending |
+
+## Demo qualification evidence
+
+| Gate | Sanitized evidence | Status |
+|---|---|---|
+| Candidate | Revision `projects-001-mcp-00013-p9v` reports `0.6.0`, exposes 37 read-only tools and serves 100% traffic | Passed |
+| Owner flow | Real ChatGPT Owner connection initialized and completed access, project, finance and BOQ reads through the candidate | Passed |
+| Admin and revocation | Phase 5 assigned-project allow/deny and next-call revoke passed; final directory state is unbound and requires a new Owner grant | Passed |
+| Bound release copy | Ignored release copy validates with `private_plugin validate --require-bound`; tracked source package remains unbound and shareable | Passed |
+| Performance and audit | 6/6 candidate calls succeeded, p95/max 498 ms; sensitive audit pairing 1/1; leakage and unexpected Backend/MCP error matches were zero | Passed |
+| Rollback/restore | Prior `0.5.0` revision stayed healthy with unauthenticated initialize `401`; candidate restored to 100% and Owner reads succeeded | Passed |
+| Immutable digests | Promotion digest is recorded above; executed Cloud Run platform digest is `sha256:35f7e2fe1d6f0de0a6a3be8f8d41a221149df2f669a7a948205b20fbe4c1d15d` | Passed |
+
+These facts qualify only the Demo image and compatibility package. No Beta
+resource, IAM binding, service, traffic or private connection was created or
+changed during this qualification.
 
 ## Read-only Beta inventory
 
@@ -32,7 +48,7 @@ Observed 2026-08-01 with bounded metadata reads:
 | Storage | All five configured Beta buckets returned | Present; IAM preflight pending |
 | Product Audit bucket | Exact `projects-001-mcp-audit-beta` describe returned `NOT_FOUND` | Missing |
 | Operational bucket | Exact `projects-001-mcp-ops-beta` describe returned `NOT_FOUND` | Missing |
-| Phase 6 image | Registry contains earlier Demo images only; no image contains the uncommitted Phase 6 code | Missing |
+| Phase 6 image | Exact Demo-tested promotion digest is recorded above; it has not been promoted or deployed to Beta | Demo present / Beta pending |
 
 No resource was created or modified by this inventory.
 
@@ -83,7 +99,8 @@ No resource was created or modified by this inventory.
 
 ## Release decision
 
-**NO-GO.** Repository implementation does not close the missing Phase 5 evidence
-or absent Beta identity/logging/MCP resources. Provisioning, IAM changes,
-deployment, ChatGPT connection registration, and cohort rollout each require
-explicit approval and recorded evidence under the runbook.
+**NO-GO for Beta.** Phase 5 Demo evidence and the Phase 6 Demo image/plugin
+qualification are complete, but the Beta identity, logging buckets/views and MCP
+service remain absent. Beta preflight, digest promotion, deployment, stable
+ChatGPT connection registration and cohort rollout each require explicit
+approval and recorded evidence under the runbook.
