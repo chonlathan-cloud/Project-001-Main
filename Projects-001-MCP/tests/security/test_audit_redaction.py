@@ -65,8 +65,10 @@ async def test_structured_audit_emitter_preserves_authorization_decision(caplog)
     assert payload["log_type"] == "product_audit"
 
 
-def test_product_audit_replaces_canonical_record_uuid_with_stable_opaque_id() -> None:
+def test_product_audit_replaces_all_record_identifiers_with_stable_opaque_ids() -> None:
     record_uuid = "5b9adc9e-6150-4689-a5b5-c924e38c3017"
+    document_id = f"daily_report.{record_uuid}.synthetic-fixture"
+    record_alias = "project-safe-alias"
     event = ProductAuditEvent(
         event_id="event-uuid-001",
         request_id="request-uuid-001",
@@ -79,14 +81,35 @@ def test_product_audit_replaces_canonical_record_uuid_with_stable_opaque_id() ->
         authorization_decision="allow",
         policy_reason_code="POLICY_ALLOWED",
         target_domain="projects_boq",
-        target_record_ids=[record_uuid, "project-safe-alias"],
+        target_record_ids=[record_uuid, document_id, record_alias],
         result_status="success",
         latency_class="lt_1s",
     )
 
     assert event.target_record_ids == [
         opaque_target_record_id(record_uuid),
-        "project-safe-alias",
+        opaque_target_record_id(document_id),
+        opaque_target_record_id(record_alias),
     ]
-    assert event.target_record_ids[0].startswith("rid_")
-    assert record_uuid not in event.model_dump_json()
+    assert all(value.startswith("rid_") for value in event.target_record_ids)
+    payload = event.model_dump_json()
+    assert record_uuid not in payload
+    assert document_id not in payload
+    assert record_alias not in payload
+
+
+def test_opaque_target_record_id_is_idempotent() -> None:
+    digest = opaque_target_record_id("daily_report.synthetic-fixture")
+
+    assert opaque_target_record_id(digest) == digest
+
+
+def test_opaque_target_record_id_normalizes_only_canonical_uuid_case() -> None:
+    lowercase_uuid = "5b9adc9e-6150-4689-a5b5-c924e38c3017"
+
+    assert opaque_target_record_id(lowercase_uuid.upper()) == opaque_target_record_id(
+        lowercase_uuid
+    )
+    assert opaque_target_record_id("Case-Sensitive-Alias") != opaque_target_record_id(
+        "case-sensitive-alias"
+    )

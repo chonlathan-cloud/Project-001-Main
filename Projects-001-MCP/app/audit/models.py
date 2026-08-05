@@ -15,15 +15,17 @@ _CANONICAL_UUID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+_OPAQUE_RECORD_ID = re.compile(r"^rid_[0-9a-f]{24}$")
 
 
 def opaque_target_record_id(value: str) -> str:
-    """Keep audit correlation without storing a canonical record UUID."""
+    """Return a stable, non-reversible audit correlation digest."""
 
-    if _CANONICAL_UUID.fullmatch(value) is None:
+    if _OPAQUE_RECORD_ID.fullmatch(value):
         return value
+    normalized_value = value.casefold() if _CANONICAL_UUID.fullmatch(value) else value
     digest = hashlib.sha256(
-        f"product-audit-record-v1:{value.casefold()}".encode()
+        f"product-audit-record-v1:{normalized_value}".encode()
     ).hexdigest()[:24]
     return f"rid_{digest}"
 
@@ -55,5 +57,5 @@ class ProductAuditEvent(BaseModel):
 
     @field_validator("target_record_ids")
     @classmethod
-    def obscure_record_uuids(cls, values: list[str]) -> list[str]:
+    def digest_record_ids(cls, values: list[str]) -> list[str]:
         return [opaque_target_record_id(value) for value in values]
