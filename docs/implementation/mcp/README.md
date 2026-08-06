@@ -13,9 +13,9 @@ The planning baseline remains immutable; implementation status is tracked here.
 | Phase 2 — Core Business Owner Pilot | Complete | All Demo gates passed, including MCP Inspector and direct Codex Owner flows |
 | Phase 3 — Finance and Document Gateway | Complete in Demo | Seven public tools and eight Backend contracts deployed; Owner, audit, privacy and latency gates passed |
 | Phase 4 — Project Operations and Product Audit | Complete in Demo | Ten tools, 27 Backend contracts, exact audit view, rollback and p95 gates passed |
-| Phase 5 — Curated GCP Operations and Internal Chat | Demo validation in progress; 7 rows pending | Operational/IAM, Owner/Admin external-MCP, audit, latency and rollback evidence passed; Internal Chat plus exact Admin grant/unbind evidence remains |
-| Phase 6 — Private Plugin and Beta | Repository complete; live rollout blocked | Private package/skill, privacy/runbooks and hardened Beta preflight implemented; Phase 5 closure plus missing Beta MCP identity/service/log buckets remain |
-| Phase 7 — Publish readiness | Not started | Requires successful controlled Beta plus explicit business/security/privacy approval |
+| Phase 5 — Curated GCP Operations and Internal Chat | Complete in Demo | Operational/IAM, Owner/Admin external-MCP, Internal Chat parity, audit, latency and rollback gates passed |
+| Phase 6 — Private Plugin and Beta | Complete in Beta | ChatGPT OAuth/CIMD, 37-tool qualification, Owner/Admin scope, revocation, audit and rollback gates passed; exact revisions/digests are frozen in release evidence |
+| Phase 7 — Publish readiness | In progress | Endpoint decision recorded; listing, legal/privacy, reviewer, Portal and explicit approval gates remain |
 
 ## Phase 0 artifacts
 
@@ -51,6 +51,7 @@ The planning baseline remains immutable; implementation status is tracked here.
 - [Phase 5 Demo release evidence checklist](phase5-demo-release-evidence.md)
 - [Phase 6 repository evidence](phase6-repository-evidence.md)
 - [Phase 6 Beta release evidence](phase6-beta-release-evidence.md)
+- [Phase 7 publish-readiness checklist](phase7-publish-readiness-checklist.md)
 - [Phase 6 Beta runbook](phase6-beta-runbook.md)
 - [Product MCP privacy notice](phase6-privacy-notice.md)
 - [Private Plugin user guide](../../User_Manual_MCP_Private_Plugin.md)
@@ -87,6 +88,8 @@ The planning baseline remains immutable; implementation status is tracked here.
   required environment-specific configuration is absent.
 
 Repository verification is supplemented by the environment-specific release
-evidence above. Phase 6 implementation made no GCP mutation. Bounded inventory
-reads found the Beta Backend/frontend and data resources, but the Beta MCP
-identity/service and audit/operational log buckets are not provisioned.
+evidence above. The final Phase 6 Beta release is the immutable Backend/MCP pair
+recorded in `phase6-beta-release-evidence.md`; controlled ChatGPT Owner/Admin,
+authorization, revocation, performance, audit and rollback gates passed. Phase 7
+publication remains separately gated by the publish-readiness checklist and
+explicit business, security/privacy, operations and release approval.
