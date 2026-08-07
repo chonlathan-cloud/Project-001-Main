@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="CORS_ORIGINS")
     rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
+    fund_allocation_enabled: bool = Field(
+        default=False,
+        alias="FUND_ALLOCATION_ENABLED",
+    )
     rate_limit_auth_per_minute: int = Field(
         default=20,
         ge=1,

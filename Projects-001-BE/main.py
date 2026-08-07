@@ -18,6 +18,7 @@ from app.api.v1 import (
     chat,
     daily_reports,
     dashboard,
+    funds,
     insights,
     inspection,
     input_requests,
@@ -68,6 +69,7 @@ app.include_router(dashboard.router, prefix=API_V1_PREFIX)
 app.include_router(insights.router, prefix=API_V1_PREFIX)
 app.include_router(inspection.router, prefix=API_V1_PREFIX)
 app.include_router(projects.router, prefix=API_V1_PREFIX)
+app.include_router(funds.router, prefix=API_V1_PREFIX)
 app.include_router(bills.router, prefix=API_V1_PREFIX)
 app.include_router(input_requests.router, prefix=API_V1_PREFIX)
 app.include_router(profile.router, prefix=API_V1_PREFIX)

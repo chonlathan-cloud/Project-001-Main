@@ -93,8 +93,7 @@ from app.services.input_receipt_cleanup_service import cleanup_orphan_temp_recei
 router = APIRouter(prefix="/input", tags=["Input Requests"])
 logger = logging.getLogger(__name__)
 
-COMPANY_PROJECT_NAME = "โครงการบริษัท"
-COMPANY_PROJECT_TYPE = "INTERNAL"
+OPERATIONS_SYSTEM_KEY = "OPERATIONS"
 OPTION_TYPE_TAG = "TAG"
 OPTION_TYPE_WORK_TYPE = "WORK_TYPE"
 THAILAND_TIMEZONE = timezone(timedelta(hours=7))
@@ -537,10 +536,7 @@ def _filter_input_requests_for_user(query, user: AuthenticatedUser):
 
 
 def _is_company_project(project: Project) -> bool:
-    return (
-        project.name == COMPANY_PROJECT_NAME
-        and str(project.project_type or "").upper() == COMPANY_PROJECT_TYPE
-    )
+    return str(project.system_key or "").upper() == OPERATIONS_SYSTEM_KEY
 
 
 async def _load_suggestion_values(db: AsyncSession, option_type: str) -> list[str]:
@@ -687,15 +683,8 @@ async def list_input_projects(
         query = select(Project).options(noload("*")).order_by(Project.name)
         if user.role == "subcontractor":
             assigned_project_ids = _assigned_project_ids_for_subcontractor(user)
-            if assigned_project_ids:
-                query = query.filter(
-                    or_(
-                        Project.id.in_(assigned_project_ids),
-                        Project.name == COMPANY_PROJECT_NAME,
-                    )
-                )
-            else:
-                query = query.filter(Project.name == COMPANY_PROJECT_NAME)
+            query = query.filter(Project.id.in_(assigned_project_ids))
+            query = query.filter(Project.system_key.is_distinct_from(OPERATIONS_SYSTEM_KEY))
 
         result = await db.execute(query)
         projects = result.scalars().all()
@@ -1423,12 +1412,29 @@ async def create_input_request(
             )
 
         if user.role == "subcontractor":
+            if _is_company_project(project):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "FORBIDDEN",
+                        "message": "Company Operations is internal-only.",
+                    },
+                )
             assigned_project_ids = _assigned_project_ids_for_subcontractor(user)
-            if request.project_id not in assigned_project_ids and not _is_company_project(project):
+            if request.project_id not in assigned_project_ids:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="This subcontractor is not assigned to the selected project.",
                 )
+
+        if _is_company_project(project) and not user.has_role("owner"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "FORBIDDEN",
+                    "message": "Only the Owner can create Company Operations activity in V1.",
+                },
+            )
 
         _validate_request_business_rules(
             entry_type=request.entry_type,

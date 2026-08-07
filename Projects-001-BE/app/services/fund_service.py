@@ -1,0 +1,1092 @@
+"""Server-authoritative fund calculation, posting, reversal, and opening balance."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from decimal import Decimal, ROUND_HALF_UP
+from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import and_, or_, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
+
+from app.core.config import get_settings
+from app.models.boq import BOQItem, Project
+from app.models.funds import FundAllocation, FundAuditEvent, FundBucket, FundLedgerEntry
+from app.models.input_request import InputRequest
+from app.schemas.fund_schema import (
+    FundAllocationListResponse,
+    FundAllocationParty,
+    FundAllocationResponse,
+    FundBucketOption,
+    FundSummaryResponse,
+)
+
+MONEY_QUANTUM = Decimal("0.01")
+ZERO = Decimal("0.00")
+BANGKOK = ZoneInfo("Asia/Bangkok")
+OPERATIONS_SYSTEM_KEY = "OPERATIONS"
+
+
+class FundDomainError(Exception):
+    """A stable business error suitable for a structured API response."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status_code: int = 400,
+        context: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        self.context = context or {}
+
+
+@dataclass(frozen=True)
+class AvailableValues:
+    raw_available: Decimal
+    available_to_allocate: Decimal
+    funding_deficit: Decimal
+
+
+def money(value: object) -> Decimal:
+    """Normalize a persisted/API money value to fixed two-decimal precision."""
+
+    return Decimal(str(value or 0)).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def calculate_available_values(
+    *,
+    opening_balance: object = ZERO,
+    paid_income: object = ZERO,
+    paid_expense: object = ZERO,
+    approved_expense_commitment: object = ZERO,
+    allocated_in: object = ZERO,
+    allocated_out: object = ZERO,
+    protected_reserve: object = ZERO,
+) -> AvailableValues:
+    """Apply the V1 formula with Decimal only and expose any deficit explicitly."""
+
+    raw = money(
+        money(opening_balance)
+        + money(paid_income)
+        + money(allocated_in)
+        - money(paid_expense)
+        - money(approved_expense_commitment)
+        - money(allocated_out)
+        - money(protected_reserve)
+    )
+    return AvailableValues(
+        raw_available=raw,
+        available_to_allocate=max(ZERO, raw),
+        funding_deficit=max(ZERO, -raw),
+    )
+
+
+def is_first_day_of_month(value: date) -> bool:
+    return value.day == 1
+
+
+def build_balance_version(payload: dict[str, object]) -> str:
+    """Build a stable opaque version that changes with relevant source activity."""
+
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:32]
+
+
+def _request_amount(request: InputRequest) -> Decimal:
+    return money(
+        request.approved_amount
+        if request.approved_amount is not None
+        else request.amount
+    )
+
+
+def _event_date(value: datetime | date | None, fallback: date) -> date:
+    if isinstance(value, datetime):
+        return value.astimezone(BANGKOK).date() if value.tzinfo else value.date()
+    return value or fallback
+
+
+def _current_input_totals(
+    requests: list[InputRequest],
+    *,
+    start_date: date | None,
+    today: date,
+) -> dict[str, Decimal | int]:
+    totals: dict[str, Decimal | int] = {
+        "paid_income": ZERO,
+        "paid_expense": ZERO,
+        "approved_expense_commitment": ZERO,
+        "paid_expense_this_month": ZERO,
+        "paid_expense_this_month_count": 0,
+    }
+    month_start = today.replace(day=1)
+
+    for request in requests:
+        request_status = str(request.status or "").upper()
+        entry_type = str(request.entry_type or "").upper()
+        amount = _request_amount(request)
+        if request_status == "PAID":
+            movement_date = _event_date(
+                request.paid_at or request.approved_at,
+                request.request_date,
+            )
+            if start_date and movement_date < start_date:
+                continue
+            key = "paid_income" if entry_type == "INCOME" else "paid_expense"
+            if entry_type in {"INCOME", "EXPENSE"}:
+                totals[key] = money(totals[key] + amount)  # type: ignore[operator]
+            if entry_type == "EXPENSE" and movement_date >= month_start:
+                totals["paid_expense_this_month"] = money(
+                    totals["paid_expense_this_month"] + amount  # type: ignore[operator]
+                )
+                totals["paid_expense_this_month_count"] = int(
+                    totals["paid_expense_this_month_count"]
+                ) + 1
+        elif request_status == "APPROVED" and entry_type == "EXPENSE":
+            movement_date = _event_date(request.approved_at, request.request_date)
+            if start_date and movement_date < start_date:
+                continue
+            totals["approved_expense_commitment"] = money(
+                totals["approved_expense_commitment"] + amount  # type: ignore[operator]
+            )
+
+    return totals
+
+
+def _historical_input_totals(
+    requests: list[InputRequest],
+    *,
+    start_date: date | None,
+    cutoff: date,
+) -> dict[str, Decimal]:
+    totals = {
+        "paid_income": ZERO,
+        "paid_expense": ZERO,
+        "approved_expense_commitment": ZERO,
+    }
+    for request in requests:
+        entry_type = str(request.entry_type or "").upper()
+        amount = _request_amount(request)
+        paid_date = (
+            _event_date(request.paid_at, request.request_date)
+            if request.paid_at is not None
+            else None
+        )
+        approved_date = (
+            _event_date(request.approved_at, request.request_date)
+            if request.approved_at is not None
+            else None
+        )
+
+        if paid_date is not None and paid_date < cutoff:
+            if start_date and paid_date < start_date:
+                continue
+            if entry_type == "INCOME":
+                totals["paid_income"] = money(totals["paid_income"] + amount)
+            elif entry_type == "EXPENSE":
+                totals["paid_expense"] = money(totals["paid_expense"] + amount)
+            continue
+
+        if (
+            entry_type == "EXPENSE"
+            and approved_date is not None
+            and approved_date < cutoff
+            and (start_date is None or approved_date >= start_date)
+        ):
+            totals["approved_expense_commitment"] = money(
+                totals["approved_expense_commitment"] + amount
+            )
+    return totals
+
+
+def _ledger_totals(
+    entries: list[FundLedgerEntry],
+    *,
+    start_date: date | None,
+    cutoff: date | None = None,
+) -> dict[str, Decimal]:
+    totals = {"opening_balance": ZERO, "allocated_in": ZERO, "allocated_out": ZERO}
+    for entry in entries:
+        effective_date = entry.effective_date
+        if start_date and effective_date < start_date:
+            continue
+        if cutoff and effective_date >= cutoff:
+            continue
+        amount = money(entry.amount)
+        if entry.entry_type == "OPENING_BALANCE":
+            if entry.direction == "CREDIT":
+                totals["opening_balance"] = money(totals["opening_balance"] + amount)
+            continue
+        if entry.entry_type not in {"ALLOCATION", "REVERSAL"}:
+            continue
+        if entry.direction == "CREDIT":
+            totals["allocated_in"] = money(totals["allocated_in"] + amount)
+        elif entry.direction == "DEBIT":
+            totals["allocated_out"] = money(totals["allocated_out"] + amount)
+    return totals
+
+
+async def _bucket_context(
+    db: AsyncSession,
+    project_id: UUID,
+    *,
+    lock: bool = False,
+) -> tuple[FundBucket, Project]:
+    statement = (
+        select(FundBucket, Project)
+        .join(Project, Project.id == FundBucket.project_id)
+        .options(noload("*"))
+        .where(Project.id == project_id)
+    )
+    if lock:
+        statement = statement.with_for_update(of=FundBucket)
+    row = (await db.execute(statement)).first()
+    if row is None:
+        project_exists = (
+            await db.execute(select(Project.id).where(Project.id == project_id))
+        ).scalar_one_or_none()
+        code = "FUND_BUCKET_MISSING" if project_exists else "PROJECT_NOT_FOUND"
+        raise FundDomainError(
+            code,
+            "The Project fund bucket is not configured." if project_exists else "Project not found.",
+            status_code=404,
+            context={"project_id": str(project_id)},
+        )
+    return row[0], row[1]
+
+
+async def _projected_boq_margin(db: AsyncSession, project_id: UUID) -> Decimal:
+    rows = (
+        await db.execute(
+            select(BOQItem.boq_type, BOQItem.grand_total)
+            .where(BOQItem.project_id == project_id)
+            .where(BOQItem.valid_to.is_(None))
+            .where(BOQItem.parent_id.is_(None))
+        )
+    ).all()
+    customer = sum((money(value) for kind, value in rows if str(kind).upper() == "CUSTOMER"), ZERO)
+    subcontractor = sum(
+        (money(value) for kind, value in rows if str(kind).upper() == "SUBCONTRACTOR"),
+        ZERO,
+    )
+    return money(customer - subcontractor)
+
+
+def _source_fingerprint(
+    bucket: FundBucket,
+    requests: list[InputRequest],
+    entries: list[FundLedgerEntry],
+    values: AvailableValues,
+) -> dict[str, object]:
+    return {
+        "bucket": [
+            str(bucket.id),
+            str(bucket.status),
+            str(bucket.balance_start_date or ""),
+            str(money(bucket.protected_reserve)),
+            str(getattr(bucket, "updated_at", "") or ""),
+        ],
+        "values": [
+            str(values.raw_available),
+            str(values.available_to_allocate),
+            str(values.funding_deficit),
+        ],
+        "inputs": sorted(
+            [
+                str(request.id),
+                str(request.status),
+                str(request.entry_type),
+                str(_request_amount(request)),
+                str(request.approved_at or ""),
+                str(request.paid_at or ""),
+                str(request.updated_at or ""),
+            ]
+            for request in requests
+        ),
+        "ledger": sorted(
+            [
+                str(entry.id),
+                str(entry.direction),
+                str(entry.entry_type),
+                str(money(entry.amount)),
+                str(entry.effective_date),
+                str(entry.created_at or ""),
+            ]
+            for entry in entries
+        ),
+    }
+
+
+async def calculate_fund_summary(
+    db: AsyncSession,
+    project_id: UUID,
+    *,
+    locked_context: tuple[FundBucket, Project] | None = None,
+) -> FundSummaryResponse:
+    bucket, project = locked_context or await _bucket_context(db, project_id)
+    requests = list(
+        (
+            await db.execute(
+                select(InputRequest)
+                .options(noload("*"))
+                .where(InputRequest.project_id == project_id)
+            )
+        ).scalars().all()
+    )
+    entries = list(
+        (
+            await db.execute(
+                select(FundLedgerEntry)
+                .options(noload("*"))
+                .where(FundLedgerEntry.bucket_id == bucket.id)
+            )
+        ).scalars().all()
+    )
+
+    now = datetime.now(UTC)
+    today = now.astimezone(BANGKOK).date()
+    setup_operations = bucket.bucket_type == "OPERATIONS" and bucket.status == "SETUP"
+    active_start = None if setup_operations else bucket.balance_start_date
+    active_requests = [] if setup_operations else requests
+    active_entries = [] if setup_operations else entries
+    input_totals = _current_input_totals(
+        active_requests,
+        start_date=active_start,
+        today=today,
+    )
+    ledger_totals = _ledger_totals(active_entries, start_date=active_start)
+    values = calculate_available_values(
+        opening_balance=ledger_totals["opening_balance"],
+        paid_income=input_totals["paid_income"],
+        paid_expense=input_totals["paid_expense"],
+        approved_expense_commitment=input_totals["approved_expense_commitment"],
+        allocated_in=ledger_totals["allocated_in"],
+        allocated_out=ledger_totals["allocated_out"],
+        protected_reserve=bucket.protected_reserve,
+    )
+
+    monthly_opening: Decimal | None = None
+    monthly_closing: Decimal | None = None
+    opening_balance: Decimal | None = None
+    if bucket.balance_start_date is not None:
+        opening_balance = ledger_totals["opening_balance"]
+        month_start = today.replace(day=1)
+        historical_inputs = _historical_input_totals(
+            requests,
+            start_date=bucket.balance_start_date,
+            cutoff=month_start,
+        )
+        historical_ledger = _ledger_totals(
+            entries,
+            start_date=bucket.balance_start_date,
+            cutoff=month_start,
+        )
+        if bucket.balance_start_date == month_start:
+            activation_opening = _ledger_totals(
+                entries,
+                start_date=bucket.balance_start_date,
+            )["opening_balance"]
+            historical_ledger["opening_balance"] = activation_opening
+        monthly_opening = calculate_available_values(
+            opening_balance=historical_ledger["opening_balance"],
+            paid_income=historical_inputs["paid_income"],
+            paid_expense=historical_inputs["paid_expense"],
+            approved_expense_commitment=historical_inputs["approved_expense_commitment"],
+            allocated_in=historical_ledger["allocated_in"],
+            allocated_out=historical_ledger["allocated_out"],
+            protected_reserve=bucket.protected_reserve,
+        ).raw_available
+        monthly_closing = values.raw_available
+
+    version = build_balance_version(
+        _source_fingerprint(bucket, active_requests, active_entries, values)
+    )
+    return FundSummaryResponse(
+        project_id=project.id,
+        bucket_id=bucket.id,
+        currency=bucket.currency,
+        projected_boq_margin=(
+            ZERO
+            if project.system_key == OPERATIONS_SYSTEM_KEY
+            else await _projected_boq_margin(db, project.id)
+        ),
+        paid_income=money(input_totals["paid_income"]),
+        paid_expense=money(input_totals["paid_expense"]),
+        paid_expense_this_month=money(input_totals["paid_expense_this_month"]),
+        paid_expense_this_month_count=int(input_totals["paid_expense_this_month_count"]),
+        approved_expense_commitment=money(input_totals["approved_expense_commitment"]),
+        allocated_in=ledger_totals["allocated_in"],
+        allocated_out=ledger_totals["allocated_out"],
+        protected_reserve=money(bucket.protected_reserve),
+        raw_available=values.raw_available,
+        available_to_allocate=values.available_to_allocate,
+        funding_deficit=values.funding_deficit,
+        opening_balance=opening_balance,
+        monthly_opening=monthly_opening,
+        monthly_closing=monthly_closing,
+        balance_start_date=bucket.balance_start_date,
+        bucket_status=bucket.status,
+        opening_balance_set=bucket.balance_start_date is not None,
+        mutations_enabled=get_settings().fund_allocation_enabled,
+        calculated_at=now,
+        version=version,
+    )
+
+
+async def list_bucket_options(db: AsyncSession) -> list[FundBucketOption]:
+    rows = (
+        await db.execute(
+            select(FundBucket, Project)
+            .join(Project, Project.id == FundBucket.project_id)
+            .options(noload("*"))
+            .order_by(
+                (Project.system_key == OPERATIONS_SYSTEM_KEY).desc(),
+                Project.name.asc(),
+            )
+        )
+    ).all()
+    if not any(project.system_key == OPERATIONS_SYSTEM_KEY for _, project in rows):
+        raise FundDomainError(
+            "OPERATIONS_BUCKET_MISSING",
+            "Company Operations is not configured. Run the audited bootstrap migration.",
+            status_code=503,
+        )
+    options: list[FundBucketOption] = []
+    for bucket, project in rows:
+        summary = await calculate_fund_summary(
+            db,
+            project.id,
+            locked_context=(bucket, project),
+        )
+        active = bucket.status == "ACTIVE" and str(project.status or "").upper() == "ACTIVE"
+        options.append(
+            FundBucketOption(
+                bucket_id=bucket.id,
+                project_id=project.id,
+                project_name=project.name,
+                project_type=project.project_type,
+                system_key=project.system_key,
+                bucket_type=bucket.bucket_type,
+                status=bucket.status,
+                currency=bucket.currency,
+                available_to_allocate=summary.available_to_allocate,
+                version=summary.version,
+                is_active=active,
+            )
+        )
+    return options
+
+
+async def _advisory_idempotency_lock(db: AsyncSession, key: str) -> None:
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:fund_lock_key))"),
+        {"fund_lock_key": f"fund:{key}"},
+    )
+
+
+async def _locked_bucket_contexts(
+    db: AsyncSession,
+    project_ids: tuple[UUID, UUID],
+) -> dict[UUID, tuple[FundBucket, Project]]:
+    rows = (
+        await db.execute(
+            select(FundBucket, Project)
+            .join(Project, Project.id == FundBucket.project_id)
+            .options(noload("*"))
+            .where(Project.id.in_(project_ids))
+            .order_by(FundBucket.id.asc())
+            .with_for_update(of=FundBucket)
+        )
+    ).all()
+    contexts = {project.id: (bucket, project) for bucket, project in rows}
+    for project_id in project_ids:
+        if project_id not in contexts:
+            raise FundDomainError(
+                "FUND_BUCKET_MISSING",
+                "A required Project fund bucket is not configured.",
+                status_code=404,
+                context={"project_id": str(project_id)},
+            )
+    return contexts
+
+
+def _validate_active_context(
+    context: tuple[FundBucket, Project],
+    *,
+    target: bool,
+) -> None:
+    bucket, project = context
+    if bucket.status != "ACTIVE" or str(project.status or "").upper() != "ACTIVE":
+        code = "TARGET_BUCKET_INACTIVE" if target else "SOURCE_BUCKET_INACTIVE"
+        raise FundDomainError(
+            code,
+            "The destination Bucket must be active." if target else "The source Bucket must be active.",
+            status_code=409,
+            context={"project_id": str(project.id)},
+        )
+
+
+def _reference(prefix: str) -> str:
+    today = datetime.now(BANGKOK).strftime("%Y%m%d")
+    return f"{prefix}-{today}-{uuid4().hex[:10].upper()}"
+
+
+async def _party_for_bucket(db: AsyncSession, bucket_id: UUID) -> FundAllocationParty:
+    row = (
+        await db.execute(
+            select(FundBucket, Project)
+            .join(Project, Project.id == FundBucket.project_id)
+            .options(noload("*"))
+            .where(FundBucket.id == bucket_id)
+        )
+    ).first()
+    if row is None:
+        raise FundDomainError("FUND_BUCKET_MISSING", "Fund bucket not found.", status_code=404)
+    bucket, project = row
+    return FundAllocationParty(
+        bucket_id=bucket.id,
+        project_id=project.id,
+        project_name=project.name,
+        system_key=project.system_key,
+    )
+
+
+async def serialize_allocation(
+    db: AsyncSession,
+    allocation: FundAllocation,
+) -> FundAllocationResponse:
+    return FundAllocationResponse(
+        id=allocation.id,
+        reference_no=allocation.reference_no,
+        source=await _party_for_bucket(db, allocation.source_bucket_id),
+        target=await _party_for_bucket(db, allocation.target_bucket_id),
+        amount=money(allocation.amount),
+        currency=allocation.currency,
+        reason=allocation.reason,
+        note=allocation.note,
+        status=allocation.status,
+        reversal_of=allocation.reversal_of,
+        created_by=allocation.created_by,
+        created_at=allocation.created_at or datetime.now(UTC),
+        source_balance_before=money(allocation.source_balance_before),
+        source_balance_after=money(allocation.source_balance_after),
+        target_balance_before=money(allocation.target_balance_before),
+        target_balance_after=money(allocation.target_balance_after),
+        source_balance_version=allocation.source_balance_version,
+        target_balance_version=allocation.target_balance_version,
+    )
+
+
+async def post_allocation(
+    db: AsyncSession,
+    *,
+    source_project_id: UUID,
+    target_project_id: UUID,
+    amount: Decimal,
+    currency: str,
+    reason: str,
+    note: str | None,
+    expected_source_balance_version: str,
+    idempotency_key: str,
+    actor: str,
+) -> FundAllocationResponse:
+    if source_project_id == target_project_id:
+        raise FundDomainError(
+            "INVALID_SOURCE_TARGET",
+            "Source and destination Projects must be different.",
+            status_code=400,
+        )
+    normalized_amount = money(amount)
+    allocation: FundAllocation
+    async with db.begin():
+        await _advisory_idempotency_lock(db, idempotency_key)
+        existing = (
+            await db.execute(
+                select(FundAllocation)
+                .options(noload("*"))
+                .where(FundAllocation.idempotency_key == idempotency_key)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing_bucket_rows = (
+                await db.execute(
+                    select(FundBucket.id, FundBucket.project_id).where(
+                        FundBucket.id.in_(
+                            (existing.source_bucket_id, existing.target_bucket_id)
+                        )
+                    )
+                )
+            ).all()
+            existing_project_ids = {
+                bucket_id: project_id for bucket_id, project_id in existing_bucket_rows
+            }
+            if (
+                money(existing.amount) != normalized_amount
+                or existing_project_ids.get(existing.source_bucket_id) != source_project_id
+                or existing_project_ids.get(existing.target_bucket_id) != target_project_id
+                or existing.currency != currency
+            ):
+                raise FundDomainError(
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "The idempotency key was already used for a different allocation.",
+                    status_code=409,
+                )
+            allocation = existing
+        else:
+            contexts = await _locked_bucket_contexts(
+                db,
+                (source_project_id, target_project_id),
+            )
+            source_context = contexts[source_project_id]
+            target_context = contexts[target_project_id]
+            _validate_active_context(source_context, target=False)
+            _validate_active_context(target_context, target=True)
+            source_summary = await calculate_fund_summary(
+                db,
+                source_project_id,
+                locked_context=source_context,
+            )
+            target_summary = await calculate_fund_summary(
+                db,
+                target_project_id,
+                locked_context=target_context,
+            )
+            if source_summary.version != expected_source_balance_version:
+                raise FundDomainError(
+                    "STALE_FUND_BALANCE",
+                    "The source balance changed. Refresh and review the latest amount.",
+                    status_code=409,
+                    context={"current_version": source_summary.version},
+                )
+            if normalized_amount <= ZERO or normalized_amount > source_summary.available_to_allocate:
+                raise FundDomainError(
+                    "INSUFFICIENT_AVAILABLE_FUNDS",
+                    "The allocation exceeds the current Available to Allocate balance.",
+                    status_code=409,
+                    context={
+                        "available_to_allocate": str(source_summary.available_to_allocate),
+                    },
+                )
+
+            source_bucket = source_context[0]
+            target_bucket = target_context[0]
+            allocation = FundAllocation(
+                reference_no=_reference("FA"),
+                source_bucket_id=source_bucket.id,
+                target_bucket_id=target_bucket.id,
+                amount=normalized_amount,
+                currency=currency,
+                reason=reason,
+                note=note,
+                status="POSTED",
+                idempotency_key=idempotency_key,
+                created_by=actor,
+                source_balance_before=source_summary.available_to_allocate,
+                source_balance_after=money(source_summary.available_to_allocate - normalized_amount),
+                target_balance_before=target_summary.available_to_allocate,
+                target_balance_after=money(target_summary.available_to_allocate + normalized_amount),
+                source_balance_version=source_summary.version,
+                target_balance_version=target_summary.version,
+            )
+            db.add(allocation)
+            await db.flush()
+            today = datetime.now(BANGKOK).date()
+            db.add_all(
+                [
+                    FundLedgerEntry(
+                        allocation_id=allocation.id,
+                        bucket_id=source_bucket.id,
+                        direction="DEBIT",
+                        entry_type="ALLOCATION",
+                        amount=normalized_amount,
+                        effective_date=today,
+                        reason=reason,
+                        created_by=actor,
+                    ),
+                    FundLedgerEntry(
+                        allocation_id=allocation.id,
+                        bucket_id=target_bucket.id,
+                        direction="CREDIT",
+                        entry_type="ALLOCATION",
+                        amount=normalized_amount,
+                        effective_date=today,
+                        reason=reason,
+                        created_by=actor,
+                    ),
+                    FundAuditEvent(
+                        event_type="fund_allocation.created",
+                        allocation_id=allocation.id,
+                        actor=actor,
+                        detail={
+                            "source_project_id": str(source_project_id),
+                            "target_project_id": str(target_project_id),
+                            "amount": str(normalized_amount),
+                        },
+                    ),
+                ]
+            )
+            await db.flush()
+            after_source = await calculate_fund_summary(
+                db,
+                source_project_id,
+                locked_context=source_context,
+            )
+            after_target = await calculate_fund_summary(
+                db,
+                target_project_id,
+                locked_context=target_context,
+            )
+            allocation.source_balance_after = after_source.available_to_allocate
+            allocation.target_balance_after = after_target.available_to_allocate
+            allocation.source_balance_version = after_source.version
+            allocation.target_balance_version = after_target.version
+            await db.flush()
+    return await serialize_allocation(db, allocation)
+
+
+async def reverse_allocation(
+    db: AsyncSession,
+    *,
+    allocation_id: UUID,
+    reason: str,
+    idempotency_key: str,
+    expected_source_balance_version: str | None,
+    actor: str,
+) -> FundAllocationResponse:
+    reversal: FundAllocation
+    async with db.begin():
+        await _advisory_idempotency_lock(db, idempotency_key)
+        replay = (
+            await db.execute(
+                select(FundAllocation)
+                .options(noload("*"))
+                .where(FundAllocation.idempotency_key == idempotency_key)
+            )
+        ).scalar_one_or_none()
+        if replay is not None:
+            if replay.reversal_of != allocation_id:
+                raise FundDomainError(
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "The idempotency key was already used for another operation.",
+                    status_code=409,
+                )
+            reversal = replay
+        else:
+            original = (
+                await db.execute(
+                    select(FundAllocation)
+                    .options(noload("*"))
+                    .where(FundAllocation.id == allocation_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if original is None:
+                raise FundDomainError("ALLOCATION_NOT_FOUND", "Allocation not found.", status_code=404)
+            if original.status == "REVERSED" or original.reversal_of is not None:
+                raise FundDomainError(
+                    "ALLOCATION_ALREADY_REVERSED",
+                    "This allocation cannot be reversed again.",
+                    status_code=409,
+                )
+
+            source_party = await _party_for_bucket(db, original.target_bucket_id)
+            target_party = await _party_for_bucket(db, original.source_bucket_id)
+            contexts = await _locked_bucket_contexts(
+                db,
+                (source_party.project_id, target_party.project_id),
+            )
+            source_context = contexts[source_party.project_id]
+            target_context = contexts[target_party.project_id]
+            _validate_active_context(source_context, target=False)
+            _validate_active_context(target_context, target=True)
+            source_summary = await calculate_fund_summary(
+                db,
+                source_party.project_id,
+                locked_context=source_context,
+            )
+            target_summary = await calculate_fund_summary(
+                db,
+                target_party.project_id,
+                locked_context=target_context,
+            )
+            if (
+                expected_source_balance_version
+                and source_summary.version != expected_source_balance_version
+            ):
+                raise FundDomainError(
+                    "STALE_FUND_BALANCE",
+                    "The returning Bucket balance changed. Refresh before reversing.",
+                    status_code=409,
+                    context={"current_version": source_summary.version},
+                )
+            amount = money(original.amount)
+            if amount > source_summary.available_to_allocate:
+                raise FundDomainError(
+                    "REVERSAL_WOULD_OVERDRAW_TARGET",
+                    "The returning Bucket does not have enough available funds.",
+                    status_code=409,
+                    context={
+                        "available_to_allocate": str(source_summary.available_to_allocate),
+                    },
+                )
+
+            reversal = FundAllocation(
+                reference_no=_reference("FR"),
+                source_bucket_id=original.target_bucket_id,
+                target_bucket_id=original.source_bucket_id,
+                amount=amount,
+                currency=original.currency,
+                reason=reason,
+                status="POSTED",
+                reversal_of=original.id,
+                idempotency_key=idempotency_key,
+                created_by=actor,
+                source_balance_before=source_summary.available_to_allocate,
+                source_balance_after=money(source_summary.available_to_allocate - amount),
+                target_balance_before=target_summary.available_to_allocate,
+                target_balance_after=money(target_summary.available_to_allocate + amount),
+                source_balance_version=source_summary.version,
+                target_balance_version=target_summary.version,
+            )
+            original.status = "REVERSED"
+            db.add(reversal)
+            await db.flush()
+            today = datetime.now(BANGKOK).date()
+            db.add_all(
+                [
+                    FundLedgerEntry(
+                        allocation_id=reversal.id,
+                        bucket_id=original.target_bucket_id,
+                        direction="DEBIT",
+                        entry_type="REVERSAL",
+                        amount=amount,
+                        effective_date=today,
+                        reason=reason,
+                        created_by=actor,
+                    ),
+                    FundLedgerEntry(
+                        allocation_id=reversal.id,
+                        bucket_id=original.source_bucket_id,
+                        direction="CREDIT",
+                        entry_type="REVERSAL",
+                        amount=amount,
+                        effective_date=today,
+                        reason=reason,
+                        created_by=actor,
+                    ),
+                    FundAuditEvent(
+                        event_type="fund_allocation.reversed",
+                        allocation_id=reversal.id,
+                        actor=actor,
+                        detail={
+                            "original_allocation_id": str(original.id),
+                            "amount": str(amount),
+                        },
+                    ),
+                ]
+            )
+            await db.flush()
+            after_source = await calculate_fund_summary(
+                db,
+                source_party.project_id,
+                locked_context=source_context,
+            )
+            after_target = await calculate_fund_summary(
+                db,
+                target_party.project_id,
+                locked_context=target_context,
+            )
+            reversal.source_balance_after = after_source.available_to_allocate
+            reversal.target_balance_after = after_target.available_to_allocate
+            reversal.source_balance_version = after_source.version
+            reversal.target_balance_version = after_target.version
+            await db.flush()
+    return await serialize_allocation(db, reversal)
+
+
+async def set_operations_opening_balance(
+    db: AsyncSession,
+    *,
+    project_id: UUID,
+    amount: Decimal,
+    activation_month: str,
+    reason: str,
+    idempotency_key: str,
+    actor: str,
+) -> FundSummaryResponse:
+    effective_date = date.fromisoformat(f"{activation_month}-01")
+    if not is_first_day_of_month(effective_date):
+        raise FundDomainError(
+            "INVALID_BALANCE_START_DATE",
+            "Balance Start Date must be the first day of a month.",
+            status_code=400,
+        )
+    async with db.begin():
+        await _advisory_idempotency_lock(db, idempotency_key)
+        bucket, project = await _bucket_context(db, project_id, lock=True)
+        if project.system_key != OPERATIONS_SYSTEM_KEY:
+            raise FundDomainError(
+                "INVALID_OPERATIONS_BUCKET",
+                "Opening balance activation is only available for Company Operations.",
+                status_code=400,
+            )
+        replay = (
+            await db.execute(
+                select(FundLedgerEntry)
+                .options(noload("*"))
+                .where(FundLedgerEntry.idempotency_key == idempotency_key)
+            )
+        ).scalar_one_or_none()
+        if replay is not None:
+            if (
+                replay.bucket_id != bucket.id
+                or money(replay.amount) != money(amount)
+                or replay.effective_date != effective_date
+            ):
+                raise FundDomainError(
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "The idempotency key was already used for another operation.",
+                    status_code=409,
+                )
+        else:
+            existing_opening = (
+                await db.execute(
+                    select(FundLedgerEntry.id)
+                    .where(FundLedgerEntry.bucket_id == bucket.id)
+                    .where(FundLedgerEntry.entry_type == "OPENING_BALANCE")
+                )
+            ).scalar_one_or_none()
+            if existing_opening is not None or bucket.balance_start_date is not None:
+                raise FundDomainError(
+                    "OPENING_BALANCE_ALREADY_SET",
+                    "The Initial Opening Balance has already been confirmed.",
+                    status_code=409,
+                )
+            bucket.balance_start_date = effective_date
+            bucket.status = "ACTIVE"
+            db.add_all(
+                [
+                    FundLedgerEntry(
+                        bucket_id=bucket.id,
+                        direction="CREDIT",
+                        entry_type="OPENING_BALANCE",
+                        amount=money(amount),
+                        effective_date=effective_date,
+                        reason=reason,
+                        created_by=actor,
+                        idempotency_key=idempotency_key,
+                    ),
+                    FundAuditEvent(
+                        event_type="operations_bucket.opening_balance_set",
+                        bucket_id=bucket.id,
+                        actor=actor,
+                        detail={
+                            "project_id": str(project.id),
+                            "amount": str(money(amount)),
+                            "balance_start_date": effective_date.isoformat(),
+                        },
+                    ),
+                ]
+            )
+            await db.flush()
+        summary = await calculate_fund_summary(
+            db,
+            project_id,
+            locked_context=(bucket, project),
+        )
+    return summary
+
+
+async def get_allocation(db: AsyncSession, allocation_id: UUID) -> FundAllocationResponse:
+    allocation = (
+        await db.execute(
+            select(FundAllocation)
+            .options(noload("*"))
+            .where(FundAllocation.id == allocation_id)
+        )
+    ).scalar_one_or_none()
+    if allocation is None:
+        raise FundDomainError("ALLOCATION_NOT_FOUND", "Allocation not found.", status_code=404)
+    return await serialize_allocation(db, allocation)
+
+
+def _encode_cursor(created_at: datetime, allocation_id: UUID) -> str:
+    raw = f"{created_at.isoformat()}|{allocation_id}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        raw = base64.urlsafe_b64decode(padded).decode("utf-8")
+        timestamp, allocation_id = raw.rsplit("|", 1)
+        return datetime.fromisoformat(timestamp), UUID(allocation_id)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise FundDomainError("INVALID_CURSOR", "The allocation cursor is invalid.", status_code=400) from exc
+
+
+async def list_allocations(
+    db: AsyncSession,
+    *,
+    project_id: UUID | None,
+    cursor: str | None,
+    limit: int,
+) -> FundAllocationListResponse:
+    statement = select(FundAllocation).options(noload("*"))
+    if project_id is not None:
+        bucket_id = (
+            await db.execute(select(FundBucket.id).where(FundBucket.project_id == project_id))
+        ).scalar_one_or_none()
+        if bucket_id is None:
+            raise FundDomainError("FUND_BUCKET_MISSING", "Project fund bucket not found.", status_code=404)
+        statement = statement.where(
+            or_(
+                FundAllocation.source_bucket_id == bucket_id,
+                FundAllocation.target_bucket_id == bucket_id,
+            )
+        )
+    if cursor:
+        cursor_time, cursor_id = _decode_cursor(cursor)
+        statement = statement.where(
+            or_(
+                FundAllocation.created_at < cursor_time,
+                and_(
+                    FundAllocation.created_at == cursor_time,
+                    FundAllocation.id < cursor_id,
+                ),
+            )
+        )
+    allocations = list(
+        (
+            await db.execute(
+                statement.order_by(
+                    FundAllocation.created_at.desc(),
+                    FundAllocation.id.desc(),
+                ).limit(limit + 1)
+            )
+        ).scalars().all()
+    )
+    has_more = len(allocations) > limit
+    page = allocations[:limit]
+    items = [await serialize_allocation(db, allocation) for allocation in page]
+    next_cursor = (
+        _encode_cursor(page[-1].created_at, page[-1].id)
+        if has_more and page and page[-1].created_at is not None
+        else None
+    )
+    return FundAllocationListResponse(
+        items=items,
+        next_cursor=next_cursor,
+        has_more=has_more,
+    )

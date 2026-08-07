@@ -26,6 +26,8 @@ import BoqWorkbench from './components/BoqWorkbench';
 import InspectionWorkspace from './components/inspection/InspectionWorkspace';
 import Loading from './components/Loading';
 import ProjectCashflowCards from './components/ProjectCashflowCards';
+import ProjectFundsWorkspace from './components/funds/ProjectFundsWorkspace';
+import { canMutateAdminData, getStoredAuthUser } from './auth';
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
@@ -399,6 +401,7 @@ function ProjectDetailPage() {
   const deepLinkSource = deepLinkParams.get('source') || '';
   const deepLinkInstallmentId = deepLinkParams.get('installment_id') || '';
   const deepLinkTransactionId = deepLinkParams.get('transaction_id') || '';
+  const fundAction = deepLinkParams.get('fund_action') || '';
   const focusMessage = deepLinkInstallmentId
     ? `Focused from Insight Warehouse: installment ${deepLinkInstallmentId}`
     : deepLinkTransactionId
@@ -597,6 +600,8 @@ function ProjectDetailPage() {
   const hasCustomerBoq = customerTree.length > 0;
   const hasSubcontractorBoq = subcontractorTree.length > 0;
   const compareSummary = data?.compareSummary || {};
+  const isOperations = Boolean(data?.isSystemOperations || data?.systemKey === 'OPERATIONS');
+  const canMutateFunds = canMutateAdminData(getStoredAuthUser());
   const wbsSummary = Array.isArray(data?.wbsSummary) ? data.wbsSummary : [];
   const executionSummary = Array.isArray(data?.executionSummary) ? data.executionSummary : [];
   const compareTone =
@@ -639,7 +644,7 @@ function ProjectDetailPage() {
             }}
           >
             <Layers3 size={14} />
-            Project Detail for dual BOQ comparison
+            {isOperations ? 'Company Funds · System Bucket' : 'Project Detail for dual BOQ comparison'}
           </div>
 
           <div>
@@ -647,8 +652,9 @@ function ProjectDetailPage() {
               {passedProjectName || data.name}
             </h1>
             <p style={{ maxWidth: '760px', fontSize: '15px', lineHeight: 1.7, color: 'var(--text-muted)' }}>
-              หน้านี้ใช้เทียบ Customer BOQ กับ Subcontractor BOQ ในโครงสร้าง WBS เดียวกัน เพื่อให้เห็นงบ,
-              variance และ margin ในแต่ละ node ได้ทันที
+              {isOperations
+                ? 'ค่าใช้จ่ายส่วนกลางของบริษัท · Company-wide operating expenses and internal fund allocations.'
+                : 'หน้านี้ใช้เทียบ Customer BOQ กับ Subcontractor BOQ ในโครงสร้าง WBS เดียวกัน เพื่อให้เห็นงบ, variance และ margin ในแต่ละ node ได้ทันที'}
             </p>
           </div>
 
@@ -665,7 +671,7 @@ function ProjectDetailPage() {
                 fontWeight: '700',
               }}
             >
-              Type: {data.projectType || '-'}
+              {isOperations ? 'System Bucket' : `Type: ${data.projectType || '-'}`}
             </span>
             <span
               style={{
@@ -681,6 +687,8 @@ function ProjectDetailPage() {
             >
               Status: {prettifyValue(data.status)}
             </span>
+            {!isOperations ? (
+              <>
             <span
               style={{
                 display: 'inline-flex',
@@ -723,6 +731,8 @@ function ProjectDetailPage() {
             >
               Contingency {formatCurrency(data.contingencyBudget)}
             </span>
+              </>
+            ) : null}
           </div>
 
           {focusMessage ? (
@@ -746,6 +756,13 @@ function ProjectDetailPage() {
         </div>
       </section>
 
+      <ProjectFundsWorkspace
+        project={data}
+        projectedMargin={compareSummary.totalVariance}
+        canMutate={canMutateFunds}
+        initialAction={fundAction}
+      />
+
       <ProjectCashflowCards
         projectId={projectId}
         rows={projectInputRequestRows}
@@ -753,7 +770,7 @@ function ProjectDetailPage() {
         error={projectCashflowError}
       />
 
-      <nav className="project-detail-local-tabs" aria-label="Project detail sections">
+      {!isOperations ? <nav className="project-detail-local-tabs" aria-label="Project detail sections">
         {PROJECT_SECTION_TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeProjectSection === tab.value;
@@ -770,9 +787,9 @@ function ProjectDetailPage() {
             </button>
           );
         })}
-      </nav>
+      </nav> : null}
 
-      {activeProjectSection === 'compare' ? (
+      {!isOperations && activeProjectSection === 'compare' ? (
         <>
           {!hasCustomerBoq || !hasSubcontractorBoq ? (
             <section
@@ -816,12 +833,12 @@ function ProjectDetailPage() {
             />
             <SummaryCard
               icon={ArrowLeftRight}
-              label="Total Variance"
+              label="Projected BOQ Margin"
               value={formatCurrency(compareSummary.totalVariance)}
               subtext={
                 compareSummary.marginPercent == null
-                  ? 'ยังคำนวณ margin ไม่ได้เพราะไม่มี Customer BOQ total'
-                  : `Margin ${formatPercent(compareSummary.marginPercent)} จากฐาน Customer BOQ`
+                  ? 'Estimate only; this is not cash available to allocate.'
+                  : `Estimate · Margin ${formatPercent(compareSummary.marginPercent)} from Customer BOQ; not allocatable cash.`
               }
               tone={compareTone}
             />
@@ -921,7 +938,7 @@ function ProjectDetailPage() {
         </>
       ) : null}
 
-      {activeProjectSection === 'warehouse' ? (
+      {!isOperations && activeProjectSection === 'warehouse' ? (
         <>
           <div
             className="card"
@@ -1064,7 +1081,7 @@ function ProjectDetailPage() {
         </>
       ) : null}
 
-      {activeProjectSection === 'inspection' ? (
+      {!isOperations && activeProjectSection === 'inspection' ? (
         <InspectionWorkspace projectId={projectId} projectName={passedProjectName || data.name} />
       ) : null}
     </div>

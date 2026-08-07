@@ -80,6 +80,10 @@ async def get_dashboard_summary(
     """
     try:
         projects = (await db.execute(select(Project).options(noload("*")))).scalars().all()
+        construction_projects = [
+            project for project in projects if project.system_key != "OPERATIONS"
+        ]
+        construction_project_ids = {project.id for project in construction_projects}
         boq_item_rows = (
             await db.execute(select(BOQItem.id, BOQItem.project_id))
         ).all()
@@ -108,7 +112,9 @@ async def get_dashboard_summary(
         }
         project_name_lookup = {project.id: project.name for project in projects}
         boq_project_lookup = {
-            boq_item_id: project_id for boq_item_id, project_id in boq_item_rows
+            boq_item_id: project_id
+            for boq_item_id, project_id in boq_item_rows
+            if project_id in construction_project_ids
         }
         installment_project_lookup = {
             installment.id: boq_project_lookup.get(installment.boq_item_id)
@@ -118,6 +124,8 @@ async def get_dashboard_summary(
             lambda: {"CUSTOMER": 0.0, "SUBCONTRACTOR": 0.0}
         )
         for project_id, boq_type, grand_total in boq_budget_rows:
+            if project_id not in construction_project_ids:
+                continue
             project_key = str(project_id)
             type_key = str(boq_type or "CUSTOMER").upper()
             if type_key not in {"CUSTOMER", "SUBCONTRACTOR"}:
@@ -125,7 +133,7 @@ async def get_dashboard_summary(
             budget_components_by_project[project_key][type_key] += _money(grand_total)
 
         project_budget_lookup: dict[str, float] = {}
-        for project in projects:
+        for project in construction_projects:
             project_key = str(project.id)
             components = budget_components_by_project.get(project_key, {})
             project_budget_lookup[project_key] = (
@@ -135,7 +143,12 @@ async def get_dashboard_summary(
             )
 
         total_budget = sum(project_budget_lookup.values())
-        actual_cost = sum(_money(transaction.base_amount) for transaction in transactions)
+        actual_cost = sum(
+            _money(transaction.base_amount)
+            for transaction in transactions
+            if installment_project_lookup.get(transaction.installment_id)
+            in construction_project_ids
+        )
         pending_approval_count = sum(
             1 for request in input_requests if request.status == "PENDING_ADMIN"
         )
@@ -266,6 +279,8 @@ async def get_dashboard_summary(
         for request in input_requests:
             if str(request.status or "").upper() != "PENDING_ADMIN":
                 continue
+            if request.project_id not in construction_project_ids:
+                continue
 
             project_key = str(request.project_id)
             risky_project_map[project_key]["project_id"] = project_key
@@ -330,7 +345,7 @@ async def get_dashboard_summary(
         }
 
         project_health = []
-        for project in projects:
+        for project in construction_projects:
             project_key = str(project.id)
             budget = project_budget_lookup.get(project_key, 0.0)
             project_actual_cost = actual_cost_by_project.get(project_key, 0.0)
@@ -361,7 +376,9 @@ async def get_dashboard_summary(
         )[:6]
 
         active_project_count = sum(
-            1 for project in projects if str(project.status or "").upper() == "ACTIVE"
+            1
+            for project in construction_projects
+            if str(project.status or "").upper() == "ACTIVE"
         )
         paid_request_amount = sum(
             _money(

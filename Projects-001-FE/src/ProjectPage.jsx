@@ -28,6 +28,7 @@ import {
 import Loading from './components/Loading';
 import CircularProgress from './components/CircularProgress';
 import SemiCircleGauge from './components/SemiCircleGauge';
+import CompanyFundsCard from './components/funds/CompanyFundsCard';
 import { canMutateAdminData, getStoredAuthUser } from './auth';
 
 const INITIAL_PROJECT_FORM = {
@@ -657,9 +658,12 @@ const ProjectPage = () => {
     setSortBy('DEFAULT');
   };
 
+  const operationsProject = projects.find((project) => project.isSystemOperations);
+  const constructionProjects = projects.filter((project) => !project.isSystemOperations);
+
   const statusOptions = [
     { value: 'ALL', label: 'Status: All' },
-    ...Array.from(new Set(projects.map((project) => project.rawStatus || project.status)))
+    ...Array.from(new Set(constructionProjects.map((project) => project.rawStatus || project.status)))
       .filter(Boolean)
       .sort()
       .map((status) => ({
@@ -668,7 +672,7 @@ const ProjectPage = () => {
       })),
   ];
 
-  let filteredProjects = [...projects];
+  let filteredProjects = [...constructionProjects];
 
   if (statusFilter !== 'ALL') {
     filteredProjects = filteredProjects.filter((project) => project.rawStatus === statusFilter);
@@ -710,12 +714,12 @@ const ProjectPage = () => {
 
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '32px' }}>
+      <div className="project-page-layout">
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+          <div className="project-page-heading">
             <div>
-              <h1 style={{ fontSize: '32px', fontWeight: 'bold', color: '#1a1a1a', marginBottom: '4px' }}>Project</h1>
-              <p style={{ color: '#888', fontSize: '14px' }}>Create, rename, and connect BOQ sheets for your projects</p>
+              <h1 style={{ fontSize: '32px', fontWeight: 'bold', color: '#1a1a1a', marginBottom: '4px' }}>Projects</h1>
+              <p style={{ color: '#888', fontSize: '14px' }}>Manage Company Funds separately from active construction work.</p>
             </div>
             {canMutateProjects ? (
               <button
@@ -752,6 +756,28 @@ const ProjectPage = () => {
               {flashMessage}
             </div>
           ) : null}
+
+          <CompanyFundsCard
+            project={operationsProject}
+            canMutate={canMutateProjects}
+            onOpen={() => navigate(`/project/detail/${operationsProject.id}`, {
+              state: { projectName: operationsProject.name, projectId: operationsProject.id },
+            })}
+            onAllocate={() => navigate(`/project/detail/${operationsProject.id}?fund_action=allocate`, {
+              state: { projectName: operationsProject.name, projectId: operationsProject.id },
+            })}
+            onSetOpening={() => navigate(`/project/detail/${operationsProject.id}?fund_action=opening`, {
+              state: { projectName: operationsProject.name, projectId: operationsProject.id },
+            })}
+          />
+
+          <div className="project-construction-heading">
+            <div>
+              <span>CONSTRUCTION PORTFOLIO</span>
+              <h2>Active Construction Projects</h2>
+            </div>
+            <small>{constructionProjects.length} projects</small>
+          </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '32px' }}>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>

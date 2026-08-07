@@ -16,6 +16,8 @@ const SESSION_EXPIRED_MESSAGE = 'เซสชันหมดอายุ กร�
 const AUTH_REQUIRED_MESSAGE = 'กรุณาเข้าสู่ระบบเพื่อใช้งานต่อ';
 const NETWORK_ERROR_MESSAGE = 'เชื่อมต่อ server ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง';
 const REQUEST_TIMEOUT_MESSAGE = 'ระบบใช้เวลาตอบกลับนานเกินไป กรุณาลองอีกครั้ง';
+export const OPERATIONS_SYSTEM_KEY = 'OPERATIONS';
+export const OPERATIONS_PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 
 export class ApiError extends Error {
   constructor({ message, status = 0, code = 'API_ERROR', detail = '', payload = null, path = '' }) {
@@ -226,6 +228,11 @@ const toNumber = (value, fallback = 0) => {
 const normalizeStatusLabel = (status) => {
   if (!status) return '-';
   return String(status).replace(/_/g, ' ').trim();
+};
+
+const toDecimalString = (value, fallback = '0.00') => {
+  if (value == null || value === '') return fallback;
+  return String(value).trim() || fallback;
 };
 
 const appendArrayParams = (searchParams, key, values) => {
@@ -541,6 +548,10 @@ const toProjectCardItem = (project) => {
     id,
     name: project.name || 'Untitled Project',
     projectType: project.project_type || '-',
+    systemKey: String(project.system_key || '').trim().toUpperCase(),
+    isSystemOperations:
+      String(project.system_key || '').trim().toUpperCase() === OPERATIONS_SYSTEM_KEY ||
+      id === OPERATIONS_PROJECT_ID,
     status: normalizeStatusLabel(project.status),
     rawStatus: project.status || '-',
     progressPercent,
@@ -994,6 +1005,10 @@ export async function getProjectDetailData(projectId) {
     projectId: project.project_id || project.id || projectId,
     name: project.name || boqResponse?.project_name || 'Project',
     projectType: String(project.project_type || '').trim(),
+    systemKey: String(project.system_key || '').trim().toUpperCase(),
+    isSystemOperations:
+      String(project.system_key || '').trim().toUpperCase() === OPERATIONS_SYSTEM_KEY ||
+      (project.project_id || project.id || projectId) === OPERATIONS_PROJECT_ID,
     status: String(project.status || '').trim(),
     overheadPercent: toNumber(project.overhead_percent),
     profitPercent: toNumber(project.profit_percent),
@@ -1015,6 +1030,185 @@ export async function getProjectDetailData(projectId) {
       sheetNames,
     },
   };
+}
+
+const normalizeFundBucketOption = (option, index = 0) => {
+  const project = option?.project || {};
+  const projectId = option?.project_id || project?.id || option?.id || '';
+  const systemKey = String(option?.system_key || project?.system_key || '').trim().toUpperCase();
+
+  return {
+    id: String(option?.bucket_id || option?.id || projectId || `fund-option-${index}`),
+    bucketId: String(option?.bucket_id || option?.id || '').trim(),
+    projectId: String(projectId).trim(),
+    projectName: String(option?.project_name || option?.name || project?.name || 'Project').trim(),
+    projectType: String(option?.project_type || project?.project_type || '').trim(),
+    systemKey,
+    bucketType: String(option?.bucket_type || '').trim().toUpperCase(),
+    status: String(option?.status || option?.bucket_status || project?.status || '').trim().toUpperCase(),
+    currency: String(option?.currency || 'THB').trim().toUpperCase(),
+    availableToAllocate: toDecimalString(option?.available_to_allocate),
+    balanceVersion: String(option?.version || option?.balance_version || '').trim(),
+    isOperations: systemKey === OPERATIONS_SYSTEM_KEY || String(projectId) === OPERATIONS_PROJECT_ID,
+    isActive: option?.is_active !== false && !['ARCHIVED', 'INACTIVE', 'LOCKED'].includes(
+      String(option?.status || option?.bucket_status || project?.status || '').trim().toUpperCase()
+    ),
+  };
+};
+
+const resolveOpeningBalanceState = (summary = {}) => {
+  if (Object.prototype.hasOwnProperty.call(summary, 'opening_balance_set')) {
+    return Boolean(summary.opening_balance_set);
+  }
+  if (Object.prototype.hasOwnProperty.call(summary, 'has_opening_balance')) {
+    return Boolean(summary.has_opening_balance);
+  }
+  if (summary.balance_start_date) return true;
+  if (String(summary.bucket_status || summary.status || '').trim().toUpperCase() === 'SETUP') return false;
+  return null;
+};
+
+const normalizeFundSummary = (summary = {}) => ({
+  projectId: String(summary?.project_id || '').trim(),
+  bucketId: String(summary?.bucket_id || '').trim(),
+  currency: String(summary?.currency || 'THB').trim().toUpperCase(),
+  projectedBoqMargin: toDecimalString(summary?.projected_boq_margin, ''),
+  paidIncome: toDecimalString(summary?.paid_income),
+  paidExpense: toDecimalString(summary?.paid_expense),
+  paidExpenseThisMonth: toDecimalString(summary?.paid_expense_this_month ?? summary?.monthly_paid_expense, ''),
+  paidExpenseThisMonthCount:
+    summary?.paid_expense_this_month_count == null && summary?.monthly_paid_expense_count == null
+      ? null
+      : Number(summary?.paid_expense_this_month_count ?? summary?.monthly_paid_expense_count),
+  approvedExpenseCommitment: toDecimalString(summary?.approved_expense_commitment),
+  allocatedIn: toDecimalString(summary?.allocated_in),
+  allocatedOut: toDecimalString(summary?.allocated_out),
+  protectedReserve: toDecimalString(summary?.protected_reserve),
+  rawAvailable: toDecimalString(summary?.raw_available),
+  availableToAllocate: toDecimalString(summary?.available_to_allocate),
+  fundingDeficit: toDecimalString(summary?.funding_deficit),
+  openingBalance: toDecimalString(summary?.opening_balance, ''),
+  monthlyOpening: toDecimalString(summary?.monthly_opening, ''),
+  monthlyClosing: toDecimalString(summary?.monthly_closing, ''),
+  balanceStartDate: String(summary?.balance_start_date || '').trim(),
+  bucketStatus: String(summary?.bucket_status || summary?.status || '').trim().toUpperCase(),
+  openingBalanceSet: resolveOpeningBalanceState(summary),
+  mutationsEnabled: summary?.mutations_enabled !== false,
+  calculatedAt: String(summary?.calculated_at || '').trim(),
+  version: String(summary?.version || summary?.balance_version || '').trim(),
+});
+
+const allocationParty = (allocation, side) => {
+  const nested = allocation?.[side] || allocation?.[`${side}_project`] || {};
+  return {
+    projectId: String(allocation?.[`${side}_project_id`] || nested?.project_id || nested?.id || '').trim(),
+    bucketId: String(allocation?.[`${side}_bucket_id`] || nested?.bucket_id || '').trim(),
+    projectName: String(allocation?.[`${side}_project_name`] || nested?.project_name || nested?.name || 'Project').trim(),
+  };
+};
+
+const normalizeFundAllocation = (allocation = {}, index = 0) => {
+  const source = allocationParty(allocation, 'source');
+  const target = allocationParty(allocation, 'target');
+  const actor = allocation?.created_by || allocation?.actor || {};
+
+  return {
+    id: String(allocation?.id || allocation?.allocation_id || `allocation-${index}`),
+    referenceNo: String(allocation?.reference_no || allocation?.reference || '').trim(),
+    source,
+    target,
+    amount: toDecimalString(allocation?.amount),
+    currency: String(allocation?.currency || 'THB').trim().toUpperCase(),
+    reason: String(allocation?.reason || '').trim(),
+    note: String(allocation?.note || allocation?.reference_note || '').trim(),
+    status: String(allocation?.status || 'POSTED').trim().toUpperCase(),
+    reversalOf: String(allocation?.reversal_of || '').trim(),
+    createdBy: typeof actor === 'string'
+      ? actor
+      : String(actor?.display_name || actor?.name || actor?.email || allocation?.created_by_name || '-').trim(),
+    createdAt: String(allocation?.created_at || allocation?.posted_at || '').trim(),
+    sourceBalanceBefore: toDecimalString(allocation?.source_balance_before, ''),
+    sourceBalanceAfter: toDecimalString(allocation?.source_balance_after, ''),
+    targetBalanceBefore: toDecimalString(allocation?.target_balance_before, ''),
+    targetBalanceAfter: toDecimalString(allocation?.target_balance_after, ''),
+  };
+};
+
+export async function getFundBucketOptions() {
+  const data = await apiRequest('/api/v1/fund-buckets/options');
+  const options = Array.isArray(data) ? data : (data?.items || data?.options || []);
+  return options.map(normalizeFundBucketOption);
+}
+
+export async function getProjectFundSummary(projectId) {
+  const data = await apiRequest(`/api/v1/projects/${projectId}/funds/summary`);
+  return normalizeFundSummary(data);
+}
+
+export async function getFundAllocations({ projectId, cursor = '', limit = 50 } = {}) {
+  const searchParams = new URLSearchParams();
+  if (projectId) searchParams.set('project_id', projectId);
+  if (cursor) searchParams.set('cursor', cursor);
+  if (limit) searchParams.set('limit', String(limit));
+  const query = searchParams.toString();
+  const data = await apiRequest(`/api/v1/fund-allocations${query ? `?${query}` : ''}`);
+  const items = Array.isArray(data) ? data : (data?.items || data?.allocations || []);
+
+  return {
+    items: items.map(normalizeFundAllocation),
+    nextCursor: String(data?.next_cursor || data?.page_info?.next_cursor || '').trim(),
+    hasMore: Boolean(data?.has_more ?? data?.page_info?.has_more ?? data?.next_cursor),
+  };
+}
+
+export async function getFundAllocation(allocationId) {
+  const data = await apiRequest(`/api/v1/fund-allocations/${allocationId}`);
+  return normalizeFundAllocation(data);
+}
+
+export async function createFundAllocation(payload) {
+  const data = await apiRequest('/api/v1/fund-allocations', {
+    method: 'POST',
+    body: JSON.stringify({
+      source_project_id: payload.sourceProjectId,
+      target_project_id: payload.targetProjectId,
+      amount: payload.amount,
+      currency: payload.currency || 'THB',
+      reason: payload.reason,
+      ...(payload.note ? { note: payload.note } : {}),
+      expected_source_balance_version: payload.expectedSourceBalanceVersion,
+      idempotency_key: payload.idempotencyKey,
+    }),
+  });
+  return normalizeFundAllocation(data);
+}
+
+export async function reverseFundAllocation(allocationId, payload) {
+  const data = await apiRequest(`/api/v1/fund-allocations/${allocationId}/reverse`, {
+    method: 'POST',
+    body: JSON.stringify({
+      reason: payload.reason,
+      idempotency_key: payload.idempotencyKey,
+      ...(payload.expectedSourceBalanceVersion
+        ? { expected_source_balance_version: payload.expectedSourceBalanceVersion }
+        : {}),
+    }),
+  });
+  return normalizeFundAllocation(data);
+}
+
+export async function setFundOpeningBalance(projectId, payload) {
+  const data = await apiRequest(`/api/v1/projects/${projectId}/funds/opening-balance`, {
+    method: 'POST',
+    body: JSON.stringify({
+      amount: payload.amount,
+      currency: payload.currency || 'THB',
+      activation_month: payload.activationMonth,
+      reason: payload.reason,
+      idempotency_key: payload.idempotencyKey,
+    }),
+  });
+  return normalizeFundSummary(data?.summary || data);
 }
 
 const inspectionProjectPath = (projectId) => `/api/v1/inspection/projects/${projectId}`;

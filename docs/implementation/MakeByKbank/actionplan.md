@@ -66,6 +66,9 @@ Decision ต่อไปนี้เป็น baseline สำหรับ V1 ห
 | D-12 | V1 อนุญาต Project → Operations, Project → Project และ Operations → Project โดยปลายทางต้อง Active |
 | D-13 | `Company Operations` แสดงเป็น System Bucket แยกจากงานก่อสร้างและไม่รวมใน Project Health/Construction KPI |
 | D-14 | Planned Allocation จากกำไรในอนาคตไม่อยู่ใน V1 และต้องไม่ปะปนกับยอดเงินจริง |
+| D-15 | Owner เป็นผู้ระบุและยืนยัน Initial Opening Balance ในระบบ โดย Accounting/Admin เตรียมและตรวจตัวเลข |
+| D-16 | Balance Start Date คือวันที่ 1 ของเดือนที่เลือกเปิดใช้งาน; เดือนถัดไปยก Previous Month Closing เป็น Monthly Opening อัตโนมัติ |
+| D-17 | Subcontractor ไม่เห็น ไม่เลือก และไม่ส่ง Income/Expense เข้า Company Operations; เห็นเฉพาะ assigned Projects |
 
 ## 4. คำศัพท์และ Financial Semantics
 
@@ -108,13 +111,31 @@ Funding Deficit       = max(0, -Raw Available)
 
 ### 4.2 Opening Balance
 
-`Company Operations` อาจมีเงินก่อนเริ่มใช้ฟีเจอร์ จึงต้องรองรับ Opening Balance แบบควบคุม:
+`Company Operations` ยังไม่มี Initial Opening Balance ที่กำหนดไว้ล่วงหน้า จึงให้ Owner ระบุยอดจริงในขั้นตอนเปิดใช้งานแบบควบคุม:
 
-- ใช้เฉพาะช่วง migration/setup
-- Owner ระบุยอดและเหตุผล
+- Accounting/Admin เตรียมและตรวจตัวเลขก่อนส่งให้ Owner
+- Owner เป็นผู้กรอกยอดและยืนยันขั้นสุดท้ายในระบบ
+- Owner เลือกเดือนเริ่มใช้งาน และระบบกำหนด Effective Date เป็นวันที่ 1 ของเดือนนั้น
+- ใช้ Initial Opening Balance เพียงครั้งแรกในช่วง activation/setup
+- Owner ระบุยอดและเหตุผล พร้อมตรวจ Preview ก่อนยืนยัน
 - บันทึกเป็น immutable ledger entry ชนิด `OPENING_BALANCE`
 - ห้ามแก้ยอดเดิม; หากผิดให้สร้าง adjustment/reversal
 - ค่าเริ่มต้นเป็น 0 จนกว่า Owner ยืนยันยอดเปิดระบบ
+- รายการก่อน Balance Start Date ต้องไม่ถูกคำนวณซ้ำ เพราะถูกรวมอยู่ในยอดตั้งต้นแล้ว
+
+### 4.3 Monthly Balance Roll-forward
+
+หลังเปิดใช้งานครั้งแรก Owner ไม่ต้องกรอก Opening Balance ใหม่ทุกเดือน:
+
+```text
+Monthly Opening วันที่ 1 ของเดือนปัจจุบัน
+= Closing Balance ของเดือนก่อน
+```
+
+- Initial Opening Balance เป็น manual entry เพียงครั้งเดียว
+- Monthly Opening หลังจากนั้นเป็น derived balance ไม่ใช่ Income, Expense หรือ Allocation
+- Monthly Closing รวม movement ตั้งแต่วันที่ 1 ถึงวันสุดท้ายของเดือน
+- การแก้ยอดย้อนหลังใช้ Adjustment/Reverse พร้อม Audit Trail และระบบคำนวณ monthly closing/opening ที่ได้รับผลกระทบใหม่
 
 ## 5. V1 Scope
 
@@ -240,6 +261,9 @@ Dialog ใช้ flow เดียวกับ mockup ที่อนุมั�
 12. Allocation ไม่สร้าง Input Request, Transaction หรือ BOQ Item ใหม่
 13. Allocation ไม่ถือเป็น Income/Expense และไม่รวมใน actual cashflow KPI
 14. ทุก create/reverse บันทึก actor, timestamp, reason และ before/after balances
+15. Subcontractor query/project selector ต้องคืนเฉพาะ assigned Projects และ exclude `system_key='OPERATIONS'` เสมอ
+16. Subcontractor สร้าง Income/Expense ที่อ้างถึง Operations ไม่ได้ แม้ส่ง project id โดยตรง
+17. Operations expense ใช้ Internal Input Flow โดย internal authorized actor เท่านั้น; V1 ให้ Owner mutation และ Admin/Accounting เตรียม–ตรวจแบบ read-only
 
 ## 8. Proposed Data Design
 
@@ -275,8 +299,9 @@ fund_buckets
 - project_id UUID UNIQUE FK projects.id
 - bucket_type PROJECT | OPERATIONS
 - currency THB
+- balance_start_date DATE nullable; เมื่อ activate ต้องเป็นวันที่ 1 ของเดือน
 - protected_reserve NUMERIC(15,2) default 0
-- status ACTIVE | LOCKED
+- status SETUP | ACTIVE | LOCKED
 - created_at
 - updated_at
 ```
@@ -476,6 +501,9 @@ Structured errors อย่างน้อย:
 - ไม่แสดง BOQ/Construction-specific sections
 - แสดง Operations cash/commitment/allocation/expense overview
 - System Bucket badge และ protection จาก delete/archive
+- Initial Opening Balance setup สำหรับ Owner พร้อม month selector ที่บังคับใช้วันที่ 1
+- Monthly opening/closing display แบบ auto roll-forward
+- Exclude Operations จาก Subcontractor project selectors และ routes
 
 ## 12. Backend และ Database Work Packages
 
@@ -516,6 +544,8 @@ Structured errors อย่างน้อย:
 - ป้องกัน delete/archive/type change ของ system project
 - รองรับ display-name change โดยไม่กระทบ lookup
 - Exclude Operations จาก construction metrics
+- Enforce Subcontractor exclusion ที่ API/authorization layer ไม่พึ่ง Frontend filter
+- Implement one-time Initial Opening Balance และ monthly roll-forward semantics
 
 ## 13. Test Plan
 
@@ -527,6 +557,8 @@ Structured errors อย่างน้อย:
 - Decimal precision และ rounding สองตำแหน่ง
 - BOQ Margin ไม่รวมใน Available
 - Balance version เปลี่ยนเมื่อ input/ledger ที่เกี่ยวข้องเปลี่ยน
+- Initial Balance Start Date ต้องเป็นวันที่ 1 ของเดือน
+- Monthly Opening เท่ากับ Previous Month Closing และไม่สร้าง movement ซ้ำ
 
 ### 13.2 API/Service Tests
 
@@ -545,6 +577,10 @@ Structured errors อย่างน้อย:
 - reversal ที่ทำให้ target ติดลบถูก reject
 - Operations bootstrap rerun แล้วไม่สร้าง duplicate
 - Allocation ไม่เปลี่ยน BOQ/Input Request/actual cashflow values
+- Subcontractor project options ไม่คืน Operations
+- Subcontractor ที่ส่ง Operations project id โดยตรงได้รับ `403`
+- Initial Opening Balance สร้างได้ครั้งเดียวโดย Owner
+- Monthly roll-forward ไม่สร้าง Income/Expense/Allocation entries
 
 ### 13.3 Frontend Tests
 
@@ -576,7 +612,9 @@ pytest
 - [ ] ยืนยัน finance source-of-truth สำหรับ Paid/Approved
 - [ ] ตรวจยอดและ UUID ของ existing `โครงการบริษัท` ใน Demo/Beta
 - [ ] ยืนยัน display name ของ Operations
-- [ ] กำหนด Opening Balance และ effective date
+- [ ] Accounting/Admin เตรียม Initial Opening Balance working paper
+- [ ] Owner เลือกเดือนเริ่มต้น; ระบบใช้วันที่ 1 เป็น Balance Start Date
+- [ ] Owner กรอกและยืนยัน Initial Opening Balance ใน activation flow
 - [ ] เก็บตัวอย่าง Project จริงอย่างน้อย 3 รายการเพื่อเทียบสูตร
 
 Exit gate: สูตรและยอดตัวอย่างได้รับการอนุมัติจาก Owner
@@ -623,7 +661,7 @@ Exit gate: lint/build ผ่านและ Owner walkthrough ผ่านทุ
 
 - [ ] เปิดด้วย feature flag `FUND_ALLOCATION_ENABLED`
 - [ ] Run migration/bootstrap
-- [ ] ตั้ง Opening Balance ถ้าจำเป็น
+- [ ] Owner ยืนยัน Initial Opening Balance (รวมกรณียืนยันยอด 0) และเดือนเริ่มต้นผ่าน activation flow
 - [ ] Reconcile fund totals ก่อนเปิด mutation
 - [ ] เปิด read-only summary ก่อน
 - [ ] เปิด Owner posting หลัง reconciliation ผ่าน
@@ -687,21 +725,32 @@ sum(DEBIT) == sum(CREDIT) == allocation.amount
 10. Migration, backend tests, frontend lint/build และ manual walkthrough ผ่าน
 11. Demo/Beta reconciliation ไม่พบ ledger imbalance
 12. User-facing copy ระบุชัดว่าเป็นการจัดสรรภายในระบบ ไม่ใช่ bank transfer
+13. Initial Opening Balance ถูกยืนยันโดย Owner และ Balance Start Date เป็นวันที่ 1 ของเดือน
+14. Monthly Opening ยกจาก Previous Month Closing อัตโนมัติโดยไม่สร้าง movement ซ้ำ
+15. Subcontractor ไม่เห็น ไม่เลือก และไม่สามารถส่งรายการเข้า Company Operations ได้ทั้งจาก UI และ API
 
-## 18. Open Decisions ก่อนเริ่ม Implementation
+## 18. Confirmed Decisions และ Activation Inputs
 
-รายการต่อไปนี้ไม่ขัดขวางการเขียน plan แต่ต้องยืนยันก่อนเริ่ม production implementation:
+Product decisions เพียงพอสำหรับเริ่ม implementation แล้ว:
 
-| ID | คำถาม | ค่าแนะนำสำหรับ V1 |
+| ID | ข้อสรุป | สถานะ |
 |---|---|---|
-| O-01 | ชื่อที่แสดงของ Operations | `Company Operations / ค่าใช้จ่ายส่วนกลาง` |
-| O-02 | แหล่งข้อมูล Paid/Approved หลัก | Input Request finance rows; ห้ามรวม derived Transaction ซ้ำ |
-| O-03 | Opening Balance ของ Operations | Owner ระบุยอด ณ cut-off date พร้อมเหตุผลและหลักฐานอ้างอิง |
-| O-04 | Protected Reserve | เริ่มที่ 0 และยังไม่มี UI แก้ไขใน V1 |
-| O-05 | Project-to-Project allocation | อนุญาตสำหรับ Active Projects โดย Operations แสดงเป็นตัวเลือกแรก |
-| O-06 | Operations → Project | อนุญาตด้วย validation เดียวกัน |
-| O-07 | ช่วง observation ใน Demo | อย่างน้อย 3–5 วันทำการหรือครบ use cases ที่กำหนด |
-| O-08 | Planned Allocation | ย้ายไป V2 หลัง actual allocation เสถียร |
+| C-01 | ชื่อ `Company Operations / ค่าใช้จ่ายส่วนกลาง` | Confirmed |
+| C-02 | Paid/Approved ใช้ Input Request finance rows และห้ามรวม derived Transaction ซ้ำ | Technical baseline |
+| C-03 | Accounting/Admin เตรียมตัวเลข; Owner กรอกและยืนยัน Initial Opening Balance | Confirmed |
+| C-04 | Balance Start Date เป็นวันที่ 1 ของเดือนที่ Owner เลือก | Confirmed |
+| C-05 | เดือนถัดไปยก Previous Month Closing เป็น Monthly Opening อัตโนมัติ | Confirmed |
+| C-06 | Protected Reserve เริ่มที่ 0 และยังไม่มี UI แก้ไขใน V1 | Confirmed baseline |
+| C-07 | Project-to-Project และ Operations-to-Project allocation ใช้ validation เดียวกัน | Confirmed |
+| C-08 | Subcontractor ไม่มี Operations visibility และเลือก/ส่งรายการเข้า Operations ไม่ได้ | Confirmed |
+| C-09 | Planned Allocation ย้ายไป V2 | Confirmed |
+
+Activation inputs ที่ยังไม่ต้องทราบตอนเขียนระบบ:
+
+- จำนวน Initial Opening Balance ที่ Owner จะกรอก
+- เดือนแรกที่เลือกเปิดใช้งาน
+- หลักฐาน/working paper จาก Accounting/Admin
+- Observation window บน Demo; ค่าแนะนำอย่างน้อย 3–5 วันทำการหรือครบ use cases ที่กำหนด
 
 ## 19. Suggested V2 Backlog
 
@@ -714,4 +763,3 @@ sum(DEBIT) == sum(CREDIT) == allocation.amount
 - Company-level bucket board แบบ MAKE-style overview
 - Forecast เปรียบเทียบ Planned vs Actual Allocation
 - Bank/accounting reconciliation โดยเป็นโครงการแยกและไม่เปลี่ยน semantics ของ internal allocation
-

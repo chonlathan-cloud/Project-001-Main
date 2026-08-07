@@ -17,6 +17,7 @@ from app.core.database import get_db
 from app.models.boq import BOQItem, Project
 from app.models.finance import Installment  # noqa: F401
 from app.models.finance import Transaction
+from app.models.funds import FundBucket
 from app.models.input_request import InputRequest
 from app.schemas.boq_schema import (
     BOQCompareNode,
@@ -52,6 +53,11 @@ router = APIRouter(prefix="/projects", tags=["Projects & BOQ"])
 MATCH_STATUS_MATCHED = "MATCHED"
 MATCH_STATUS_CUSTOMER_ONLY = "CUSTOMER_ONLY"
 MATCH_STATUS_SUBCONTRACTOR_ONLY = "SUBCONTRACTOR_ONLY"
+RESERVED_OPERATIONS_NAMES = {
+    "company operations",
+    "company operations / ค่าใช้จ่ายส่วนกลาง",
+    "โครงการบริษัท",
+}
 
 
 def _to_project_list_item(project: Project, *, total_budget: float | None = None) -> ProjectItem:
@@ -59,6 +65,7 @@ def _to_project_list_item(project: Project, *, total_budget: float | None = None
         id=project.id,
         name=project.name,
         project_type=project.project_type,
+        system_key=project.system_key,
         status=project.status,
         total_budget=float(
             total_budget if total_budget is not None else (project.contingency_budget or 0)
@@ -72,6 +79,7 @@ def _to_project_detail(project: Project) -> ProjectDetailResponse:
         project_id=project.id,
         name=project.name,
         project_type=project.project_type,
+        system_key=project.system_key,
         overhead_percent=float(project.overhead_percent or 0),
         profit_percent=float(project.profit_percent or 0),
         vat_percent=float(project.vat_percent or 0),
@@ -526,8 +534,31 @@ async def create_project(
 ):
     """Create a new project before connecting BOQ sources."""
     try:
+        normalized_name = request.name.strip()
+        operations_name = (
+            await db.execute(
+                select(Project.name)
+                .where(Project.system_key == "OPERATIONS")
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        reserved_names = {
+            *RESERVED_OPERATIONS_NAMES,
+            str(operations_name or "").strip().casefold(),
+        }
+        if (
+            request.project_type.strip().upper() == "INTERNAL"
+            and normalized_name.casefold() in reserved_names
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "DUPLICATE_OPERATIONS_PROJECT",
+                    "message": "Company Operations already exists as the System Project.",
+                },
+            )
         project = Project(
-            name=request.name.strip(),
+            name=normalized_name,
             project_type=request.project_type.strip(),
             overhead_percent=Decimal(str(request.overhead_percent)),
             profit_percent=Decimal(str(request.profit_percent)),
@@ -536,11 +567,23 @@ async def create_project(
             status=request.status.strip().upper(),
         )
         db.add(project)
+        await db.flush()
+        db.add(
+            FundBucket(
+                project_id=project.id,
+                bucket_type="PROJECT",
+                currency="THB",
+                status="ACTIVE",
+            )
+        )
         await db.commit()
         await db.refresh(project)
 
         return StandardResponse(data=_to_project_detail(project))
 
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as exc:
         await db.rollback()
         raise HTTPException(
@@ -578,6 +621,21 @@ async def update_project(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="At least one field is required to update a project.",
             )
+
+        if project.system_key == "OPERATIONS":
+            requested_type = str(updates.get("project_type", project.project_type)).upper()
+            requested_status = str(updates.get("status", project.status)).upper()
+            if requested_type != "INTERNAL" or requested_status != "ACTIVE":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "SYSTEM_PROJECT_IMMUTABLE",
+                        "message": (
+                            "Company Operations must remain an ACTIVE INTERNAL System Project. "
+                            "Its display name may still be changed."
+                        ),
+                    },
+                )
 
         for field, value in updates.items():
             if field in {"overhead_percent", "profit_percent", "vat_percent", "contingency_budget"}:

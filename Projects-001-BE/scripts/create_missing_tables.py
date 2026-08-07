@@ -21,12 +21,142 @@ if str(BACKEND_ROOT) not in sys.path:
 load_dotenv(BACKEND_ROOT / ".env")
 
 from app.core.database import engine, Base
-from app.models import BOQItem, ChatHistory, InputOptionSuggestion, InputRequest, InputRequestLineItem, Installment, Project, Transaction  # noqa: F401
+from app.models import (  # noqa: F401
+    BOQItem,
+    ChatHistory,
+    FundAllocation,
+    FundAuditEvent,
+    FundBucket,
+    FundLedgerEntry,
+    InputOptionSuggestion,
+    InputRequest,
+    InputRequestLineItem,
+    Installment,
+    Project,
+    Transaction,
+)
 
 
 async def main() -> None:
     async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS projects
+                ADD COLUMN IF NOT EXISTS system_key VARCHAR
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_system_key
+                ON projects(system_key)
+                WHERE system_key IS NOT NULL
+                """
+            )
+        )
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(
+            text(
+                """
+                DO $$
+                DECLARE operations_id UUID;
+                BEGIN
+                    SELECT id INTO operations_id
+                    FROM projects
+                    WHERE id = '11111111-1111-4111-8111-111111111111'::uuid
+                       OR system_key = 'OPERATIONS'
+                    ORDER BY CASE
+                        WHEN id = '11111111-1111-4111-8111-111111111111'::uuid THEN 0
+                        ELSE 1
+                    END
+                    LIMIT 1;
+
+                    IF operations_id IS NULL THEN
+                        SELECT id INTO operations_id
+                        FROM projects
+                        WHERE name = 'โครงการบริษัท'
+                          AND UPPER(project_type) = 'INTERNAL'
+                        ORDER BY id
+                        LIMIT 1;
+                    END IF;
+
+                    IF operations_id IS NULL THEN
+                        RAISE EXCEPTION 'Operations bootstrap source Project was not found.';
+                    END IF;
+
+                    UPDATE projects
+                    SET system_key = 'OPERATIONS',
+                        name = CASE
+                            WHEN system_key IS NULL OR name = 'โครงการบริษัท'
+                                THEN 'Company Operations / ค่าใช้จ่ายส่วนกลาง'
+                            ELSE name
+                        END,
+                        project_type = 'INTERNAL',
+                        status = 'ACTIVE'
+                    WHERE id = operations_id;
+                END $$
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO fund_buckets (
+                    id, project_id, bucket_type, currency, protected_reserve, status
+                )
+                SELECT
+                    md5('fund-bucket:' || projects.id::text)::uuid,
+                    projects.id,
+                    CASE WHEN projects.system_key = 'OPERATIONS' THEN 'OPERATIONS' ELSE 'PROJECT' END,
+                    'THB',
+                    0,
+                    CASE WHEN projects.system_key = 'OPERATIONS' THEN 'SETUP' ELSE 'ACTIVE' END
+                FROM projects
+                ON CONFLICT (project_id) DO NOTHING
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE fund_buckets AS bucket
+                SET bucket_type = 'OPERATIONS', currency = 'THB', updated_at = NOW()
+                FROM projects
+                WHERE bucket.project_id = projects.id
+                  AND projects.system_key = 'OPERATIONS'
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO fund_audit_events (
+                    id, event_type, bucket_id, actor, detail
+                )
+                SELECT
+                    md5('operations-bootstrap:' || bucket.id::text)::uuid,
+                    'operations_bucket.bootstrap_completed',
+                    bucket.id,
+                    'create-missing-tables',
+                    json_build_object('project_id', project.id::text)
+                FROM fund_buckets AS bucket
+                JOIN projects AS project ON project.id = bucket.project_id
+                WHERE project.system_key = 'OPERATIONS'
+                ON CONFLICT (id) DO NOTHING
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_fund_ledger_opening_balance_per_bucket
+                ON fund_ledger_entries(bucket_id)
+                WHERE entry_type = 'OPENING_BALANCE'
+                """
+            )
+        )
         await conn.execute(
             text(
                 """

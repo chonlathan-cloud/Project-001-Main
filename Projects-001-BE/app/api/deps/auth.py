@@ -87,6 +87,8 @@ def role_permissions(role: str, roles: list[str] | tuple[str, ...] | None = None
             "approvals:mutate",
             "projects:view",
             "projects:mutate",
+            "funds:view",
+            "funds:mutate",
             "settings:view",
             "settings:mutate",
             "insights:view",
@@ -102,6 +104,7 @@ def role_permissions(role: str, roles: list[str] | tuple[str, ...] | None = None
         add([
             "approvals:view",
             "projects:view",
+            "funds:view",
             "settings:view",
             "insights:view",
             "inspection:view",

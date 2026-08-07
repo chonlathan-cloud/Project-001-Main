@@ -21,6 +21,7 @@ class ProjectItem(BaseModel):
     project_id: UUID = Field(..., alias="id")
     name: str
     project_type: str | None = None
+    system_key: str | None = None
     status: str
     total_budget: float = 0.0
     progress_percent: float = 0.0
@@ -58,6 +59,7 @@ class ProjectDetailResponse(BaseModel):
     project_id: UUID
     name: str
     project_type: str
+    system_key: str | None = None
     overhead_percent: float = 0.0
     profit_percent: float = 0.0
     vat_percent: float = 0.0

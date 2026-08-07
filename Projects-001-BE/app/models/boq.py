@@ -35,11 +35,15 @@ class Project(Base):
     vat_percent = Column(Numeric(5, 2), default=7.00)
     contingency_budget = Column(Numeric(15, 2), default=0)
     status = Column(String, nullable=False, server_default=text("'ACTIVE'"))
+    system_key = Column(String, nullable=True, unique=True)
 
     # Relationships
     boq_items = relationship("BOQItem", back_populates="project", lazy="selectin")
     input_requests = relationship(
         "InputRequest", back_populates="project", lazy="selectin"
+    )
+    fund_bucket = relationship(
+        "FundBucket", back_populates="project", lazy="selectin", uselist=False
     )
 
 
