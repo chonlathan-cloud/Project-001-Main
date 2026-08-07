@@ -13,12 +13,13 @@ import {
 } from './fundMoney';
 
 const ERROR_MESSAGES = {
-  INSUFFICIENT_AVAILABLE_FUNDS: 'The amount is above the latest Available to Allocate balance.',
-  STALE_FUND_BALANCE: 'The balance changed while this dialog was open. The latest balance is shown below.',
-  INVALID_SOURCE_TARGET: 'Choose two different active fund buckets.',
-  TARGET_BUCKET_INACTIVE: 'The destination bucket is no longer active.',
+  INSUFFICIENT_AVAILABLE_MARGIN: 'The amount is above the latest Available Margin to Allocate.',
+  INSUFFICIENT_AVAILABLE_FUNDS: 'The amount is above the latest Available Margin to Allocate.',
+  STALE_FUND_BALANCE: 'The forecast balance changed while this dialog was open. The latest value is shown below.',
+  INVALID_SOURCE_TARGET: 'Choose two different active Forecast Margin Buckets.',
+  TARGET_BUCKET_INACTIVE: 'The destination Forecast Margin Bucket is no longer active.',
   OPERATIONS_BUCKET_MISSING: 'Company Operations is not configured. Contact the system administrator.',
-  FORBIDDEN: 'Owner permission is required to allocate funds.',
+  FORBIDDEN: 'Owner permission is required to Allocate Margin.',
 };
 
 function optionSort(left, right) {
@@ -83,7 +84,7 @@ function FundAllocationDialog({
         if (isActive) setSourceSummary(summary);
       })
       .catch((error) => {
-        if (isActive) setFormError(error.message || 'Unable to load the source balance.');
+        if (isActive) setFormError(error.message || 'Unable to load the source Available Margin.');
       })
       .finally(() => {
         if (isActive) setIsLoadingSource(false);
@@ -98,10 +99,10 @@ function FundAllocationDialog({
   const targetOption = activeOptions.find((option) => option.projectId === targetProjectId);
   const sourceName = sourceProjectId === currentProjectId ? currentProject?.name : sourceOption?.projectName;
   const targetName = targetProjectId === currentProjectId ? currentProject?.name : targetOption?.projectName;
-  const available = sourceSummary?.availableToAllocate || sourceOption?.availableToAllocate || '0.00';
+  const available = sourceSummary?.availableMarginToAllocate || sourceOption?.availableMarginToAllocate || '0.00';
   const targetBefore = targetProjectId === currentProjectId
-    ? currentSummary?.availableToAllocate || '0.00'
-    : targetOption?.availableToAllocate || '0.00';
+    ? currentSummary?.availableMarginToAllocate || '0.00'
+    : targetOption?.availableMarginToAllocate || '0.00';
   const validAmount = isPositiveMoney(amount) && compareMoney(amount, available) !== 1;
   const sourceAfter = validAmount ? subtractMoney(available, amount) : available;
   const targetAfter = validAmount ? addMoney(targetBefore, amount) : targetBefore;
@@ -114,7 +115,7 @@ function FundAllocationDialog({
 
   const validate = () => {
     if (!sourceProjectId || !targetProjectId || sourceProjectId === targetProjectId) {
-      return 'Choose two different fund buckets.';
+      return 'Choose two different Forecast Margin Buckets.';
     }
     if (!isPositiveMoney(amount)) return 'Enter an amount greater than THB 0.00 with no more than two decimal places.';
     if (compareMoney(amount, available) === 1) return `The maximum available amount is ${formatMoney(available)}.`;
@@ -165,14 +166,14 @@ function FundAllocationDialog({
     <FundDialogShell
       open={open}
       onClose={isSubmitting ? () => {} : onClose}
-      title={direction === 'incoming' ? 'Receive funds from a Project' : 'Allocate funds'}
-      description="Review both balances before posting this immutable ledger movement."
+      title={direction === 'incoming' ? 'Receive Margin from a Project' : 'Allocate Margin'}
+      description="Review both forecast balances before posting this immutable Margin Allocation."
       size="wide"
     >
       {result ? (
         <div className="fund-success-state" role="status">
           <CheckCircle2 size={38} />
-          <h3>Allocation posted</h3>
+          <h3>Margin Allocation posted</h3>
           <p>Reference {result.referenceNo || result.id}</p>
           <div className="fund-preview-grid compact">
             <div><span>{sourceName} after</span><strong>{formatMoney(result.sourceBalanceAfter || sourceAfter)}</strong></div>
@@ -189,7 +190,7 @@ function FundAllocationDialog({
           </div>
 
           <div className="fund-balance-callout">
-            <span>Available from source</span>
+            <span>Available Margin from source</span>
             <strong>{isLoadingSource ? 'Refreshing…' : formatMoney(available)}</strong>
             {sourceSummary?.calculatedAt ? <small>Server-calculated {new Date(sourceSummary.calculatedAt).toLocaleString()}</small> : null}
           </div>
@@ -205,7 +206,7 @@ function FundAllocationDialog({
                 type="search"
                 value={searchValue}
                 onChange={(event) => setSearchValue(event.target.value)}
-                placeholder="Search active fund buckets"
+              placeholder="Search active Forecast Margin Buckets"
               />
             </div>
           </div>
@@ -290,7 +291,7 @@ function FundAllocationDialog({
           </div>
 
           <section className="fund-preview" aria-label="Before and after preview">
-            <div className="fund-section-label">Before / After Preview</div>
+            <div className="fund-section-label">Available Margin Before / After</div>
             <div className="fund-preview-grid">
               <div>
                 <span>{sourceName || 'Source'}</span>
@@ -305,13 +306,13 @@ function FundAllocationDialog({
             </div>
           </section>
 
-          <div className="fund-notice"><Info size={17} /><span>This is an internal fund allocation. It does not initiate a bank transfer.</span></div>
+          <div className="fund-notice"><Info size={17} /><span>This allocates forecast margin inside the product. It is not actual cash and does not initiate a bank transfer.</span></div>
           {formError ? <div className="fund-form-error" role="alert"><RefreshCw size={16} />{formError}</div> : null}
 
           <footer className="fund-dialog-actions">
             <button type="button" className="fund-button secondary" onClick={onClose} disabled={isSubmitting}>Cancel</button>
             <button type="submit" className="fund-button primary" disabled={isSubmitting || isLoadingSource || !validAmount || !reason.trim()}>
-              {isSubmitting ? 'Posting allocation…' : `Confirm allocation ${formatMoney(amount)}`}
+              {isSubmitting ? 'Posting Margin Allocation…' : `Confirm Margin Allocation ${formatMoney(amount)}`}
             </button>
           </footer>
         </form>

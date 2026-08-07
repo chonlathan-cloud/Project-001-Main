@@ -18,6 +18,8 @@ class FundBucketOption(BaseModel):
     bucket_type: str
     status: str
     currency: str
+    available_margin_to_allocate: Decimal
+    # Transitional alias retained for clients deployed before the forecast-margin revision.
     available_to_allocate: Decimal
     version: str
     is_active: bool
@@ -27,12 +29,25 @@ class FundSummaryResponse(BaseModel):
     project_id: UUID
     bucket_id: UUID
     currency: str
+    forecast_base_type: str
     projected_boq_margin: Decimal
-    paid_income: Decimal
-    paid_expense: Decimal
-    paid_expense_this_month: Decimal
-    paid_expense_this_month_count: int
-    approved_expense_commitment: Decimal
+    opening_forecast_balance: Decimal
+    forecast_allocated_in: Decimal
+    forecast_allocated_out: Decimal
+    forecast_reserve: Decimal
+    raw_forecast_available: Decimal
+    available_margin_to_allocate: Decimal
+    forecast_deficit: Decimal
+    monthly_forecast_opening: Decimal | None = None
+    monthly_forecast_closing: Decimal | None = None
+    balance_start_date: date | None = None
+    bucket_status: str
+    opening_forecast_balance_set: bool
+    mutations_enabled: bool
+    calculated_at: datetime
+    version: str
+
+    # Transitional forecast aliases retained for a safe Backend/Frontend rollout.
     allocated_in: Decimal
     allocated_out: Decimal
     protected_reserve: Decimal
@@ -42,12 +57,7 @@ class FundSummaryResponse(BaseModel):
     opening_balance: Decimal | None = None
     monthly_opening: Decimal | None = None
     monthly_closing: Decimal | None = None
-    balance_start_date: date | None = None
-    bucket_status: str
     opening_balance_set: bool
-    mutations_enabled: bool
-    calculated_at: datetime
-    version: str
 
 
 class FundAllocationParty(BaseModel):

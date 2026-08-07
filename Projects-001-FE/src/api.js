@@ -1047,7 +1047,9 @@ const normalizeFundBucketOption = (option, index = 0) => {
     bucketType: String(option?.bucket_type || '').trim().toUpperCase(),
     status: String(option?.status || option?.bucket_status || project?.status || '').trim().toUpperCase(),
     currency: String(option?.currency || 'THB').trim().toUpperCase(),
-    availableToAllocate: toDecimalString(option?.available_to_allocate),
+    availableMarginToAllocate: toDecimalString(
+      option?.available_margin_to_allocate ?? option?.available_to_allocate
+    ),
     balanceVersion: String(option?.version || option?.balance_version || '').trim(),
     isOperations: systemKey === OPERATIONS_SYSTEM_KEY || String(projectId) === OPERATIONS_PROJECT_ID,
     isActive: option?.is_active !== false && !['ARCHIVED', 'INACTIVE', 'LOCKED'].includes(
@@ -1057,6 +1059,9 @@ const normalizeFundBucketOption = (option, index = 0) => {
 };
 
 const resolveOpeningBalanceState = (summary = {}) => {
+  if (Object.prototype.hasOwnProperty.call(summary, 'opening_forecast_balance_set')) {
+    return Boolean(summary.opening_forecast_balance_set);
+  }
   if (Object.prototype.hasOwnProperty.call(summary, 'opening_balance_set')) {
     return Boolean(summary.opening_balance_set);
   }
@@ -1072,27 +1077,33 @@ const normalizeFundSummary = (summary = {}) => ({
   projectId: String(summary?.project_id || '').trim(),
   bucketId: String(summary?.bucket_id || '').trim(),
   currency: String(summary?.currency || 'THB').trim().toUpperCase(),
+  forecastBaseType: String(summary?.forecast_base_type || '').trim().toUpperCase(),
   projectedBoqMargin: toDecimalString(summary?.projected_boq_margin, ''),
-  paidIncome: toDecimalString(summary?.paid_income),
-  paidExpense: toDecimalString(summary?.paid_expense),
-  paidExpenseThisMonth: toDecimalString(summary?.paid_expense_this_month ?? summary?.monthly_paid_expense, ''),
-  paidExpenseThisMonthCount:
-    summary?.paid_expense_this_month_count == null && summary?.monthly_paid_expense_count == null
-      ? null
-      : Number(summary?.paid_expense_this_month_count ?? summary?.monthly_paid_expense_count),
-  approvedExpenseCommitment: toDecimalString(summary?.approved_expense_commitment),
-  allocatedIn: toDecimalString(summary?.allocated_in),
-  allocatedOut: toDecimalString(summary?.allocated_out),
-  protectedReserve: toDecimalString(summary?.protected_reserve),
-  rawAvailable: toDecimalString(summary?.raw_available),
-  availableToAllocate: toDecimalString(summary?.available_to_allocate),
-  fundingDeficit: toDecimalString(summary?.funding_deficit),
-  openingBalance: toDecimalString(summary?.opening_balance, ''),
-  monthlyOpening: toDecimalString(summary?.monthly_opening, ''),
-  monthlyClosing: toDecimalString(summary?.monthly_closing, ''),
+  openingForecastBalance: toDecimalString(
+    summary?.opening_forecast_balance ?? summary?.opening_balance,
+    ''
+  ),
+  forecastAllocatedIn: toDecimalString(summary?.forecast_allocated_in ?? summary?.allocated_in),
+  forecastAllocatedOut: toDecimalString(summary?.forecast_allocated_out ?? summary?.allocated_out),
+  forecastReserve: toDecimalString(summary?.forecast_reserve ?? summary?.protected_reserve),
+  rawForecastAvailable: toDecimalString(
+    summary?.raw_forecast_available ?? summary?.raw_available
+  ),
+  availableMarginToAllocate: toDecimalString(
+    summary?.available_margin_to_allocate ?? summary?.available_to_allocate
+  ),
+  forecastDeficit: toDecimalString(summary?.forecast_deficit ?? summary?.funding_deficit),
+  monthlyForecastOpening: toDecimalString(
+    summary?.monthly_forecast_opening ?? summary?.monthly_opening,
+    ''
+  ),
+  monthlyForecastClosing: toDecimalString(
+    summary?.monthly_forecast_closing ?? summary?.monthly_closing,
+    ''
+  ),
   balanceStartDate: String(summary?.balance_start_date || '').trim(),
   bucketStatus: String(summary?.bucket_status || summary?.status || '').trim().toUpperCase(),
-  openingBalanceSet: resolveOpeningBalanceState(summary),
+  openingForecastBalanceSet: resolveOpeningBalanceState(summary),
   mutationsEnabled: summary?.mutations_enabled !== false,
   calculatedAt: String(summary?.calculated_at || '').trim(),
   version: String(summary?.version || summary?.balance_version || '').trim(),

@@ -1,27 +1,27 @@
-# Project Fund Allocation — Action Plan
+# Forecast Margin Allocation — Action Plan
 
-> Implementation plan for allocating funds between Project Buckets, inspired by the Envelope/Bucket Budgeting concept used by MAKE by KBank. This design is specific to Projects-001 and does not copy MAKE by KBank branding or screens.
+> Implementation plan for allocating forecast margin between Project Buckets, inspired by the Envelope/Bucket Budgeting concept used by MAKE by KBank. This design is specific to Projects-001 and does not copy MAKE by KBank branding or screens.
 
 | Item | Value |
 |---|---|
-| Document status | Proposed planning baseline — implementation not started |
-| Created | 2026-08-06 |
-| Product scope | Project Fund Buckets, Company Operations, Fund Allocation Ledger |
-| Allocation permission | `owner` only |
+| Document status | Approved revised baseline — implementation alignment required |
+| Last updated | 2026-08-07 |
+| Product scope | Project Forecast Buckets, Company Operations, Forecast Margin Allocation Ledger |
+| Margin allocation permission | `owner` only |
 | Read permission | `owner` and `admin`, subject to current project visibility |
-| Transaction type | Virtual allocation within the product; not a bank transfer |
+| Transaction type | Virtual forecast allocation; not cash movement or a bank transfer |
 | Rollout target | Local/Demo → Beta → Production decision |
 | Thai version | [actionplan.md](actionplan.md) |
 | Related Product/UX plan | [plan.en.md](plan.en.md) |
 
 ## 1. Objective
 
-Introduce a fund-management model in which users understand each Project as a Bucket and can allocate funds between Buckets. `Company Operations` is the default Bucket for company-wide operating expenses.
+Introduce a forecast-margin management model in which each Project is a Bucket and forecast capacity can be allocated between Buckets. `Company Operations` is the central Bucket for company-wide operating budgets.
 
 The feature must enable the Owner to:
 
-1. Distinguish projected profit from funds that are actually available to allocate.
-2. Manually allocate funds from one Project to `Company Operations` or another Project.
+1. See `Projected BOQ Margin` and the remaining margin available for allocation.
+2. Manually allocate forecast margin from one Project to `Company Operations` or another Project.
 3. Review before-and-after balances before confirming.
 4. Review history and identify who performed each action.
 5. Correct mistakes through a Reverse transaction without deleting the original history.
@@ -38,8 +38,8 @@ The feature must enable the Owner to:
 
 ### 2.2 Current Problems
 
-- `Total Variance` resembles profit but does not represent cash already received.
-- There is no `Available to Allocate` value.
+- `Total Variance` is the margin the business wants to manage, but there is no Forecast Bucket model.
+- There is no `Available Margin to Allocate` after Allocated Out and Forecast Reserve.
 - There is no ledger for moving balances between Projects.
 - `โครงการบริษัท` is currently identified by name and `project_type`, which is fragile when the display name changes.
 - There is no protection against duplicate submission, concurrent allocation, or retroactive history edits.
@@ -47,6 +47,14 @@ The feature must enable the Owner to:
 ### 2.3 Migration Approach
 
 Do not create a duplicate Operations Project. Upgrade the existing `โครงการบริษัท` record into the default Operations Project and preserve its UUID so existing Input Requests and relationships remain intact.
+
+### 2.4 Implementation Alignment Note — 2026-08-07
+
+- Keep the applied migration/table foundation; Bucket, Allocation, Ledger, and Audit structures are still required.
+- Any calculation that uses Paid Income, Paid Expense, or Approved Commitments as the ceiling is superseded and must be replaced before enabling Owner mutations.
+- The Frontend must not disable allocation because of actual cashflow when forecast Available Margin is positive.
+- Summary API, posting validation, reverse validation, and UI must use the same forecast formula.
+- Never edit an applied migration. Use an additive follow-up migration for required schema or constraint changes.
 
 ## 3. Product Decision Register
 
@@ -57,94 +65,98 @@ The following decisions are the V1 baseline. If implementation requires a change
 | D-01 | Each Project has exactly one Fund Bucket in a 1:1 relationship. |
 | D-02 | Each company/deployment has exactly one default `Company Operations` record. |
 | D-03 | Reuse the existing `โครงการบริษัท` record with type `INTERNAL`; do not create a duplicate. |
-| D-04 | Allocation is a virtual product-internal movement and does not initiate a bank transfer. |
-| D-05 | Rename the `Total Variance` label to `Projected BOQ Margin`, or equivalent Thai copy that clearly indicates an estimate. It is not the allocation ceiling. |
-| D-06 | The allocation ceiling is `Available to Allocate`, calculated from cash, commitments, and allocations. |
+| D-04 | Allocation is a virtual forecast movement. It does not initiate a bank transfer and does not assert that cash exists. |
+| D-05 | Rename `Total Variance` to `Projected BOQ Margin`; it is the forecast base of a regular Project Bucket. |
+| D-06 | The ceiling is `Available Margin to Allocate`, calculated from Projected BOQ Margin/Opening Forecast Balance, Forecast Allocated In/Out, and Forecast Reserve. |
 | D-07 | The Owner creates and reverses allocations. Admin can read summary/history but cannot mutate. |
-| D-08 | Allocation does not change BOQ, Revenue, Expense, Projected Margin, or Input Request status. |
+| D-08 | Allocation does not change BOQ, Revenue, Expense, Projected BOQ Margin, or Input Request status; it changes only the Bucket's forecast balance. |
 | D-09 | A posted Allocation is immutable. It cannot be edited or deleted; correction uses a reversal. |
 | D-10 | Every Allocation creates source and target ledger entries in one database transaction. |
 | D-11 | Monetary values use two-decimal fixed precision. Do not use float for calculation or storage contracts. |
 | D-12 | V1 supports Project → Operations, Project → Project, and Operations → Project when the destination is Active. |
 | D-13 | `Company Operations` is displayed as a System Bucket, separate from construction work, and excluded from Project Health and Construction KPIs. |
-| D-14 | Planned Allocation from future margin is outside V1 and must not be mixed with actual available funds. |
-| D-15 | The Owner enters and confirms the Initial Opening Balance; Accounting/Admin prepares and verifies the figures. |
-| D-16 | The Balance Start Date is the first day of the selected activation month. Each following month automatically uses the Previous Month Closing as the Monthly Opening. |
+| D-14 | Forecast Margin Allocation from Projected BOQ Margin is the core V1 scope and must remain clearly separate from actual cashflow. |
+| D-15 | The Owner enters and confirms the Initial Opening Forecast Balance for Operations; Accounting/Admin prepares and verifies the figures. |
+| D-16 | The Forecast Balance Start Date is the first day of the selected activation month. Each following month uses the Previous Month Forecast Closing as Monthly Forecast Opening. |
 | D-17 | Subcontractors cannot view, select, or submit Income/Expense activity to Company Operations. They see assigned Projects only. |
+| D-18 | `PAID`, `APPROVED`, Income, Expense, and commitments are excluded from Forecast Available and remain in a separate Cashflow view. |
+| D-19 | Forecast Allocated In increases the destination Bucket's Available Margin and may be allocated onward under the same validation rules. |
+| D-20 | Use the latest Projected BOQ Margin after BOQ changes. If Raw Forecast Available becomes negative, preserve the ledger, show Forecast Deficit, and block further outgoing allocation. |
 
 ## 4. Terminology and Financial Semantics
 
 | Product term | Meaning |
 |---|---|
-| Projected BOQ Margin | `Customer BOQ - Subcontractor BOQ`; a BOQ-based estimate |
-| Paid Income | Project income with `PAID` status |
-| Paid Expense | Project expense with `PAID` status |
-| Approved Commitment | An Owner-approved expense that has not been paid (`APPROVED`) |
-| Allocated In | Funds received from another Bucket through a posted Allocation |
-| Allocated Out | Funds sent to another Bucket through a posted Allocation |
-| Protected Reserve | Funds set aside and not available for allocation; V1 default is 0 |
-| Raw Available | Calculated balance before applying the lower bound |
-| Available to Allocate | `max(0, Raw Available)` and the maximum amount the Owner may allocate |
-| Funding Deficit | Absolute value of Raw Available when Raw Available is negative |
+| Projected BOQ Margin | Latest `Customer BOQ - Subcontractor BOQ`; the forecast base of a regular Project Bucket |
+| Opening Forecast Balance | Forecast base set once by the Owner for Operations, which has no BOQ Margin |
+| Forecast Allocated In | Margin received from another Bucket through a posted Allocation |
+| Forecast Allocated Out | Margin allocated to another Bucket through a posted Allocation |
+| Forecast Reserve | Margin set aside and unavailable for allocation; V1 default is 0 |
+| Raw Forecast Available | Forecast balance before applying the lower bound |
+| Available Margin to Allocate | `max(0, Raw Forecast Available)` and the maximum the Owner may allocate |
+| Forecast Deficit | Absolute value of negative Raw Forecast Available after the forecast base decreases below prior allocations |
+| Actual Cashflow | Paid/Approved Income, Expense, and commitments; informational only and excluded from allocation calculations |
 
 ### 4.1 V1 Formula
 
 ```text
-Raw Available
-= Paid Income
-+ Allocated In
-- Paid Expense
-- Approved Expense Commitments
-- Allocated Out
-- Protected Reserve
+Forecast Base
+= Projected BOQ Margin for a regular Project
+  or Opening Forecast Balance for Company Operations
 
-Available to Allocate = max(0, Raw Available)
-Funding Deficit       = max(0, -Raw Available)
+Raw Forecast Available
+= Forecast Base
++ Forecast Allocated In
+- Forecast Allocated Out
+- Forecast Reserve
+
+Available Margin to Allocate = max(0, Raw Forecast Available)
+Forecast Deficit             = max(0, -Raw Forecast Available)
 ```
 
-Money-counting rules:
+Forecast calculation rules:
 
-- Use `approved_amount` when present; otherwise use `amount`.
-- `PAID` and `APPROVED` must be mutually exclusive sets so the same item is not deducted twice.
-- V1 does not count `PENDING_ADMIN` as a commitment.
-- Approved Income is not allocatable until it reaches `PAID`.
-- Select one finance source of truth per business transaction. Never sum an Input Request and a derived Transaction for the same activity twice.
-- When Raw Available is negative, show a Funding Deficit and disable allocation.
+- Use the latest Projected BOQ Margin from the same calculation/source as BOQ Comparison; the Frontend must not calculate it independently.
+- Income, Expense, `PENDING_ADMIN`, `APPROVED`, `PAID`, and commitments do not affect this formula.
+- Allocation does not mutate Projected BOQ Margin; Forecast Allocated Out reduces the remaining allocatable margin.
+- Forecast Allocated In increases the destination balance and can be allocated onward.
+- A later BOQ Margin decrease never edits or deletes an existing Allocation.
+- When Raw Forecast Available is negative, show Forecast Deficit and disable further outgoing Allocation.
 
-### 4.2 Opening Balance
+### 4.2 Opening Forecast Balance
 
-`Company Operations` has no predefined Initial Opening Balance. The Owner enters the actual amount during a controlled activation flow:
+`Company Operations` has no BOQ Margin. The Owner enters an Initial Opening Forecast Balance during a controlled activation flow. It is a forecast budget, not a cash or bank balance:
 
 - Accounting/Admin prepares and verifies the figures before sending them to the Owner.
 - The Owner enters the amount and performs the final confirmation in the system.
 - The Owner selects the activation month; the system sets the Effective Date to the first day of that month.
-- The Initial Opening Balance is used once during activation/setup.
+- The Initial Opening Forecast Balance is used once during activation/setup.
 - The Owner provides the amount and reason and reviews a Preview before confirming.
-- Store it as an immutable ledger entry of type `OPENING_BALANCE`.
+- Store it as an immutable ledger entry of type `OPENING_BALANCE` with forecast semantics.
 - Never edit the original balance. Use Adjustment/Reverse if it is wrong.
 - The default remains 0 until the Owner confirms activation, including an explicit confirmation of a zero balance.
-- Activity before the Balance Start Date must not be counted again because it is already represented in the opening amount.
+- Forecast movement before the Balance Start Date must not be counted again because it is already represented in the opening amount.
 
-### 4.3 Monthly Balance Roll-forward
+### 4.3 Monthly Forecast Roll-forward
 
-After initial activation, the Owner does not enter a new Opening Balance every month:
+After initial activation, the Owner does not enter a new Opening Forecast Balance every month:
 
 ```text
-Monthly Opening on the first day of the current month
-= Previous Month Closing Balance
+Monthly Forecast Opening on the first day of the current month
+= Previous Month Forecast Closing Balance
 ```
 
-- The Initial Opening Balance is the only manual opening entry.
-- Subsequent Monthly Opening values are derived balances, not Income, Expense, or Allocation activity.
-- Monthly Closing includes movements from the first through the last day of the month.
-- Historical corrections use Adjustment/Reverse with an Audit Trail, and the system recalculates affected monthly closing/opening values.
+- The Initial Opening Forecast Balance is the only manual opening entry.
+- Subsequent Monthly Forecast Opening values are derived balances, not Income, Expense, or Allocation activity.
+- Monthly Forecast Closing includes forecast allocation movement from the first through the last day of the month and excludes actual cashflow.
+- Historical corrections use Adjustment/Reverse with an Audit Trail, and the system recalculates affected Monthly Forecast Closing/Opening values.
 
 ## 5. V1 Scope
 
 ### 5.1 In Scope
 
 - Default Company Operations Project/System Bucket
-- Project fund summary and the Available to Allocate formula
+- Project forecast summary and the Available Margin to Allocate formula
 - Owner manual Allocation Dialog
 - Project-to-Project and Project-to-Operations allocation
 - Allocation history/ledger
@@ -161,7 +173,7 @@ Monthly Opening on the first day of the current month
 - No copying of MAKE by KBank branding, icons, or screens
 - No Scheduled/Recurring Allocation
 - No percentage-based automatic Allocation
-- No Planned Allocation from Variance that has not become cash
+- No representation of forecast allocation as real cash or a bank-transfer instruction
 - No multi-currency; V1 uses THB
 - No change to BOQ logic or the Variance formula
 - No change to the Input Request approval/payment flow
@@ -173,7 +185,7 @@ Monthly Opening on the first day of the current month
 
 - Pin `Company Operations` in a `Company Funds` section above Construction Projects.
 - Display a `System Bucket` badge.
-- Show `Available to Allocate`, Funding Deficit when applicable, and recent activity.
+- Show `Available Margin to Allocate`, Forecast Deficit when applicable, and recent activity.
 - Do not show Construction Progress, Customer BOQ, or Project Health for Operations.
 - Operations cannot be deleted or archived.
 
@@ -184,15 +196,16 @@ Add a `Project Funds` section with at least two cards:
 1. `Projected BOQ Margin`
    - Displays the existing Total Variance value.
    - Shows an `Estimate` badge.
-   - Helper text: “For planning purposes; this is not cash available to allocate.”
-   - Has no allocation action.
-2. `Available to Allocate`
-   - Displays the amount calculated from actual cash, commitments, and allocations.
-   - Shows an `Available` badge.
-   - Shows an `Allocate funds` button to the Owner.
+   - Helper text: “Forecast margin from BOQ; this is not actual cash.”
+2. `Available Margin to Allocate`
+   - Displays the amount calculated from Projected BOQ Margin/Opening Forecast Balance, Forecast Allocated In/Out, and Forecast Reserve.
+   - Shows an `Available Margin` badge.
+   - Shows an `Allocate Margin` button to the Owner.
    - Admin sees the balance in read-only mode with no mutation action, consistent with current UI conventions.
 
-Add an `Allocation Ledger` section beneath the cards:
+Paid Income, Paid Expense, and Approved Commitments may appear in a separate Cashflow section, but must not appear in the Forecast Margin formula strip or affect the allocation action.
+
+Add a `Margin Allocation Ledger` section beneath the cards:
 
 - Show From, To, Amount, Reason, Status, Created by, and Created at.
 - Distinguish Allocated In and Allocated Out with labels and signs, not color alone.
@@ -203,24 +216,24 @@ Add an `Allocation Ledger` section beneath the cards:
 Use the approved mockup flow:
 
 1. `From` — locked to the current Project
-2. `Available` — latest server-calculated value
+2. `Available Margin` — latest server-calculated forecast value
 3. `To` — searchable selector with Company Operations listed first
 4. `Amount` — decimal input with a `Use maximum` action
 5. `Reason` — required
 6. `Reference/Note` — optional if retained during implementation
 7. `Preview` — source and target balances before and after
-8. Confirmation — `Confirm allocation THB X`
+8. Confirmation — `Confirm Margin Allocation THB X`
 
 Required notice:
 
-> This is an internal fund allocation. It does not initiate a bank transfer.
+> This allocates forecast margin inside the product. It is not actual cash and does not initiate a bank transfer.
 
 ### 6.4 Dialog States
 
 - Loading summary/options
 - Ready
 - Invalid amount
-- Amount exceeds Available
+- Amount exceeds Available Margin
 - Missing reason
 - Stale balance (`409`) with refreshed values
 - Duplicate submission returns the existing result through idempotency
@@ -234,7 +247,7 @@ Required notice:
 - Show `Reverse allocation` in Allocation Detail to the Owner only.
 - Require a reversal reason.
 - Show a preview of the returned balances.
-- If the current target does not have enough Available balance, block the Reverse rather than creating a negative balance.
+- If the current target does not have enough Available Margin, block the Reverse rather than creating a new Forecast Deficit.
 - Mark the original record as `REVERSED` by reference, but never delete its ledger entries.
 - Create the opposite Allocation/entries and link them through `reversal_of`.
 
@@ -250,18 +263,18 @@ Required notice:
 ## 7. Business Rules and Validation
 
 1. `amount > 0`
-2. `amount <= current Available to Allocate`
+2. `amount <= current Available Margin to Allocate`
 3. Source and Target must be different Projects.
 4. Source and Target must be Active and have Fund Buckets.
 5. Exactly one System Operations Bucket exists per company/deployment.
 6. Only the Owner may POST or Reverse.
-7. The server recalculates Available inside the transaction and never trusts the Frontend value.
+7. The server loads the latest Projected BOQ Margin/Opening Forecast Balance and recalculates Available Margin inside the transaction; it never trusts the Frontend value.
 8. If the balance changes after the Dialog opens, return `409 STALE_FUND_BALANCE`.
 9. Retrying the same idempotency key returns the existing Allocation instead of creating another one.
 10. A posted Allocation cannot be updated or deleted.
-11. A Reverse cannot make the returning side's Available balance negative.
+11. A Reverse cannot make the returning side's Raw Forecast Available negative.
 12. Allocation does not create an Input Request, Transaction, or BOQ Item.
-13. Allocation is not Income/Expense and is excluded from actual cashflow KPIs.
+13. Allocation is not Income/Expense, is excluded from actual cashflow KPIs, and does not change with `PAID`/`APPROVED` status.
 14. Every Create/Reverse records actor, timestamp, reason, and before/after balances.
 15. Subcontractor queries and Project selectors return assigned Projects only and always exclude `system_key='OPERATIONS'`.
 16. A Subcontractor cannot create Income/Expense activity against Operations even by submitting the Project ID directly.
@@ -302,13 +315,15 @@ fund_buckets
 - bucket_type PROJECT | OPERATIONS
 - currency THB
 - balance_start_date DATE nullable; when activated, it must be the first day of a month
-- protected_reserve NUMERIC(15,2) default 0
+- forecast_reserve NUMERIC(15,2) default 0
 - status SETUP | ACTIVE | LOCKED
 - created_at
 - updated_at
 ```
 
 Backfill exactly one Bucket for every existing Project.
+
+If an environment already ran a migration with the physical column name `protected_reserve`, retain that column for backward compatibility and interpret it as Forecast Reserve. Rename it only through an additive follow-up migration; never edit an applied migration.
 
 ### 8.3 Fund Allocations
 
@@ -363,10 +378,10 @@ At minimum, emit:
 
 - `fund_allocation.created`
 - `fund_allocation.reversed`
-- `fund_allocation.rejected_insufficient_funds`
+- `fund_allocation.rejected_insufficient_margin`
 - `fund_allocation.rejected_stale_balance`
 - `operations_bucket.bootstrap_completed`
-- `operations_bucket.opening_balance_set`
+- `operations_bucket.opening_forecast_balance_set`
 
 Audit payloads must not contain secrets or bank details.
 
@@ -387,20 +402,21 @@ The Summary response must keep each value explicit:
 {
   "project_id": "uuid",
   "currency": "THB",
+  "forecast_base_type": "PROJECTED_BOQ_MARGIN",
   "projected_boq_margin": "1000000.00",
-  "paid_income": "900000.00",
-  "paid_expense": "300000.00",
-  "approved_expense_commitment": "150000.00",
-  "allocated_in": "200000.00",
-  "allocated_out": "250000.00",
-  "protected_reserve": "50000.00",
-  "raw_available": "350000.00",
-  "available_to_allocate": "350000.00",
-  "funding_deficit": "0.00",
+  "opening_forecast_balance": "0.00",
+  "forecast_allocated_in": "200000.00",
+  "forecast_allocated_out": "250000.00",
+  "forecast_reserve": "50000.00",
+  "raw_forecast_available": "900000.00",
+  "available_margin_to_allocate": "900000.00",
+  "forecast_deficit": "0.00",
   "calculated_at": "2026-08-06T10:42:00+07:00",
   "version": "opaque-balance-version"
 }
 ```
+
+Load actual Income/Expense/Commitment data through a separate Cashflow API/section. Do not include those values to explain or calculate the Forecast Allocation ceiling.
 
 ### 9.2 Mutation APIs
 
@@ -433,7 +449,7 @@ The success response returns:
 
 At minimum, use these structured errors:
 
-- `INSUFFICIENT_AVAILABLE_FUNDS`
+- `INSUFFICIENT_AVAILABLE_MARGIN`
 - `STALE_FUND_BALANCE`
 - `INVALID_SOURCE_TARGET`
 - `TARGET_BUCKET_INACTIVE`
@@ -449,11 +465,11 @@ Create a central service boundary so neither the Router nor the Frontend impleme
 Core responsibilities:
 
 1. Resolve the Fund Bucket and authorization scope.
-2. Aggregate paid/approved Input Requests without double counting.
-3. Aggregate posted ledger entries.
-4. Calculate fund summary values using Decimal.
+2. Resolve the latest Projected BOQ Margin from the same calculation/source as BOQ Comparison, or the Operations Opening Forecast Balance.
+3. Aggregate posted forecast ledger entries.
+4. Calculate forecast margin summary values using Decimal without using Paid/Approved status as an input.
 5. Lock source and target rows in deterministic order to reduce deadlocks.
-6. Recalculate source Available inside the transaction.
+6. Recalculate source Available Margin inside the transaction.
 7. Validate expected balance version and amount.
 8. Create Allocation plus source/target ledger entries.
 9. Emit an audit event after successful commit.
@@ -480,7 +496,7 @@ Requirements:
 
 - Add the Project Funds section to Project Detail.
 - Rename Total Variance to Projected BOQ Margin.
-- Add Available to Allocate and Funding Deficit states.
+- Add Available Margin to Allocate and Forecast Deficit states.
 - Implement Owner actions and Admin read-only behavior.
 
 ### FE-03 — Allocation Dialog
@@ -503,10 +519,10 @@ Requirements:
 
 - Pin Operations on the Projects page.
 - Remove BOQ and other construction-specific sections.
-- Show Operations cash, commitment, allocation, and expense overview.
+- Show Operations forecast balance/allocation overview and keep actual expense/cashflow in a separate informational section.
 - Add `System Bucket` badge and delete/archive protection.
-- Add Initial Opening Balance setup for the Owner, with a month selector that enforces the first day.
-- Display monthly opening/closing with automatic roll-forward.
+- Add Initial Opening Forecast Balance setup for the Owner, with a month selector that enforces the first day.
+- Display Monthly Forecast Opening/Closing with automatic roll-forward.
 - Exclude Operations from Subcontractor Project selectors and routes.
 
 ## 12. Backend and Database Work Packages
@@ -522,9 +538,9 @@ Requirements:
 ### BE-02 — Fund Calculation Service
 
 - Implement Decimal aggregation.
-- Establish a single finance source of truth.
-- Calculate summary and balance version.
-- Support Funding Deficit.
+- Use BOQ Comparison calculation as the source of truth for Projected BOQ Margin.
+- Calculate forecast summary and balance version.
+- Support Forecast Deficit when the latest Margin falls below prior allocations.
 
 ### BE-03 — Allocation Posting Service
 
@@ -549,20 +565,20 @@ Requirements:
 - Allow display-name changes without affecting lookup.
 - Exclude Operations from construction metrics.
 - Enforce Subcontractor exclusion at the API/authorization layer rather than relying on Frontend filtering.
-- Implement one-time Initial Opening Balance and monthly roll-forward semantics.
+- Implement one-time Initial Opening Forecast Balance and monthly forecast roll-forward semantics.
 
 ## 13. Test Plan
 
 ### 13.1 Unit Tests
 
-- Formula coverage for income, expense, approved commitment, allocation, and reserve
-- `approved_amount` fallback to `amount`
-- Positive, zero, and negative Raw Available
+- Formula coverage for Projected BOQ Margin/Opening Forecast Balance, Forecast Allocated In/Out, and Forecast Reserve
+- Latest Projected BOQ Margin from BOQ Comparison is the source of truth
+- Positive, zero, and negative Raw Forecast Available
 - Decimal precision and two-decimal rounding
-- BOQ Margin excluded from Available
-- Balance version changes when relevant Input or Ledger activity changes
+- `PAID`, `APPROVED`, Income, Expense, and commitments do not change Available Margin
+- Balance version changes when BOQ Margin, opening forecast, reserve, or relevant Ledger activity changes
 - Initial Balance Start Date must be the first day of a month
-- Monthly Opening equals Previous Month Closing and creates no duplicate movement
+- Monthly Forecast Opening equals Previous Month Forecast Closing and creates no duplicate movement
 
 ### 13.2 API/Service Tests
 
@@ -580,16 +596,16 @@ Requirements:
 - A second reversal is rejected.
 - Reversal that would overdraw the target is rejected.
 - Re-running Operations bootstrap creates no duplicate.
-- Allocation does not change BOQ, Input Request, or actual cashflow values.
+- Allocation does not change BOQ, Input Request, actual cashflow values, or the source Projected BOQ Margin.
 - Subcontractor Project options do not return Operations.
 - A Subcontractor submitting an Operations Project ID directly receives `403`.
-- Only the Owner can create the Initial Opening Balance, and only once.
-- Monthly roll-forward creates no Income, Expense, or Allocation entries.
+- Only the Owner can create the Initial Opening Forecast Balance, and only once.
+- Monthly forecast roll-forward creates no Income, Expense, or Allocation entries.
 
 ### 13.3 Frontend Tests
 
 - Owner/Admin rendering
-- Allocation disabled when Available is zero
+- Allocation disabled when Available Margin is zero or there is a Forecast Deficit
 - Maximum amount and preview calculations
 - Validation errors and stale-balance refresh
 - Double click does not create two requests
@@ -611,15 +627,17 @@ Add migration dry-run and API smoke tests from the environment runbook before de
 
 ## 14. Rollout Plan
 
-### Phase 0 — Decision Freeze and Data Reconciliation
+### Phase 0 — Revised Decision Freeze and Forecast Reconciliation
 
-- [ ] Confirm the finance source of truth for Paid/Approved activity.
+- [x] Confirm V1 is Forecast Margin Allocation and excludes Paid/Approved/actual cashflow from the ceiling.
+- [ ] Confirm BOQ Comparison calculation as the sole source of truth for Projected BOQ Margin.
 - [ ] Verify the existing `โครงการบริษัท` UUID and values in Demo/Beta.
 - [ ] Confirm the Operations display name.
-- [ ] Accounting/Admin prepares the Initial Opening Balance working paper.
+- [ ] Accounting/Admin prepares the Initial Opening Forecast Balance working paper.
 - [ ] The Owner selects the activation month; the system uses the first day as the Balance Start Date.
-- [ ] The Owner enters and confirms the Initial Opening Balance in the activation flow.
-- [ ] Collect at least three real Project examples for manual formula comparison.
+- [ ] The Owner enters and confirms the Initial Opening Forecast Balance in the activation flow.
+- [ ] Collect at least three real Projects to compare Projected Margin, Allocated In/Out, Reserve, and Available Margin.
+- [ ] Audit the current implementation and prepare a change set that removes Paid/Approved from the formula before enabling mutations.
 
 Exit gate: The Owner approves the formula and sample balances.
 
@@ -638,7 +656,7 @@ Exit gate: Migration passes against a data copy and creates no duplicate Operati
 - [ ] Implement the fund summary service.
 - [ ] Implement read APIs.
 - [ ] Add authorization and tests.
-- [ ] Reconcile summary values against real data.
+- [ ] Reconcile summary values against BOQ Margin and the forecast ledger.
 
 Exit gate: Sample Project summaries match manual calculations.
 
@@ -649,13 +667,13 @@ Exit gate: Sample Project summaries match manual calculations.
 - [ ] Add audit events.
 - [ ] Run concurrency and failure tests.
 
-Exit gate: The test matrix produces no negative balances and no partial ledger entries.
+Exit gate: No new Allocation exceeds Available Margin and there are no partial ledger entries. A Forecast Deficit caused by lower BOQ Margin is displayed without rewriting history.
 
 ### Phase 4 — Frontend UX
 
-- [ ] Project Funds cards
-- [ ] Allocation Dialog
-- [ ] Allocation Ledger
+- [ ] Project Forecast cards with actual cashflow separated from the formula
+- [ ] Margin Allocation Dialog
+- [ ] Margin Allocation Ledger
 - [ ] Company Operations presentation
 - [ ] Responsive and accessibility states
 
@@ -665,8 +683,8 @@ Exit gate: Lint/build passes and the Owner walkthrough passes all primary and er
 
 - [ ] Enable with feature flag `FUND_ALLOCATION_ENABLED`.
 - [ ] Run migration/bootstrap.
-- [ ] Owner confirms the Initial Opening Balance, including an explicit zero, and activation month through the activation flow.
-- [ ] Reconcile fund totals before enabling mutations.
+- [ ] Owner confirms the Initial Opening Forecast Balance, including an explicit zero, and activation month through the activation flow.
+- [ ] Reconcile forecast totals before enabling mutations.
 - [ ] Enable read-only summary first.
 - [ ] Enable Owner posting after reconciliation passes.
 - [ ] Monitor errors, audit, and concurrency.
@@ -687,13 +705,13 @@ Exit gate: Beta acceptance criteria pass before any Production decision.
 Monitor at least:
 
 - Allocation create/reverse success rate
-- `INSUFFICIENT_AVAILABLE_FUNDS` count
+- `INSUFFICIENT_AVAILABLE_MARGIN` count
 - `STALE_FUND_BALANCE` count
 - Duplicate idempotency replay count
 - Posting latency
 - Ledger imbalance count, which must be zero
 - Operations Bucket duplication count, which must be zero
-- Projects with negative Raw Available
+- Projects with negative Raw Forecast Available after a BOQ Margin change
 - Difference between Ledger aggregates and Allocation headers, which must be zero
 
 Provide a reconciliation query/report that verifies:
@@ -718,20 +736,22 @@ sum(DEBIT) == sum(CREDIT) == allocation.amount
 V1 is complete when:
 
 1. Exactly one Operations System Bucket exists and reuses the existing record without creating a duplicate.
-2. The Owner sees Projected BOQ Margin and Available to Allocate as different values with different meanings.
-3. The Owner cannot allocate more than the server-calculated Available value.
+2. The Owner sees Projected BOQ Margin as the forecast base and Available Margin to Allocate as the balance after Allocated In/Out and Forecast Reserve.
+3. The Owner cannot allocate more Margin than the server-calculated Available Margin.
 4. Admin can read summary/history but cannot mutate.
 5. Every Allocation has atomic source/target ledger entries and an Audit Trail.
-6. Duplicate and concurrent requests do not create duplicate or negative balances.
+6. Duplicate and concurrent requests do not create duplicates or an Allocation above Available Margin at transaction commit time.
 7. Reverse creates new history and does not delete the original record.
 8. Allocation does not change BOQ, Variance, Input Request, or actual cashflow values.
 9. Operations is excluded from Construction KPIs and Project Health.
 10. Migration, Backend tests, Frontend lint/build, and manual walkthrough pass.
 11. Demo/Beta reconciliation finds no ledger imbalance.
-12. User-facing copy clearly states that this is an internal allocation, not a bank transfer.
-13. The Owner confirms the Initial Opening Balance and the Balance Start Date is the first day of a month.
-14. Monthly Opening automatically carries forward from Previous Month Closing without creating duplicate movement.
+12. User-facing copy clearly states that this allocates forecast Margin and is neither actual cash nor a bank transfer.
+13. The Owner confirms the Initial Opening Forecast Balance and the Balance Start Date is the first day of a month.
+14. Monthly Forecast Opening carries forward from Previous Month Forecast Closing without creating duplicate movement.
 15. Subcontractors cannot view, select, or submit activity to Company Operations through either UI or API.
+16. Changing `PENDING_ADMIN`/`APPROVED`/`PAID` status does not change Available Margin.
+17. When BOQ Margin falls below prior allocations, the system preserves the Ledger, shows Forecast Deficit, and blocks further outgoing Allocation.
 
 ## 18. Confirmed Decisions and Activation Inputs
 
@@ -740,30 +760,31 @@ Product decisions are sufficient to begin implementation:
 | ID | Decision | Status |
 |---|---|---|
 | C-01 | Display name: `Company Operations / ค่าใช้จ่ายส่วนกลาง` | Confirmed |
-| C-02 | Paid/Approved uses Input Request finance rows and must not double-count derived Transactions | Technical baseline |
-| C-03 | Accounting/Admin prepares the figures; the Owner enters and confirms the Initial Opening Balance | Confirmed |
+| C-02 | Paid/Approved/Input Request/actual cashflow is excluded from Forecast Margin Allocation calculations | Confirmed revised baseline |
+| C-03 | Accounting/Admin prepares the figures; the Owner enters and confirms the Initial Opening Forecast Balance | Confirmed |
 | C-04 | Balance Start Date is the first day of the month selected by the Owner | Confirmed |
-| C-05 | Each following month automatically uses Previous Month Closing as Monthly Opening | Confirmed |
-| C-06 | Protected Reserve starts at 0 and has no editing UI in V1 | Confirmed baseline |
+| C-05 | Each following month uses Previous Month Forecast Closing as Monthly Forecast Opening | Confirmed |
+| C-06 | Forecast Reserve starts at 0 and has no editing UI in V1 | Confirmed baseline |
 | C-07 | Project-to-Project and Operations-to-Project allocations use the same validation rules | Confirmed |
 | C-08 | Subcontractors have no Operations visibility and cannot select or submit activity to Operations | Confirmed |
-| C-09 | Planned Allocation moves to V2 | Confirmed |
+| C-09 | Forecast Margin Allocation from Projected BOQ Margin is included in V1 | Confirmed revised baseline |
+| C-10 | Forecast Allocated In increases the destination's Available Margin and may be allocated onward | Confirmed |
+| C-11 | The latest BOQ Margin changes the forecast base without editing posted Allocations | Confirmed |
 
 Activation inputs that are not required while building the system:
 
-- Initial Opening Balance amount entered by the Owner
+- Initial Opening Forecast Balance amount entered by the Owner
 - First activation month
 - Evidence/working paper from Accounting/Admin
 - Demo observation window; recommended minimum is 3–5 business days or completion of all defined use cases
 
 ## 19. Suggested V2 Backlog
 
-- Planned Allocation from Projected Margin
 - Percentage rules, such as allocating 20% to Operations
 - Recurring monthly Allocation
-- Protected Reserve management UI
+- Forecast Reserve management UI
 - Two-person approval for Allocation
-- Notifications when a Project has a Funding Deficit
+- Notifications when a Project has a Forecast Deficit
 - Company-level MAKE-style Bucket board
-- Planned versus Actual Allocation forecast
-- Bank/accounting reconciliation as a separate project that does not change internal Allocation semantics
+- Forecast Margin Allocation versus actual cashflow comparison
+- Actual cash allocation and bank/accounting reconciliation as a separate project that does not change Forecast Margin Allocation semantics

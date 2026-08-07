@@ -64,7 +64,7 @@ function FundOpeningBalanceDialog({ open, onClose, projectName, onSubmit, onSucc
       setResult(summary);
       onSuccess?.(summary);
     } catch (submitError) {
-      setError(submitError.message || 'The opening balance could not be activated.');
+      setError(submitError.message || 'The Opening Forecast Balance could not be activated.');
     } finally {
       setIsSubmitting(false);
     }
@@ -74,25 +74,25 @@ function FundOpeningBalanceDialog({ open, onClose, projectName, onSubmit, onSucc
     <FundDialogShell
       open={open}
       onClose={isSubmitting ? () => {} : onClose}
-      title="Set opening balance"
-      description={`Activate the initial fund balance for ${projectName || 'Company Operations'}.`}
+      title="Set Opening Forecast Balance"
+      description={`Activate the initial forecast budget for ${projectName || 'Company Operations'}.`}
     >
       {result ? (
         <div className="fund-success-state" role="status">
           <CheckCircle2 size={38} />
-          <h3>Opening balance activated</h3>
-          <p>{formatMoney(result.openingBalance || amount)} effective {result.balanceStartDate || effectiveDate}</p>
+          <h3>Opening Forecast Balance activated</h3>
+          <p>{formatMoney(result.openingForecastBalance || amount)} effective {result.balanceStartDate || effectiveDate}</p>
           <button type="button" className="fund-button primary" onClick={onClose}>Done</button>
         </div>
       ) : (
         <form className="fund-form" onSubmit={handleSubmit} noValidate>
           <div className="fund-notice neutral">
             <Info size={17} />
-            <span>This is the system’s initial balance, not customer income. It is stored as an immutable ledger entry.</span>
+            <span>This is an opening forecast budget, not actual cash, a bank balance, or customer income. It is stored as an immutable ledger entry.</span>
           </div>
 
           <div className="fund-field">
-            <label htmlFor="opening-balance-amount">Initial opening balance (THB)</label>
+            <label htmlFor="opening-balance-amount">Initial Opening Forecast Balance (THB)</label>
             <input
               id="opening-balance-amount"
               type="text"
@@ -105,7 +105,7 @@ function FundOpeningBalanceDialog({ open, onClose, projectName, onSubmit, onSucc
               placeholder="0.00"
               required
             />
-            <small>Enter 0.00 when Accounting confirms an explicit zero opening balance.</small>
+            <small>Enter 0.00 when Accounting confirms an explicit zero forecast budget.</small>
           </div>
 
           <div className="fund-field">
@@ -136,15 +136,15 @@ function FundOpeningBalanceDialog({ open, onClose, projectName, onSubmit, onSucc
                 setReason(event.target.value);
                 setError('');
               }}
-              placeholder="Source and preparation basis for this figure"
+              placeholder="Working paper and preparation basis for this forecast figure"
               required
             />
           </div>
 
-          <section className="fund-preview" aria-label="Opening balance preview">
+          <section className="fund-preview" aria-label="Opening Forecast Balance preview">
             <div className="fund-section-label">Activation Preview</div>
             <div className="fund-preview-grid compact">
-              <div><span>Opening balance</span><strong>{formatMoney(amount)}</strong></div>
+              <div><span>Opening Forecast Balance</span><strong>{formatMoney(amount)}</strong></div>
               <div><span>Effective date</span><strong>{effectiveDate || '-'}</strong></div>
             </div>
           </section>
@@ -166,7 +166,7 @@ function FundOpeningBalanceDialog({ open, onClose, projectName, onSubmit, onSucc
           <footer className="fund-dialog-actions">
             <button type="button" className="fund-button secondary" onClick={onClose} disabled={isSubmitting}>Cancel</button>
             <button type="submit" className="fund-button primary" disabled={isSubmitting || !amountIsValid || !reason.trim() || !confirmed}>
-              {isSubmitting ? 'Activating…' : `Confirm opening balance ${formatMoney(amount)}`}
+              {isSubmitting ? 'Activating…' : `Confirm Opening Forecast Balance ${formatMoney(amount)}`}
             </button>
           </footer>
         </form>

@@ -18,7 +18,6 @@ from sqlalchemy.orm import noload
 from app.core.config import get_settings
 from app.models.boq import BOQItem, Project
 from app.models.funds import FundAllocation, FundAuditEvent, FundBucket, FundLedgerEntry
-from app.models.input_request import InputRequest
 from app.schemas.fund_schema import (
     FundAllocationListResponse,
     FundAllocationParty,
@@ -26,6 +25,7 @@ from app.schemas.fund_schema import (
     FundBucketOption,
     FundSummaryResponse,
 )
+from app.services.boq_margin_service import projected_boq_totals
 
 MONEY_QUANTUM = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -53,9 +53,9 @@ class FundDomainError(Exception):
 
 @dataclass(frozen=True)
 class AvailableValues:
-    raw_available: Decimal
-    available_to_allocate: Decimal
-    funding_deficit: Decimal
+    raw_forecast_available: Decimal
+    available_margin_to_allocate: Decimal
+    forecast_deficit: Decimal
 
 
 def money(value: object) -> Decimal:
@@ -66,29 +66,23 @@ def money(value: object) -> Decimal:
 
 def calculate_available_values(
     *,
-    opening_balance: object = ZERO,
-    paid_income: object = ZERO,
-    paid_expense: object = ZERO,
-    approved_expense_commitment: object = ZERO,
-    allocated_in: object = ZERO,
-    allocated_out: object = ZERO,
-    protected_reserve: object = ZERO,
+    forecast_base: object = ZERO,
+    forecast_allocated_in: object = ZERO,
+    forecast_allocated_out: object = ZERO,
+    forecast_reserve: object = ZERO,
 ) -> AvailableValues:
-    """Apply the V1 formula with Decimal only and expose any deficit explicitly."""
+    """Apply the forecast-margin formula without actual cashflow inputs."""
 
     raw = money(
-        money(opening_balance)
-        + money(paid_income)
-        + money(allocated_in)
-        - money(paid_expense)
-        - money(approved_expense_commitment)
-        - money(allocated_out)
-        - money(protected_reserve)
+        money(forecast_base)
+        + money(forecast_allocated_in)
+        - money(forecast_allocated_out)
+        - money(forecast_reserve)
     )
     return AvailableValues(
-        raw_available=raw,
-        available_to_allocate=max(ZERO, raw),
-        funding_deficit=max(ZERO, -raw),
+        raw_forecast_available=raw,
+        available_margin_to_allocate=max(ZERO, raw),
+        forecast_deficit=max(ZERO, -raw),
     )
 
 
@@ -103,120 +97,17 @@ def build_balance_version(payload: dict[str, object]) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:32]
 
 
-def _request_amount(request: InputRequest) -> Decimal:
-    return money(
-        request.approved_amount
-        if request.approved_amount is not None
-        else request.amount
-    )
-
-
-def _event_date(value: datetime | date | None, fallback: date) -> date:
-    if isinstance(value, datetime):
-        return value.astimezone(BANGKOK).date() if value.tzinfo else value.date()
-    return value or fallback
-
-
-def _current_input_totals(
-    requests: list[InputRequest],
-    *,
-    start_date: date | None,
-    today: date,
-) -> dict[str, Decimal | int]:
-    totals: dict[str, Decimal | int] = {
-        "paid_income": ZERO,
-        "paid_expense": ZERO,
-        "approved_expense_commitment": ZERO,
-        "paid_expense_this_month": ZERO,
-        "paid_expense_this_month_count": 0,
-    }
-    month_start = today.replace(day=1)
-
-    for request in requests:
-        request_status = str(request.status or "").upper()
-        entry_type = str(request.entry_type or "").upper()
-        amount = _request_amount(request)
-        if request_status == "PAID":
-            movement_date = _event_date(
-                request.paid_at or request.approved_at,
-                request.request_date,
-            )
-            if start_date and movement_date < start_date:
-                continue
-            key = "paid_income" if entry_type == "INCOME" else "paid_expense"
-            if entry_type in {"INCOME", "EXPENSE"}:
-                totals[key] = money(totals[key] + amount)  # type: ignore[operator]
-            if entry_type == "EXPENSE" and movement_date >= month_start:
-                totals["paid_expense_this_month"] = money(
-                    totals["paid_expense_this_month"] + amount  # type: ignore[operator]
-                )
-                totals["paid_expense_this_month_count"] = int(
-                    totals["paid_expense_this_month_count"]
-                ) + 1
-        elif request_status == "APPROVED" and entry_type == "EXPENSE":
-            movement_date = _event_date(request.approved_at, request.request_date)
-            if start_date and movement_date < start_date:
-                continue
-            totals["approved_expense_commitment"] = money(
-                totals["approved_expense_commitment"] + amount  # type: ignore[operator]
-            )
-
-    return totals
-
-
-def _historical_input_totals(
-    requests: list[InputRequest],
-    *,
-    start_date: date | None,
-    cutoff: date,
-) -> dict[str, Decimal]:
-    totals = {
-        "paid_income": ZERO,
-        "paid_expense": ZERO,
-        "approved_expense_commitment": ZERO,
-    }
-    for request in requests:
-        entry_type = str(request.entry_type or "").upper()
-        amount = _request_amount(request)
-        paid_date = (
-            _event_date(request.paid_at, request.request_date)
-            if request.paid_at is not None
-            else None
-        )
-        approved_date = (
-            _event_date(request.approved_at, request.request_date)
-            if request.approved_at is not None
-            else None
-        )
-
-        if paid_date is not None and paid_date < cutoff:
-            if start_date and paid_date < start_date:
-                continue
-            if entry_type == "INCOME":
-                totals["paid_income"] = money(totals["paid_income"] + amount)
-            elif entry_type == "EXPENSE":
-                totals["paid_expense"] = money(totals["paid_expense"] + amount)
-            continue
-
-        if (
-            entry_type == "EXPENSE"
-            and approved_date is not None
-            and approved_date < cutoff
-            and (start_date is None or approved_date >= start_date)
-        ):
-            totals["approved_expense_commitment"] = money(
-                totals["approved_expense_commitment"] + amount
-            )
-    return totals
-
-
 def _ledger_totals(
     entries: list[FundLedgerEntry],
     *,
     start_date: date | None,
     cutoff: date | None = None,
 ) -> dict[str, Decimal]:
-    totals = {"opening_balance": ZERO, "allocated_in": ZERO, "allocated_out": ZERO}
+    totals = {
+        "opening_forecast_balance": ZERO,
+        "forecast_allocated_in": ZERO,
+        "forecast_allocated_out": ZERO,
+    }
     for entry in entries:
         effective_date = entry.effective_date
         if start_date and effective_date < start_date:
@@ -226,14 +117,20 @@ def _ledger_totals(
         amount = money(entry.amount)
         if entry.entry_type == "OPENING_BALANCE":
             if entry.direction == "CREDIT":
-                totals["opening_balance"] = money(totals["opening_balance"] + amount)
+                totals["opening_forecast_balance"] = money(
+                    totals["opening_forecast_balance"] + amount
+                )
             continue
         if entry.entry_type not in {"ALLOCATION", "REVERSAL"}:
             continue
         if entry.direction == "CREDIT":
-            totals["allocated_in"] = money(totals["allocated_in"] + amount)
+            totals["forecast_allocated_in"] = money(
+                totals["forecast_allocated_in"] + amount
+            )
         elif entry.direction == "DEBIT":
-            totals["allocated_out"] = money(totals["allocated_out"] + amount)
+            totals["forecast_allocated_out"] = money(
+                totals["forecast_allocated_out"] + amount
+            )
     return totals
 
 
@@ -267,27 +164,26 @@ async def _bucket_context(
 
 
 async def _projected_boq_margin(db: AsyncSession, project_id: UUID) -> Decimal:
-    rows = (
-        await db.execute(
-            select(BOQItem.boq_type, BOQItem.grand_total)
-            .where(BOQItem.project_id == project_id)
-            .where(BOQItem.valid_to.is_(None))
-            .where(BOQItem.parent_id.is_(None))
-        )
-    ).all()
-    customer = sum((money(value) for kind, value in rows if str(kind).upper() == "CUSTOMER"), ZERO)
-    subcontractor = sum(
-        (money(value) for kind, value in rows if str(kind).upper() == "SUBCONTRACTOR"),
-        ZERO,
+    items = list(
+        (
+            await db.execute(
+                select(BOQItem)
+                .options(noload("*"))
+                .where(BOQItem.project_id == project_id)
+                .where(BOQItem.valid_to.is_(None))
+            )
+        ).scalars().all()
     )
-    return money(customer - subcontractor)
+    return money(projected_boq_totals(items).margin)
 
 
 def _source_fingerprint(
     bucket: FundBucket,
-    requests: list[InputRequest],
     entries: list[FundLedgerEntry],
     values: AvailableValues,
+    *,
+    forecast_base_type: str,
+    forecast_base: Decimal,
 ) -> dict[str, object]:
     return {
         "bucket": [
@@ -295,25 +191,13 @@ def _source_fingerprint(
             str(bucket.status),
             str(bucket.balance_start_date or ""),
             str(money(bucket.protected_reserve)),
-            str(getattr(bucket, "updated_at", "") or ""),
         ],
+        "forecast_base": [forecast_base_type, str(money(forecast_base))],
         "values": [
-            str(values.raw_available),
-            str(values.available_to_allocate),
-            str(values.funding_deficit),
+            str(values.raw_forecast_available),
+            str(values.available_margin_to_allocate),
+            str(values.forecast_deficit),
         ],
-        "inputs": sorted(
-            [
-                str(request.id),
-                str(request.status),
-                str(request.entry_type),
-                str(_request_amount(request)),
-                str(request.approved_at or ""),
-                str(request.paid_at or ""),
-                str(request.updated_at or ""),
-            ]
-            for request in requests
-        ),
         "ledger": sorted(
             [
                 str(entry.id),
@@ -321,7 +205,6 @@ def _source_fingerprint(
                 str(entry.entry_type),
                 str(money(entry.amount)),
                 str(entry.effective_date),
-                str(entry.created_at or ""),
             ]
             for entry in entries
         ),
@@ -335,15 +218,6 @@ async def calculate_fund_summary(
     locked_context: tuple[FundBucket, Project] | None = None,
 ) -> FundSummaryResponse:
     bucket, project = locked_context or await _bucket_context(db, project_id)
-    requests = list(
-        (
-            await db.execute(
-                select(InputRequest)
-                .options(noload("*"))
-                .where(InputRequest.project_id == project_id)
-            )
-        ).scalars().all()
-    )
     entries = list(
         (
             await db.execute(
@@ -356,37 +230,29 @@ async def calculate_fund_summary(
 
     now = datetime.now(UTC)
     today = now.astimezone(BANGKOK).date()
-    setup_operations = bucket.bucket_type == "OPERATIONS" and bucket.status == "SETUP"
-    active_start = None if setup_operations else bucket.balance_start_date
-    active_requests = [] if setup_operations else requests
-    active_entries = [] if setup_operations else entries
-    input_totals = _current_input_totals(
-        active_requests,
-        start_date=active_start,
-        today=today,
+    ledger_totals = _ledger_totals(entries, start_date=bucket.balance_start_date)
+    is_operations = project.system_key == OPERATIONS_SYSTEM_KEY
+    forecast_base_type = (
+        "OPENING_FORECAST_BALANCE" if is_operations else "PROJECTED_BOQ_MARGIN"
     )
-    ledger_totals = _ledger_totals(active_entries, start_date=active_start)
+    projected_boq_margin = (
+        ZERO if is_operations else await _projected_boq_margin(db, project.id)
+    )
+    opening_forecast_balance = ledger_totals["opening_forecast_balance"]
+    forecast_base = (
+        opening_forecast_balance if is_operations else projected_boq_margin
+    )
     values = calculate_available_values(
-        opening_balance=ledger_totals["opening_balance"],
-        paid_income=input_totals["paid_income"],
-        paid_expense=input_totals["paid_expense"],
-        approved_expense_commitment=input_totals["approved_expense_commitment"],
-        allocated_in=ledger_totals["allocated_in"],
-        allocated_out=ledger_totals["allocated_out"],
-        protected_reserve=bucket.protected_reserve,
+        forecast_base=forecast_base,
+        forecast_allocated_in=ledger_totals["forecast_allocated_in"],
+        forecast_allocated_out=ledger_totals["forecast_allocated_out"],
+        forecast_reserve=bucket.protected_reserve,
     )
 
-    monthly_opening: Decimal | None = None
-    monthly_closing: Decimal | None = None
-    opening_balance: Decimal | None = None
-    if bucket.balance_start_date is not None:
-        opening_balance = ledger_totals["opening_balance"]
+    monthly_forecast_opening: Decimal | None = None
+    monthly_forecast_closing: Decimal | None = None
+    if is_operations and bucket.balance_start_date is not None:
         month_start = today.replace(day=1)
-        historical_inputs = _historical_input_totals(
-            requests,
-            start_date=bucket.balance_start_date,
-            cutoff=month_start,
-        )
         historical_ledger = _ledger_totals(
             entries,
             start_date=bucket.balance_start_date,
@@ -396,51 +262,57 @@ async def calculate_fund_summary(
             activation_opening = _ledger_totals(
                 entries,
                 start_date=bucket.balance_start_date,
-            )["opening_balance"]
-            historical_ledger["opening_balance"] = activation_opening
-        monthly_opening = calculate_available_values(
-            opening_balance=historical_ledger["opening_balance"],
-            paid_income=historical_inputs["paid_income"],
-            paid_expense=historical_inputs["paid_expense"],
-            approved_expense_commitment=historical_inputs["approved_expense_commitment"],
-            allocated_in=historical_ledger["allocated_in"],
-            allocated_out=historical_ledger["allocated_out"],
-            protected_reserve=bucket.protected_reserve,
-        ).raw_available
-        monthly_closing = values.raw_available
+            )["opening_forecast_balance"]
+            historical_ledger["opening_forecast_balance"] = activation_opening
+        monthly_forecast_opening = calculate_available_values(
+            forecast_base=historical_ledger["opening_forecast_balance"],
+            forecast_allocated_in=historical_ledger["forecast_allocated_in"],
+            forecast_allocated_out=historical_ledger["forecast_allocated_out"],
+            forecast_reserve=bucket.protected_reserve,
+        ).raw_forecast_available
+        monthly_forecast_closing = values.raw_forecast_available
 
     version = build_balance_version(
-        _source_fingerprint(bucket, active_requests, active_entries, values)
+        _source_fingerprint(
+            bucket,
+            entries,
+            values,
+            forecast_base_type=forecast_base_type,
+            forecast_base=forecast_base,
+        )
     )
+    opening_forecast_balance_set = bucket.balance_start_date is not None
     return FundSummaryResponse(
         project_id=project.id,
         bucket_id=bucket.id,
         currency=bucket.currency,
-        projected_boq_margin=(
-            ZERO
-            if project.system_key == OPERATIONS_SYSTEM_KEY
-            else await _projected_boq_margin(db, project.id)
-        ),
-        paid_income=money(input_totals["paid_income"]),
-        paid_expense=money(input_totals["paid_expense"]),
-        paid_expense_this_month=money(input_totals["paid_expense_this_month"]),
-        paid_expense_this_month_count=int(input_totals["paid_expense_this_month_count"]),
-        approved_expense_commitment=money(input_totals["approved_expense_commitment"]),
-        allocated_in=ledger_totals["allocated_in"],
-        allocated_out=ledger_totals["allocated_out"],
-        protected_reserve=money(bucket.protected_reserve),
-        raw_available=values.raw_available,
-        available_to_allocate=values.available_to_allocate,
-        funding_deficit=values.funding_deficit,
-        opening_balance=opening_balance,
-        monthly_opening=monthly_opening,
-        monthly_closing=monthly_closing,
+        forecast_base_type=forecast_base_type,
+        projected_boq_margin=projected_boq_margin,
+        opening_forecast_balance=opening_forecast_balance,
+        forecast_allocated_in=ledger_totals["forecast_allocated_in"],
+        forecast_allocated_out=ledger_totals["forecast_allocated_out"],
+        forecast_reserve=money(bucket.protected_reserve),
+        raw_forecast_available=values.raw_forecast_available,
+        available_margin_to_allocate=values.available_margin_to_allocate,
+        forecast_deficit=values.forecast_deficit,
+        monthly_forecast_opening=monthly_forecast_opening,
+        monthly_forecast_closing=monthly_forecast_closing,
         balance_start_date=bucket.balance_start_date,
         bucket_status=bucket.status,
-        opening_balance_set=bucket.balance_start_date is not None,
+        opening_forecast_balance_set=opening_forecast_balance_set,
         mutations_enabled=get_settings().fund_allocation_enabled,
         calculated_at=now,
         version=version,
+        allocated_in=ledger_totals["forecast_allocated_in"],
+        allocated_out=ledger_totals["forecast_allocated_out"],
+        protected_reserve=money(bucket.protected_reserve),
+        raw_available=values.raw_forecast_available,
+        available_to_allocate=values.available_margin_to_allocate,
+        funding_deficit=values.forecast_deficit,
+        opening_balance=opening_forecast_balance if is_operations else None,
+        monthly_opening=monthly_forecast_opening,
+        monthly_closing=monthly_forecast_closing,
+        opening_balance_set=opening_forecast_balance_set,
     )
 
 
@@ -469,7 +341,13 @@ async def list_bucket_options(db: AsyncSession) -> list[FundBucketOption]:
             project.id,
             locked_context=(bucket, project),
         )
-        active = bucket.status == "ACTIVE" and str(project.status or "").upper() == "ACTIVE"
+        active = (
+            str(project.status or "").upper() == "ACTIVE"
+            and (
+                bucket.status == "ACTIVE"
+                or (bucket.bucket_type == "OPERATIONS" and bucket.status == "SETUP")
+            )
+        )
         options.append(
             FundBucketOption(
                 bucket_id=bucket.id,
@@ -480,7 +358,8 @@ async def list_bucket_options(db: AsyncSession) -> list[FundBucketOption]:
                 bucket_type=bucket.bucket_type,
                 status=bucket.status,
                 currency=bucket.currency,
-                available_to_allocate=summary.available_to_allocate,
+                available_margin_to_allocate=summary.available_margin_to_allocate,
+                available_to_allocate=summary.available_margin_to_allocate,
                 version=summary.version,
                 is_active=active,
             )
@@ -527,7 +406,14 @@ def _validate_active_context(
     target: bool,
 ) -> None:
     bucket, project = context
-    if bucket.status != "ACTIVE" or str(project.status or "").upper() != "ACTIVE":
+    project_is_active = str(project.status or "").upper() == "ACTIVE"
+    setup_operations_target = (
+        target and bucket.bucket_type == "OPERATIONS" and bucket.status == "SETUP"
+    )
+    if (
+        not project_is_active
+        or (bucket.status != "ACTIVE" and not setup_operations_target)
+    ):
         code = "TARGET_BUCKET_INACTIVE" if target else "SOURCE_BUCKET_INACTIVE"
         raise FundDomainError(
             code,
@@ -669,13 +555,18 @@ async def post_allocation(
                     status_code=409,
                     context={"current_version": source_summary.version},
                 )
-            if normalized_amount <= ZERO or normalized_amount > source_summary.available_to_allocate:
+            if (
+                normalized_amount <= ZERO
+                or normalized_amount > source_summary.available_margin_to_allocate
+            ):
                 raise FundDomainError(
-                    "INSUFFICIENT_AVAILABLE_FUNDS",
-                    "The allocation exceeds the current Available to Allocate balance.",
+                    "INSUFFICIENT_AVAILABLE_MARGIN",
+                    "The allocation exceeds the current Available Margin to Allocate.",
                     status_code=409,
                     context={
-                        "available_to_allocate": str(source_summary.available_to_allocate),
+                        "available_margin_to_allocate": str(
+                            source_summary.available_margin_to_allocate
+                        ),
                     },
                 )
 
@@ -692,10 +583,14 @@ async def post_allocation(
                 status="POSTED",
                 idempotency_key=idempotency_key,
                 created_by=actor,
-                source_balance_before=source_summary.available_to_allocate,
-                source_balance_after=money(source_summary.available_to_allocate - normalized_amount),
-                target_balance_before=target_summary.available_to_allocate,
-                target_balance_after=money(target_summary.available_to_allocate + normalized_amount),
+                source_balance_before=source_summary.available_margin_to_allocate,
+                source_balance_after=money(
+                    source_summary.available_margin_to_allocate - normalized_amount
+                ),
+                target_balance_before=target_summary.available_margin_to_allocate,
+                target_balance_after=money(
+                    target_summary.available_margin_to_allocate + normalized_amount
+                ),
                 source_balance_version=source_summary.version,
                 target_balance_version=target_summary.version,
             )
@@ -747,8 +642,8 @@ async def post_allocation(
                 target_project_id,
                 locked_context=target_context,
             )
-            allocation.source_balance_after = after_source.available_to_allocate
-            allocation.target_balance_after = after_target.available_to_allocate
+            allocation.source_balance_after = after_source.available_margin_to_allocate
+            allocation.target_balance_after = after_target.available_margin_to_allocate
             allocation.source_balance_version = after_source.version
             allocation.target_balance_version = after_target.version
             await db.flush()
@@ -831,13 +726,15 @@ async def reverse_allocation(
                     context={"current_version": source_summary.version},
                 )
             amount = money(original.amount)
-            if amount > source_summary.available_to_allocate:
+            if amount > source_summary.available_margin_to_allocate:
                 raise FundDomainError(
                     "REVERSAL_WOULD_OVERDRAW_TARGET",
-                    "The returning Bucket does not have enough available funds.",
+                    "The returning Bucket does not have enough Available Margin.",
                     status_code=409,
                     context={
-                        "available_to_allocate": str(source_summary.available_to_allocate),
+                        "available_margin_to_allocate": str(
+                            source_summary.available_margin_to_allocate
+                        ),
                     },
                 )
 
@@ -852,10 +749,14 @@ async def reverse_allocation(
                 reversal_of=original.id,
                 idempotency_key=idempotency_key,
                 created_by=actor,
-                source_balance_before=source_summary.available_to_allocate,
-                source_balance_after=money(source_summary.available_to_allocate - amount),
-                target_balance_before=target_summary.available_to_allocate,
-                target_balance_after=money(target_summary.available_to_allocate + amount),
+                source_balance_before=source_summary.available_margin_to_allocate,
+                source_balance_after=money(
+                    source_summary.available_margin_to_allocate - amount
+                ),
+                target_balance_before=target_summary.available_margin_to_allocate,
+                target_balance_after=money(
+                    target_summary.available_margin_to_allocate + amount
+                ),
                 source_balance_version=source_summary.version,
                 target_balance_version=target_summary.version,
             )
@@ -907,8 +808,8 @@ async def reverse_allocation(
                 target_party.project_id,
                 locked_context=target_context,
             )
-            reversal.source_balance_after = after_source.available_to_allocate
-            reversal.target_balance_after = after_target.available_to_allocate
+            reversal.source_balance_after = after_source.available_margin_to_allocate
+            reversal.target_balance_after = after_target.available_margin_to_allocate
             reversal.source_balance_version = after_source.version
             reversal.target_balance_version = after_target.version
             await db.flush()
@@ -938,7 +839,7 @@ async def set_operations_opening_balance(
         if project.system_key != OPERATIONS_SYSTEM_KEY:
             raise FundDomainError(
                 "INVALID_OPERATIONS_BUCKET",
-                "Opening balance activation is only available for Company Operations.",
+                "Opening Forecast Balance is only available for Company Operations.",
                 status_code=400,
             )
         replay = (
@@ -970,7 +871,7 @@ async def set_operations_opening_balance(
             if existing_opening is not None or bucket.balance_start_date is not None:
                 raise FundDomainError(
                     "OPENING_BALANCE_ALREADY_SET",
-                    "The Initial Opening Balance has already been confirmed.",
+                    "The Initial Opening Forecast Balance has already been confirmed.",
                     status_code=409,
                 )
             bucket.balance_start_date = effective_date
@@ -988,7 +889,7 @@ async def set_operations_opening_balance(
                         idempotency_key=idempotency_key,
                     ),
                     FundAuditEvent(
-                        event_type="operations_bucket.opening_balance_set",
+                        event_type="operations_bucket.opening_forecast_balance_set",
                         bucket_id=bucket.id,
                         actor=actor,
                         detail={

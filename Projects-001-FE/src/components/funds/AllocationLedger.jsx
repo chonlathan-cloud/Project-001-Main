@@ -14,6 +14,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
+const RECENT_ALLOCATION_LIMIT = 5;
 
 function formatDateTime(value) {
   if (!value) return '-';
@@ -38,6 +39,11 @@ function AllocationLedger({
   const [reverseSourceSummary, setReverseSourceSummary] = useState(null);
   const [reverseTargetSummary, setReverseTargetSummary] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    setShowAll(false);
+  }, [projectId]);
 
   useEffect(() => {
     if (!selected) return undefined;
@@ -61,7 +67,7 @@ function AllocationLedger({
         setReverseTargetSummary(targetSummary);
       })
       .catch((previewError) => {
-        if (isActive) setReversalError(previewError.message || 'Unable to load the latest reversal preview.');
+        if (isActive) setReversalError(previewError.message || 'Unable to load the latest Margin reversal preview.');
       })
       .finally(() => {
         if (isActive) setPreviewLoading(false);
@@ -72,8 +78,8 @@ function AllocationLedger({
     };
   }, [canReverse, selected]);
 
-  const reverseAvailable = reverseSourceSummary?.availableToAllocate || '0.00';
-  const reverseTargetBefore = reverseTargetSummary?.availableToAllocate || '0.00';
+  const reverseAvailable = reverseSourceSummary?.availableMarginToAllocate || '0.00';
+  const reverseTargetBefore = reverseTargetSummary?.availableMarginToAllocate || '0.00';
   const reversalWouldOverdraw = selected ? compareMoney(selected.amount, reverseAvailable) === 1 : false;
   const canReverseSelected = Boolean(
     canReverse &&
@@ -83,6 +89,8 @@ function AllocationLedger({
     reverseSourceSummary &&
     reverseTargetSummary
   );
+  const visibleItems = showAll ? items : items.slice(0, RECENT_ALLOCATION_LIMIT);
+  const hasHiddenLoadedItems = items.length > RECENT_ALLOCATION_LIMIT;
 
   const submitReversal = async (event) => {
     event.preventDefault();
@@ -91,7 +99,7 @@ function AllocationLedger({
       return;
     }
     if (reversalWouldOverdraw) {
-      setReversalError('Reverse is blocked because the returning bucket does not have enough Available balance.');
+      setReversalError('Reverse is blocked because the returning Bucket does not have enough Available Margin.');
       return;
     }
 
@@ -107,11 +115,11 @@ function AllocationLedger({
     } catch (reverseError) {
       const code = String(reverseError?.code || '').toUpperCase();
       if (code === 'REVERSAL_WOULD_OVERDRAW_TARGET') {
-        setReversalError('Reverse is blocked because the returning bucket no longer has enough Available balance.');
+        setReversalError('Reverse is blocked because the returning Bucket no longer has enough Available Margin.');
       } else if (code === 'ALLOCATION_ALREADY_REVERSED') {
         setReversalError('This allocation has already been reversed.');
       } else {
-        setReversalError(reverseError.message || 'The allocation could not be reversed.');
+        setReversalError(reverseError.message || 'The Margin Allocation could not be reversed.');
       }
     } finally {
       setIsReversing(false);
@@ -123,18 +131,18 @@ function AllocationLedger({
       <div className="fund-section-heading">
         <div>
           <span className="fund-kicker">AUDITABLE HISTORY</span>
-          <h2>Allocation Ledger</h2>
-          <p>Posted movements remain immutable. Corrections create a linked reversal.</p>
+          <h2>Margin Allocation Ledger</h2>
+          <p>Posted forecast movements remain immutable. Corrections create a linked reversal.</p>
         </div>
       </div>
 
       <div className="fund-ledger-card">
-        {loading ? <div className="fund-empty-state">Loading allocation history…</div> : null}
+        {loading ? <div className="fund-empty-state">Loading Margin Allocation history…</div> : null}
         {!loading && error ? <div className="fund-inline-error" role="alert">{error}</div> : null}
         {!loading && !error && items.length === 0 ? (
           <div className="fund-empty-state">
-            <strong>No fund allocations yet</strong>
-            <span>Posted allocations and reversals will appear here.</span>
+            <strong>No Margin Allocations yet</strong>
+            <span>Posted forecast allocations and reversals will appear here.</span>
           </div>
         ) : null}
 
@@ -156,7 +164,7 @@ function AllocationLedger({
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((allocation) => {
+                  {visibleItems.map((allocation) => {
                     const incoming = allocation.target.projectId === projectId;
                     const DirectionIcon = incoming ? ArrowDownLeft : ArrowUpRight;
                     return (
@@ -182,7 +190,7 @@ function AllocationLedger({
             </div>
 
             <div className="fund-ledger-mobile">
-              {items.map((allocation) => {
+              {visibleItems.map((allocation) => {
                 const incoming = allocation.target.projectId === projectId;
                 return (
                   <button key={allocation.id} type="button" className="fund-ledger-mobile-row" onClick={() => setSelected(allocation)}>
@@ -197,16 +205,37 @@ function AllocationLedger({
           </>
         ) : null}
 
-        {hasMore ? (
-          <div className="fund-load-more"><button type="button" className="fund-button secondary" onClick={onLoadMore}>Load more</button></div>
+        {!loading && !error && items.length > 0 && (hasHiddenLoadedItems || hasMore) ? (
+          <div className="fund-ledger-footer">
+            <span>
+              Showing {visibleItems.length}{showAll ? '' : ' most recent'} allocation{visibleItems.length === 1 ? '' : 's'}
+              {hasMore ? ' from the loaded history' : ` of ${items.length}`}
+            </span>
+            <div>
+              {!showAll ? (
+                <button type="button" className="fund-button secondary" onClick={() => setShowAll(true)}>
+                  View all Margin Allocations
+                </button>
+              ) : (
+                <button type="button" className="fund-button ghost" onClick={() => setShowAll(false)}>
+                  Show recent
+                </button>
+              )}
+              {showAll && hasMore ? (
+                <button type="button" className="fund-button secondary" onClick={onLoadMore} disabled={loading}>
+                  Load more
+                </button>
+              ) : null}
+            </div>
+          </div>
         ) : null}
       </div>
 
       <FundDialogShell
         open={Boolean(selected)}
         onClose={isReversing ? () => {} : () => setSelected(null)}
-        title={`Allocation ${selected?.referenceNo || selected?.id || ''}`}
-        description="Ledger detail and reversal relationship"
+        title={`Margin Allocation ${selected?.referenceNo || selected?.id || ''}`}
+        description="Forecast ledger detail and reversal relationship"
         size="wide"
       >
         {selected ? (
@@ -225,8 +254,8 @@ function AllocationLedger({
 
             {canReverse && selected.status === 'POSTED' && !selected.reversalOf ? (
               <form className="fund-reversal-panel" onSubmit={submitReversal}>
-                <div className="fund-section-label"><RotateCcw size={15} /> Reverse allocation</div>
-                <p>This creates the opposite immutable allocation. The original ledger entries are retained.</p>
+                <div className="fund-section-label"><RotateCcw size={15} /> Reverse Margin Allocation</div>
+                <p>This creates the opposite immutable forecast movement. The original ledger entries are retained.</p>
 
                 {previewLoading ? <div className="fund-empty-state small">Loading latest balances…</div> : null}
                 {!previewLoading && reverseSourceSummary && reverseTargetSummary ? (
@@ -245,7 +274,7 @@ function AllocationLedger({
                 ) : null}
 
                 {reversalWouldOverdraw ? (
-                  <div className="fund-form-error" role="alert">Reverse blocked: the returning bucket has only {formatMoney(reverseAvailable)} available.</div>
+                  <div className="fund-form-error" role="alert">Reverse blocked: the returning Bucket has only {formatMoney(reverseAvailable)} of Available Margin.</div>
                 ) : null}
 
                 <div className="fund-field">

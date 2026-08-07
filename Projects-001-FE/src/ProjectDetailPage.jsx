@@ -4,6 +4,7 @@ import {
   ArrowLeftRight,
   Building2,
   Calculator,
+  ChevronRight,
   ClipboardCheck,
   Database,
   Layers3,
@@ -115,7 +116,7 @@ const baseChartTooltipStyle = {
 };
 
 const PROJECT_SECTION_TABS = [
-  { value: 'compare', label: 'Compare / BOQ', icon: Calculator },
+  { value: 'compare', label: 'BOQ Comparison', icon: Calculator },
   { value: 'warehouse', label: 'Warehouse Records', icon: Database },
   { value: 'inspection', label: 'Inspection', icon: ClipboardCheck },
 ];
@@ -426,12 +427,16 @@ function ProjectDetailPage() {
   const [activeProjectSection, setActiveProjectSection] = useState(
     () => (deepLinkInstallmentId || deepLinkTransactionId || deepLinkSource ? 'warehouse' : 'compare')
   );
+  const [activeProjectNavigation, setActiveProjectNavigation] = useState(
+    () => (deepLinkInstallmentId || deepLinkTransactionId || deepLinkSource ? 'warehouse' : 'forecast')
+  );
   const [activeView, setActiveView] = useState('compare');
   const [sheetFilter, setSheetFilter] = useState('ALL');
 
   useEffect(() => {
     if (deepLinkInstallmentId || deepLinkTransactionId || deepLinkSource) {
       setActiveProjectSection('warehouse');
+      setActiveProjectNavigation('warehouse');
     }
   }, [deepLinkInstallmentId, deepLinkSource, deepLinkTransactionId]);
 
@@ -615,19 +620,38 @@ function ProjectDetailPage() {
     shortLabel: shortenLabel(item.label, 18),
     fill: (executionToneStyles[item.tone] || executionToneStyles.neutral).fill,
   }));
+  const projectName = passedProjectName || data.name;
+
+  const scrollToProjectSection = (sectionId, navigation) => {
+    if (navigation) setActiveProjectNavigation(navigation);
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const openProjectSection = (section) => {
+    setActiveProjectSection(section);
+    setActiveProjectNavigation(section);
+    window.requestAnimationFrame(() => scrollToProjectSection('project-workspace-section'));
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      <section
-        style={{
-          borderRadius: '12px',
-          padding: '28px',
-          color: 'var(--text-main)',
-          background: 'var(--card-bg)',
-          border: '1px solid var(--border-color)',
-          boxShadow: 'none',
-        }}
-      >
+      <div className="project-detail-intro">
+        <nav className="project-detail-breadcrumb" aria-label="Breadcrumb">
+          <Link to="/project">Projects</Link>
+          <ChevronRight size={14} aria-hidden="true" />
+          <span aria-current="page">{projectName}</span>
+        </nav>
+
+        <section
+          style={{
+            borderRadius: '12px',
+            padding: '28px',
+            color: 'var(--text-main)',
+            background: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            boxShadow: 'none',
+          }}
+        >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div
             style={{
@@ -649,7 +673,7 @@ function ProjectDetailPage() {
 
           <div>
             <h1 style={{ fontSize: '34px', lineHeight: 1.12, marginBottom: '8px' }}>
-              {passedProjectName || data.name}
+              {projectName}
             </h1>
             <p style={{ maxWidth: '760px', fontSize: '15px', lineHeight: 1.7, color: 'var(--text-muted)' }}>
               {isOperations
@@ -754,40 +778,64 @@ function ProjectDetailPage() {
             </div>
           ) : null}
         </div>
-      </section>
+        </section>
+      </div>
 
-      <ProjectFundsWorkspace
-        project={data}
-        projectedMargin={compareSummary.totalVariance}
-        canMutate={canMutateFunds}
-        initialAction={fundAction}
-      />
+      {!isOperations ? (
+        <nav className="project-detail-section-nav" aria-label="Project detail navigation">
+          <button
+            type="button"
+            className={activeProjectNavigation === 'forecast' ? 'active' : ''}
+            onClick={() => scrollToProjectSection('project-forecast-section', 'forecast')}
+            aria-pressed={activeProjectNavigation === 'forecast'}
+          >
+            <Layers3 size={16} /> Forecast Margin
+          </button>
+          <button
+            type="button"
+            className={activeProjectNavigation === 'cashflow' ? 'active' : ''}
+            onClick={() => scrollToProjectSection('project-cashflow-section', 'cashflow')}
+            aria-pressed={activeProjectNavigation === 'cashflow'}
+          >
+            <Wallet size={16} /> Actual Cashflow
+          </button>
+          {PROJECT_SECTION_TABS.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeProjectNavigation === tab.value;
+            return (
+              <button
+                key={tab.value}
+                type="button"
+                className={isActive ? 'active' : ''}
+                onClick={() => openProjectSection(tab.value)}
+                aria-pressed={isActive}
+              >
+                <Icon size={16} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </nav>
+      ) : null}
 
-      <ProjectCashflowCards
-        projectId={projectId}
-        rows={projectInputRequestRows}
-        loading={projectCashflowLoading}
-        error={projectCashflowError}
-      />
+      <div id="project-forecast-section" className="project-detail-anchor-section">
+        <ProjectFundsWorkspace
+          project={data}
+          canMutate={canMutateFunds}
+          initialAction={fundAction}
+        />
+      </div>
 
-      {!isOperations ? <nav className="project-detail-local-tabs" aria-label="Project detail sections">
-        {PROJECT_SECTION_TABS.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeProjectSection === tab.value;
-          return (
-            <button
-              key={tab.value}
-              type="button"
-              className={isActive ? 'active' : ''}
-              onClick={() => setActiveProjectSection(tab.value)}
-              aria-pressed={isActive}
-            >
-              <Icon size={16} />
-              {tab.label}
-            </button>
-          );
-        })}
-      </nav> : null}
+      <div id="project-cashflow-section" className="project-detail-anchor-section">
+        <ProjectCashflowCards
+          projectId={projectId}
+          rows={projectInputRequestRows}
+          loading={projectCashflowLoading}
+          error={projectCashflowError}
+        />
+      </div>
+
+      <div id="project-workspace-section" className="project-detail-anchor-section">
 
       {!isOperations && activeProjectSection === 'compare' ? (
         <>
@@ -837,8 +885,8 @@ function ProjectDetailPage() {
               value={formatCurrency(compareSummary.totalVariance)}
               subtext={
                 compareSummary.marginPercent == null
-                  ? 'Estimate only; this is not cash available to allocate.'
-                  : `Estimate · Margin ${formatPercent(compareSummary.marginPercent)} from Customer BOQ; not allocatable cash.`
+                  ? 'Forecast estimate available for allocation; this is not actual cash.'
+                  : `Estimate · Margin ${formatPercent(compareSummary.marginPercent)} from Customer BOQ; available for forecast allocation, not actual cash.`
               }
               tone={compareTone}
             />
@@ -1082,8 +1130,9 @@ function ProjectDetailPage() {
       ) : null}
 
       {!isOperations && activeProjectSection === 'inspection' ? (
-        <InspectionWorkspace projectId={projectId} projectName={passedProjectName || data.name} />
+        <InspectionWorkspace projectId={projectId} projectName={projectName} />
       ) : null}
+      </div>
     </div>
   );
 }

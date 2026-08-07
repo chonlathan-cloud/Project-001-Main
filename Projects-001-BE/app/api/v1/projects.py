@@ -40,6 +40,7 @@ from app.schemas.boq_schema import (
     UpdateProjectRequest,
 )
 from app.schemas.responses import StandardResponse
+from app.services.boq_margin_service import projected_boq_totals
 from app.services.boq_sync_job_service import (
     create_boq_sync_job,
     get_boq_sync_job,
@@ -735,14 +736,9 @@ async def get_project_boq(
         compare_tree = _build_compare_tree(customer_tree, subcontractor_tree)
         wbs_summary = [_to_wbs_summary_item(node) for node in compare_tree]
 
-        customer_total_budget = sum(
-            _budget_value(node, "display_total_budget", "total_budget")
-            for node in customer_tree
-        )
-        subcontractor_total_budget = sum(
-            _budget_value(node, "display_total_budget", "total_budget")
-            for node in subcontractor_tree
-        )
+        boq_totals = projected_boq_totals(all_items)
+        customer_total_budget = float(boq_totals.customer_total)
+        subcontractor_total_budget = float(boq_totals.subcontractor_total)
         total_variance = customer_total_budget - subcontractor_total_budget
         compare_counts = _count_compare_statuses(compare_tree)
         sheet_names = sorted(

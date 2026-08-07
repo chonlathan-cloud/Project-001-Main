@@ -138,7 +138,7 @@ export default function ProjectCashflowCards({
           </span>
           <h2 id="project-cashflow-title">ภาพรวมรับ–จ่ายของโครงการ</h2>
         </div>
-        <p>ยอดรอตรวจสอบจะแสดงเป็นจำนวนรายการ และยังไม่นำมารวมกับยอดเงินจริง</p>
+        <p>Actual Cashflow แสดงแยกจาก Forecast Margin Allocation และทุกสถานะจะไม่เปลี่ยน Available Margin to Allocate</p>
       </div>
 
       {loading ? <ProjectCashflowLoading /> : null}

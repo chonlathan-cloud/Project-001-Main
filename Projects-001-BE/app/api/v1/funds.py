@@ -49,7 +49,7 @@ async def require_fund_owner(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "code": "FORBIDDEN",
-                "message": "Only the Owner can mutate Project funds.",
+                "message": "Only the Owner can mutate Forecast Margin Allocations.",
             },
         )
     return user
@@ -61,7 +61,7 @@ def _require_mutations_enabled() -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "code": "FUND_ALLOCATION_DISABLED",
-                "message": "Fund allocation mutations are disabled for this environment.",
+                "message": "Forecast Margin Allocation mutations are disabled for this environment.",
             },
         )
 
@@ -74,7 +74,7 @@ def _raise_domain_error(
     allocation_id: UUID | None = None,
 ) -> None:
     rejection_event = {
-        "INSUFFICIENT_AVAILABLE_FUNDS": "fund_allocation.rejected_insufficient_funds",
+        "INSUFFICIENT_AVAILABLE_MARGIN": "fund_allocation.rejected_insufficient_margin",
         "STALE_FUND_BALANCE": "fund_allocation.rejected_stale_balance",
         "REVERSAL_WOULD_OVERDRAW_TARGET": "fund_allocation.rejected_reversal_overdraw",
     }.get(error.code, "fund_allocation.rejected")
@@ -258,7 +258,7 @@ async def set_project_fund_opening_balance(
         log_event(
             logger,
             logging.INFO,
-            "operations_bucket.opening_balance_set",
+            "operations_bucket.opening_forecast_balance_set",
             actor=actor,
             bucket_id=str(summary.bucket_id),
             project_id=str(project_id),

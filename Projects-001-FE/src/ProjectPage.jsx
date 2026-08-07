@@ -719,7 +719,7 @@ const ProjectPage = () => {
           <div className="project-page-heading">
             <div>
               <h1 style={{ fontSize: '32px', fontWeight: 'bold', color: '#1a1a1a', marginBottom: '4px' }}>Projects</h1>
-              <p style={{ color: '#888', fontSize: '14px' }}>Manage Company Funds separately from active construction work.</p>
+              <p style={{ color: '#888', fontSize: '14px' }}>Plan Company Operations forecast margin separately from active construction work.</p>
             </div>
             {canMutateProjects ? (
               <button

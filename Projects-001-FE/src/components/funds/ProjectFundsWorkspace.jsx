@@ -2,9 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowLeftRight,
+  ArrowUpFromLine,
   BadgeDollarSign,
   CalendarRange,
-  CircleDollarSign,
   Landmark,
   LockKeyhole,
   ShieldAlert,
@@ -24,6 +24,22 @@ import FundOpeningBalanceDialog from './FundOpeningBalanceDialog';
 import { formatMoney, isPositiveMoney } from './fundMoney';
 import './funds.css';
 
+const summaryTimeFormatter = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+function formatSummaryTime(value) {
+  if (!value) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : summaryTimeFormatter.format(parsed);
+}
+
+function toDisplayNumber(value) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function SummaryMetric({ icon: Icon, label, value, badge, description, tone = 'neutral', action }) {
   const iconElement = React.createElement(Icon, { size: 19 });
   return (
@@ -42,7 +58,7 @@ function SummaryMetric({ icon: Icon, label, value, badge, description, tone = 'n
   );
 }
 
-function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = false, initialAction = '' }) {
+function ProjectFundsWorkspace({ project, canMutate = false, initialAction = '' }) {
   const projectId = project?.projectId || project?.id || '';
   const isOperations = Boolean(project?.isSystemOperations || project?.systemKey === 'OPERATIONS');
   const [summary, setSummary] = useState(null);
@@ -57,7 +73,8 @@ function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = 
   const [dialogDirection, setDialogDirection] = useState('');
   const [openingDialogOpen, setOpeningDialogOpen] = useState(false);
   const initialActionHandled = useRef(false);
-  const mutationsAllowed = canMutate && summary?.mutationsEnabled !== false;
+  const featureDisabled = summary?.mutationsEnabled === false;
+  const mutationsAllowed = canMutate && !featureDisabled;
 
   const loadFunds = useCallback(async () => {
     if (!projectId) return;
@@ -78,8 +95,8 @@ function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = 
       setSummary(null);
       setSummaryError(
         summaryResult.reason?.code === 'NOT_FOUND'
-          ? 'Fund allocation is not configured for this environment yet.'
-          : summaryResult.reason?.message || 'Unable to load the fund summary.'
+          ? 'Forecast Margin Allocation is not configured for this environment yet.'
+          : summaryResult.reason?.message || 'Unable to load the forecast margin summary.'
       );
     }
 
@@ -94,8 +111,8 @@ function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = 
       setAllocations([]);
       setLedgerError(
         ledgerResult.reason?.code === 'NOT_FOUND'
-          ? 'Allocation history will be available after the fund service is enabled.'
-          : ledgerResult.reason?.message || 'Unable to load allocation history.'
+          ? 'Margin Allocation history will be available after the service is enabled.'
+          : ledgerResult.reason?.message || 'Unable to load Margin Allocation history.'
       );
     }
 
@@ -111,9 +128,13 @@ function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = 
     if (initialActionHandled.current || summaryLoading || !initialAction || !mutationsAllowed) return;
     initialActionHandled.current = true;
     if (initialAction === 'receive') setDialogDirection('incoming');
-    else if (initialAction === 'opening') setOpeningDialogOpen(true);
-    else if (initialAction === 'allocate') setDialogDirection('outgoing');
-  }, [initialAction, mutationsAllowed, summaryLoading]);
+    else if (initialAction === 'opening' && isOperations && summary?.openingForecastBalanceSet === false) setOpeningDialogOpen(true);
+    else if (
+      initialAction === 'allocate' &&
+      (!isOperations || summary?.openingForecastBalanceSet !== false) &&
+      isPositiveMoney(summary?.availableMarginToAllocate)
+    ) setDialogDirection('outgoing');
+  }, [initialAction, isOperations, mutationsAllowed, summary, summaryLoading]);
 
   const loadMore = async () => {
     if (!nextCursor || ledgerLoading) return;
@@ -130,10 +151,24 @@ function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = 
     }
   };
 
-  const available = summary?.availableToAllocate || '0.00';
-  const fundingDeficit = summary?.fundingDeficit || '0.00';
-  const openingBalanceRequired = isOperations && summary && summary.openingBalanceSet === false;
-  const canAllocate = mutationsAllowed && isPositiveMoney(available);
+  const available = summary?.availableMarginToAllocate || '0.00';
+  const forecastDeficit = summary?.forecastDeficit || '0.00';
+  const openingForecastRequired = isOperations && summary && summary.openingForecastBalanceSet === false;
+  const canAllocate = mutationsAllowed && !openingForecastRequired && isPositiveMoney(available);
+  const forecastBase = isOperations ? summary?.openingForecastBalance : summary?.projectedBoqMargin;
+  const forecastCapacity = Math.max(
+    0,
+    toDisplayNumber(forecastBase) +
+      toDisplayNumber(summary?.forecastAllocatedIn) -
+      toDisplayNumber(summary?.forecastReserve)
+  );
+  const allocatedPercent = forecastCapacity > 0
+    ? Math.max(0, (toDisplayNumber(summary?.forecastAllocatedOut) / forecastCapacity) * 100)
+    : 0;
+  const remainingPercent = forecastCapacity > 0
+    ? Math.max(0, (toDisplayNumber(available) / forecastCapacity) * 100)
+    : 0;
+  const progressPercent = Math.min(100, allocatedPercent);
 
   const allocateButton = (
     <button
@@ -142,7 +177,7 @@ function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = 
       onClick={() => setDialogDirection('outgoing')}
       disabled={!canAllocate}
     >
-      <ArrowLeftRight size={16} /> Allocate funds
+      <ArrowLeftRight size={16} /> Allocate Margin
     </button>
   );
 
@@ -150,13 +185,17 @@ function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = 
     <section className="project-funds-workspace" aria-labelledby="project-funds-title">
       <div className="fund-section-heading">
         <div>
-          <span className="fund-kicker">VIRTUAL FUND BUCKET</span>
-          <h2 id="project-funds-title">{isOperations ? 'Company Funds' : 'Project Funds'}</h2>
+          <span className="fund-kicker">FORECAST MARGIN BUCKET</span>
+          <h2 id="project-funds-title">{isOperations ? 'Company Operations' : 'Forecast Margin'}</h2>
           <p>{isOperations
-            ? 'Company-wide operating funds, commitments, and immutable allocation history.'
-            : 'Projected BOQ margin is kept separate from cash that can actually be allocated.'}</p>
+            ? 'Company-wide operating expenses and forecast margin allocation history.'
+            : 'Forecast margin from BOQ; this is not actual cash.'}</p>
         </div>
-        {!mutationsAllowed ? <span className="fund-read-only"><LockKeyhole size={14} /> Read only — Owner permission or feature activation is required</span> : null}
+        <div className="fund-heading-meta">
+          {summary?.calculatedAt ? <span className="fund-calculated-at">Updated {formatSummaryTime(summary.calculatedAt)}</span> : null}
+          {!canMutate ? <span className="fund-read-only"><LockKeyhole size={14} /> Read only — Owner permission is required</span> : null}
+          {canMutate && featureDisabled ? <span className="fund-read-only"><LockKeyhole size={14} /> Forecast Margin Allocation is temporarily disabled</span> : null}
+        </div>
       </div>
 
       {summaryLoading ? (
@@ -168,7 +207,7 @@ function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = 
       {!summaryLoading && summaryError ? (
         <div className="fund-configuration-state" role="status">
           <ShieldAlert size={21} />
-          <div><strong>Project fund data is unavailable</strong><span>{summaryError}</span></div>
+          <div><strong>Forecast margin data is unavailable</strong><span>{summaryError}</span></div>
           <button type="button" className="fund-button secondary" onClick={loadFunds}>Try again</button>
         </div>
       ) : null}
@@ -180,82 +219,102 @@ function ProjectFundsWorkspace({ project, projectedMargin = '0.00', canMutate = 
               <SummaryMetric
                 icon={BadgeDollarSign}
                 label="Projected BOQ Margin"
-                value={formatMoney(summary.projectedBoqMargin || projectedMargin)}
+                value={formatMoney(summary.projectedBoqMargin)}
                 badge="Estimate"
-                description="For planning purposes; this is not cash available to allocate."
+                description="Forecast margin from BOQ; this is not actual cash."
               />
             ) : null}
 
             <SummaryMetric
               icon={WalletCards}
-              label="Available to Allocate"
+              label="Available Margin to Allocate"
               value={formatMoney(available)}
-              badge="Available"
-              tone={isPositiveMoney(fundingDeficit) ? 'danger' : 'positive'}
+              badge="Available Margin"
+              tone={isPositiveMoney(forecastDeficit) ? 'danger' : 'positive'}
               description={isPositiveMoney(available)
-                ? 'Calculated from paid cash, commitments, reserves, and posted allocations.'
-                : 'No funds are currently available to allocate.'}
+                ? 'Forecast base plus Allocated In, less Allocated Out and Forecast Reserve.'
+                : 'No forecast margin is currently available to allocate.'}
               action={mutationsAllowed ? allocateButton : null}
             />
 
             {isOperations ? (
               <>
                 <SummaryMetric
-                  icon={Landmark}
-                  label="Approved — Awaiting payment"
-                  value={formatMoney(summary.approvedExpenseCommitment)}
-                  badge="Committed"
-                  description="Approved operating expenses that have not been paid."
-                  tone="warning"
+                  icon={ArrowDownToLine}
+                  label="Forecast Allocated In"
+                  value={formatMoney(summary.forecastAllocatedIn)}
+                  badge="Forecast"
+                  description="Margin received from other Project Buckets."
                 />
                 <SummaryMetric
-                  icon={CircleDollarSign}
-                  label="Paid This Month"
-                  value={summary.paidExpenseThisMonth ? formatMoney(summary.paidExpenseThisMonth) : 'Not available'}
-                  badge={summary.paidExpenseThisMonthCount == null ? 'Monthly' : `${summary.paidExpenseThisMonthCount} items`}
-                  description="Paid Company Operations expenses in the current month."
+                  icon={ArrowUpFromLine}
+                  label="Forecast Allocated Out"
+                  value={formatMoney(summary.forecastAllocatedOut)}
+                  badge="Forecast"
+                  description="Margin allocated to other Project Buckets."
                 />
               </>
             ) : null}
           </div>
 
-          {isPositiveMoney(fundingDeficit) ? (
+          {isPositiveMoney(forecastDeficit) ? (
             <div className="fund-deficit-alert" role="alert">
               <ShieldAlert size={19} />
-              <div><strong>Funding Deficit {formatMoney(fundingDeficit)}</strong><span>Amount required to cover current commitments. Allocation is disabled.</span></div>
+              <div><strong>Forecast Deficit {formatMoney(forecastDeficit)}</strong><span>Forecast margin is below the amount already allocated. Further outgoing allocation is disabled.</span></div>
             </div>
           ) : null}
 
-          <div className="fund-formula-strip" aria-label="Fund balance calculation">
-            <div><span>Paid income</span><strong>{formatMoney(summary.paidIncome)}</strong></div>
-            <div><span>Allocated in</span><strong>{formatMoney(summary.allocatedIn)}</strong></div>
-            <div><span>Paid expense</span><strong>{formatMoney(summary.paidExpense)}</strong></div>
-            <div><span>Approved commitments</span><strong>{formatMoney(summary.approvedExpenseCommitment)}</strong></div>
-            <div><span>Allocated out</span><strong>{formatMoney(summary.allocatedOut)}</strong></div>
-            <div><span>Protected reserve</span><strong>{formatMoney(summary.protectedReserve)}</strong></div>
+          <div className="fund-formula-strip" aria-label="Available Margin equals forecast base plus allocated in, less allocated out and forecast reserve">
+            <div><span>{isOperations ? 'Opening Forecast Balance' : 'Projected BOQ Margin'}</span><strong>{formatMoney(forecastBase)}</strong></div>
+            <div><span>+ Forecast Allocated In</span><strong>{formatMoney(summary.forecastAllocatedIn)}</strong></div>
+            <div><span>− Forecast Allocated Out</span><strong>{formatMoney(summary.forecastAllocatedOut)}</strong></div>
+            <div><span>− Forecast Reserve</span><strong>{formatMoney(summary.forecastReserve)}</strong></div>
+            <div className="fund-formula-result"><span>= Available Margin</span><strong>{formatMoney(available)}</strong></div>
           </div>
 
-          {openingBalanceRequired ? (
+          {forecastCapacity > 0 ? (
+            <div className="fund-allocation-progress">
+              <div className="fund-allocation-progress-heading">
+                <div>
+                  <strong>Forecast allocation progress</strong>
+                  <span>Actual cashflow is excluded from this calculation.</span>
+                </div>
+                <strong>{allocatedPercent.toFixed(1)}% allocated · {remainingPercent.toFixed(1)}% remaining</strong>
+              </div>
+              <div
+                className="fund-allocation-progress-track"
+                role="progressbar"
+                aria-label="Forecast margin allocated"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={Math.round(progressPercent)}
+              >
+                <span style={{ width: `${progressPercent}%` }} />
+              </div>
+            </div>
+          ) : null}
+
+          {openingForecastRequired ? (
             <div className="fund-first-use-state">
               <div className="fund-first-use-icon"><Landmark size={24} /></div>
               <div>
-                <strong>No funds are available in Company Operations yet.</strong>
-                <span>The Owner can activate the one-time opening balance or receive funds from an active Project.</span>
+                <strong>No forecast margin is available in Company Operations yet.</strong>
+                <span>The Owner can confirm the one-time Opening Forecast Balance or receive Margin from an active Project.</span>
               </div>
               {mutationsAllowed ? (
                 <div className="fund-first-use-actions">
-                  <button type="button" className="fund-button primary" onClick={() => setOpeningDialogOpen(true)}>Set opening balance</button>
-                  <button type="button" className="fund-button secondary" onClick={() => setDialogDirection('incoming')}><ArrowDownToLine size={16} /> Receive from Project</button>
+                  <button type="button" className="fund-button primary" onClick={() => setOpeningDialogOpen(true)}>Set Opening Forecast Balance</button>
+                  <button type="button" className="fund-button secondary" onClick={() => setDialogDirection('incoming')}><ArrowDownToLine size={16} /> Receive Margin from Project</button>
                 </div>
               ) : null}
             </div>
           ) : null}
 
-          {isOperations && summary.openingBalanceSet === true ? (
+          {isOperations && summary.openingForecastBalanceSet === true ? (
             <div className="fund-monthly-rollforward">
-              <div><CalendarRange size={18} /><span>Balance start</span><strong>{summary.balanceStartDate || '-'}</strong></div>
-              <div><span>Monthly opening</span><strong>{summary.monthlyOpening ? formatMoney(summary.monthlyOpening) : '—'}</strong></div>
-              <div><span>Current closing</span><strong>{summary.monthlyClosing ? formatMoney(summary.monthlyClosing) : '—'}</strong></div>
+              <div><CalendarRange size={18} /><span>Forecast start</span><strong>{summary.balanceStartDate || '-'}</strong></div>
+              <div><span>Monthly Forecast Opening</span><strong>{summary.monthlyForecastOpening ? formatMoney(summary.monthlyForecastOpening) : '—'}</strong></div>
+              <div><span>Current Forecast Closing</span><strong>{summary.monthlyForecastClosing ? formatMoney(summary.monthlyForecastClosing) : '—'}</strong></div>
             </div>
           ) : null}
         </>

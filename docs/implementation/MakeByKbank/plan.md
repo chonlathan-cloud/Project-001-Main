@@ -1,24 +1,24 @@
 # Default Company Operations — Product & UX Plan
 
-> Approved concept สำหรับ Default Operations System Project และประสบการณ์ใช้งานแบบ Project Bucket
+> Approved revised concept สำหรับ Default Operations System Project และประสบการณ์ใช้งานแบบ Forecast Margin Bucket
 
 | รายการ | ค่า |
 |---|---|
-| สถานะ | Approved concept — implementation not started |
-| วันที่อัปเดต | 2026-08-06 |
+| สถานะ | Approved revised baseline — implementation alignment required |
+| วันที่อัปเดต | 2026-08-07 |
 | Default display name | `Company Operations` |
 | Thai description | `ค่าใช้จ่ายส่วนกลางของบริษัท` |
 | System identifier | `OPERATIONS` |
 | Mutation role | `owner` เท่านั้น |
-| Initial balance owner | Owner เป็นผู้ระบุและยืนยันในระบบ |
+| Initial forecast owner | Owner เป็นผู้ระบุและยืนยัน Opening Forecast Balance ในระบบ |
 | Balance start rule | วันที่ 1 ของเดือนที่เลือกเริ่มใช้งาน |
 | Related implementation plan | [actionplan.md](actionplan.md) |
 
 ## 1. Product Concept
 
-`Company Operations` คือ “กระเป๋ากลางของบริษัท” สำหรับรับเงินที่จัดสรรมาจาก Project และรองรับรายจ่ายส่วนกลาง เช่น เงินเดือน ค่าเช่า Software ค่าใช้จ่ายสำนักงาน ภาษี และค่าใช้จ่ายบริหาร
+`Company Operations` คือ “กระเป๋า Forecast กลางของบริษัท” สำหรับรับ Margin ที่จัดสรรมาจาก Project และวางแผนงบดำเนินงานส่วนกลาง เช่น เงินเดือน ค่าเช่า Software ค่าใช้จ่ายสำนักงาน ภาษี และค่าใช้จ่ายบริหาร
 
-Operations อยู่ในระบบ Projects เพื่อใช้ flow รายรับ–รายจ่ายและสิทธิ์เดิมร่วมกัน แต่ไม่ถือเป็น Construction Project และต้องไม่แสดงข้อมูล BOQ หรือความคืบหน้างาน
+Forecast Margin Allocation เป็นการบริหารประมาณการ ไม่ใช่เงินสดจริงและไม่ผูกกับสถานะ `PENDING_ADMIN`, `APPROVED` หรือ `PAID` ส่วนรายรับ–รายจ่ายจริงยังคงแสดงเป็น Cashflow แยกต่างหาก Operations ไม่ถือเป็น Construction Project และต้องไม่แสดงข้อมูล BOQ หรือความคืบหน้างาน
 
 ## 2. Default Operations Rules
 
@@ -30,10 +30,10 @@ Operations อยู่ในระบบ Projects เพื่อใช้ flow
 6. Operations ลบ, Archive หรือเปลี่ยนเป็น Construction Project ไม่ได้
 7. Operations ไม่รวมใน Active Construction Project count, Project Health, Progress, Risk และ BOQ KPI
 8. Project ใหม่ทุก Project ต้องมี Fund Bucket ของตัวเอง แต่จะไม่สร้าง Operations เพิ่ม
-9. Owner เป็นผู้ระบุ Initial Opening Balance ในระบบเพียงครั้งแรก
+9. Owner เป็นผู้ระบุ Initial Opening Forecast Balance ในระบบเพียงครั้งแรก เพราะ Operations ไม่มี BOQ Margin
 10. Accounting/Admin เตรียมและตรวจตัวเลข ส่วน Owner ตรวจและยืนยันขั้นสุดท้าย
 11. Balance Start Date ต้องเป็นวันที่ 1 ของเดือนที่ Owner เลือกเริ่มใช้งาน
-12. ตั้งแต่เดือนถัดไป Opening Balance ต้องยกมาจาก Closing Balance เดือนก่อนโดยอัตโนมัติ ห้ามกรอกใหม่ทุกเดือน
+12. ตั้งแต่เดือนถัดไป Monthly Forecast Opening ต้องยกมาจาก Previous Month Forecast Closing โดยอัตโนมัติ ห้ามกรอกใหม่ทุกเดือน
 13. Company Operations เป็น Internal-only และไม่เกี่ยวข้องกับ Subcontractor ทุกกรณี
 
 ## 3. Information Architecture
@@ -48,11 +48,11 @@ Company Funds
 │ Company Operations        [System Bucket] │
 │ ค่าใช้จ่ายส่วนกลางของบริษัท               │
 │                                           │
-│ Available              ฿500,000           │
-│ รอจ่าย                 ฿120,000           │
-│ จ่ายเดือนนี้            ฿85,000           │
+│ Available Margin       ฿500,000           │
+│ Allocated In           ฿200,000           │
+│ Allocated Out           ฿50,000           │
 │                                           │
-│ [เปิดดู]       [จัดสรรเงิน]               │
+│ [เปิดดู]       [จัดสรร Margin]            │
 └───────────────────────────────────────────┘
 
 Active Construction Projects
@@ -65,9 +65,9 @@ Active Construction Projects
 
 - ปักหมุด Operations ไว้บนสุดในส่วน `Company Funds`
 - แสดง badge `System Bucket`
-- Owner เห็นปุ่ม `จัดสรรเงิน`
+- Owner เห็นปุ่ม `จัดสรร Margin`
 - Admin เห็นข้อมูลแบบ read-only พร้อม badge `Read only` และไม่แสดง mutation controls
-- ถ้ามี Funding Deficit ให้แสดงจำนวนและสถานะอย่างชัดเจน โดยไม่ใช้สีเพียงอย่างเดียว
+- ถ้ามี Forecast Deficit ให้แสดงจำนวนและสถานะอย่างชัดเจน โดยไม่ใช้สีเพียงอย่างเดียว
 - Operations ไม่ถูกค้นหาหรือกรองปะปนกับ Construction status โดยไม่ตั้งใจ
 
 ## 4. Company Operations Detail Page
@@ -79,17 +79,16 @@ Company Operations                         [System Bucket]
 ค่าใช้จ่ายส่วนกลางของบริษัท
 
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│ Available       │ │ Approved        │ │ Paid This Month │
-│ ฿500,000        │ │ ฿120,000        │ │ ฿85,000         │
-│ [จัดสรรเงิน]    │ │ รอจ่าย          │ │ 8 รายการ        │
+│ Available Margin│ │ Allocated In    │ │ Allocated Out   │
+│ ฿500,000        │ │ ฿200,000        │ │ ฿50,000         │
+│ [จัดสรร Margin] │ │ Forecast        │ │ Forecast        │
 └─────────────────┘ └─────────────────┘ └─────────────────┘
 
-[ภาพรวม] [รายจ่าย] [การจัดสรรเงิน]
+[ภาพรวม] [รายจ่ายจริง] [การจัดสรร Margin]
 
 รายการล่าสุด
 SENA Park → Company Operations      +฿200,000
-ค่าเช่า Software                    −฿12,000
-ค่าใช้จ่ายสำนักงาน                  −฿8,500
+Company Operations → Project B      −฿50,000
 ```
 
 ### 4.1 Header
@@ -102,16 +101,16 @@ SENA Park → Company Operations      +฿200,000
 
 ### 4.2 Summary Cards
 
-1. `Available to Allocate`
-   - ยอดที่สามารถจัดสรรออกได้จริง
-   - Owner มีปุ่ม `จัดสรรเงิน`
+1. `Available Margin to Allocate`
+   - Forecast Margin ที่ยังสามารถจัดสรรออกได้
+   - Owner มีปุ่ม `จัดสรร Margin`
    - ถ้ายอดเป็น 0 ปุ่ม disabled พร้อมข้อความอธิบาย
-2. `Approved — รอจ่าย`
-   - Approved Expense Commitments ที่ยังไม่ `PAID`
-3. `Paid This Month — จ่ายเดือนนี้`
-   - รายจ่าย Operations ที่ `PAID` ภายในเดือนปัจจุบัน
+2. `Forecast Allocated In`
+   - Margin ที่ Operations ได้รับจาก Project Buckets
+3. `Forecast Allocated Out`
+   - Margin ที่ Operations จัดสรรกลับไปยัง Project Buckets
 
-อาจเพิ่ม `Allocated In/Out` เป็น secondary metrics เมื่อมีข้อมูลเพียงพอ แต่ไม่ควรทำให้ summary หลักแน่นเกินไป
+Approved Commitments และ Paid This Month อาจแสดงเป็น secondary Cashflow metrics แต่ต้องระบุว่าเป็น actual activity และไม่มีผลต่อ Available Margin
 
 ### 4.3 Tabs
 
@@ -119,17 +118,17 @@ SENA Park → Company Operations      +฿200,000
 
 - Summary cards
 - รายการรายจ่ายล่าสุด
-- Allocation ล่าสุด
-- Funding Deficit warning ถ้ามี
+- Margin Allocation ล่าสุด
+- Forecast Deficit warning ถ้ามี
 
-#### รายจ่าย
+#### รายจ่ายจริง
 
 - แสดง Input Requests ที่ผูกกับ Operations
 - แยก Pending, Approved และ Paid
 - ใช้ approval/payment flow ปัจจุบัน
-- Allocation ไม่ถูกแสดงเป็น Income/Expense
+- Margin Allocation ไม่ถูกแสดงเป็น Income/Expense และสถานะของรายการเหล่านี้ไม่เปลี่ยน Available Margin
 
-#### การจัดสรรเงิน
+#### การจัดสรร Margin
 
 - Allocation In และ Allocation Out
 - From, To, Amount, Reason, Reference, Actor และ Timestamp
@@ -151,45 +150,45 @@ SENA Park → Company Operations      +฿200,000
 หาก Operations ยังไม่มียอด:
 
 ```text
-Available to Allocate
+Available Margin to Allocate
 ฿0.00
 
-ยังไม่มีเงินใน Company Operations
+ยังไม่มี Forecast Margin ใน Company Operations
 
-[กำหนดยอดเริ่มต้น]  [รับเงินจาก Project]
+[กำหนด Opening Forecast]  [รับ Margin จาก Project]
 ```
 
-### กำหนดยอดเริ่มต้น
+### กำหนด Opening Forecast Balance
 
-- แสดงเฉพาะ Owner และเฉพาะเมื่อยังไม่มี Initial Opening Balance entry
+- แสดงเฉพาะ Owner และเฉพาะเมื่อยังไม่มี Initial Opening Forecast Balance entry
 - Accounting/Admin เป็นผู้เตรียมและตรวจสอบตัวเลขให้ Owner
 - Owner เป็นผู้กรอก Amount, เลือกเดือนเริ่มต้น และยืนยันขั้นสุดท้ายในระบบ
 - Effective Date ถูกกำหนดเป็นวันที่ 1 ของเดือนที่เลือกโดยอัตโนมัติ
 - ต้องกรอก Reason และแสดง Preview ก่อนยืนยัน
-- แจ้งชัดเจนว่าเป็นยอดเปิดระบบ ไม่ใช่รายการรับเงินจากลูกค้า
-- บันทึกเป็น immutable `OPENING_BALANCE` ledger entry
+- แจ้งชัดเจนว่าเป็น Forecast Budget ตั้งต้น ไม่ใช่เงินสด ยอดธนาคาร หรือรายการรับเงินจากลูกค้า
+- บันทึกเป็น immutable `OPENING_BALANCE` ledger entry ที่มี forecast semantics
 - หากผิดให้ใช้ Adjustment/Reverse ห้ามแก้หรือลบ record เดิม
 
-### Monthly Roll-forward
+### Monthly Forecast Roll-forward
 
-Opening Balance ไม่ใช่ยอดที่ Owner ต้องกรอกทุกเดือน ระบบต้องยกยอดให้อัตโนมัติ:
+Opening Forecast Balance ไม่ใช่ยอดที่ Owner ต้องกรอกทุกเดือน ระบบต้องยกยอดให้อัตโนมัติ:
 
 ```text
-Closing Balance เดือนสิงหาคม
+Forecast Closing Balance เดือนสิงหาคม
             ↓ อัตโนมัติ
-Opening Balance วันที่ 1 กันยายน
+Forecast Opening Balance วันที่ 1 กันยายน
 ```
 
-- Initial Opening Balance กรอกเพียงครั้งแรกตอนเปิดใช้งาน
-- วันที่ 1 ของเดือนถัดไป `Monthly Opening = Previous Month Closing`
+- Initial Opening Forecast Balance กรอกเพียงครั้งแรกตอนเปิดใช้งาน
+- วันที่ 1 ของเดือนถัดไป `Monthly Forecast Opening = Previous Month Forecast Closing`
 - การยกยอดรายเดือนไม่สร้าง Income, Expense หรือ Allocation ใหม่
-- รายการก่อน Balance Start Date ถูกรวมอยู่ใน Initial Opening Balance และต้องไม่ถูกนำมาคำนวณซ้ำ
-- หากต้องแก้ไขยอด ใช้ Adjustment/Reverse พร้อม Audit Trail ไม่แก้ยอดเปิดเดือนโดยตรง
+- Forecast movement ก่อน Balance Start Date ถูกรวมอยู่ใน Initial Opening Forecast Balance และต้องไม่ถูกนำมาคำนวณซ้ำ
+- หากต้องแก้ไขยอด ใช้ Adjustment/Reverse พร้อม Audit Trail ไม่แก้ Monthly Forecast Opening โดยตรง
 
-### รับเงินจาก Project
+### รับ Margin จาก Project
 
 - เปิด Allocation Dialog
-- Source ให้ Owner เลือก Active Project ที่มี Available
+- Source ให้ Owner เลือก Active Project ที่มี Available Margin
 - Target ล็อกเป็น Company Operations
 - แสดงยอดก่อน–หลังทั้งสองฝั่งก่อนยืนยัน
 
@@ -197,7 +196,7 @@ Opening Balance วันที่ 1 กันยายน
 
 ### 6.1 จาก Construction Project
 
-เมื่อ Owner กด `จัดสรรเงิน` จาก Project ทั่วไป:
+เมื่อ Owner กด `จัดสรร Margin` จาก Project ทั่วไป:
 
 ```text
 From: SENA Park
@@ -206,45 +205,46 @@ To:   Company Operations  ← default selection
 
 - Company Operations เป็นปลายทางแรก
 - Owner เปลี่ยนเป็น Active Project อื่นได้
-- จำนวนสูงสุดคือ Available to Allocate ของ Source
-- Projected BOQ Margin ไม่ถูกใช้เป็นเพดาน
+- จำนวนสูงสุดคือ Available Margin to Allocate ของ Source
+- Projected BOQ Margin เป็น forecast base ของ Project และถูกใช้ในสูตรเพดานร่วมกับ Forecast Allocated In/Out และ Forecast Reserve
+- Paid/Approved Income, Expense และ commitment ไม่มีผลต่อเพดานนี้
 
 ### 6.2 จาก Company Operations
 
-เมื่อ Owner กด `จัดสรรเงิน` จาก Operations:
+เมื่อ Owner กด `จัดสรร Margin` จาก Operations:
 
 ```text
 From: Company Operations
 To:   เลือก Active Project
 ```
 
-ใช้สำหรับเติมสภาพคล่องกลับไปยัง Project และอยู่ภายใต้ validation เดียวกัน
+ใช้สำหรับจัดสรร forecast capacity กลับไปช่วย Project และอยู่ภายใต้ validation เดียวกัน ไม่ได้ยืนยันว่ามีการเติมเงินสดจริง
 
 ### 6.3 Dialog Fields
 
 1. From — locked เมื่อเปิดจาก detail page
-2. Available — server-calculated balance
+2. Available Margin — server-calculated forecast balance
 3. To — Active destination selector
 4. Amount — numeric/decimal input
 5. `ใช้ยอดสูงสุด`
 6. Reason — required
 7. Before/After Preview
-8. `ยืนยันจัดสรร ฿X`
+8. `ยืนยันจัดสรร Margin ฿X`
 
 ข้อความบังคับ:
 
-> เป็นการจัดสรรเงินภายในระบบ ไม่ได้ทำรายการโอนผ่านธนาคาร
+> เป็นการจัดสรร Margin ที่คาดการณ์ภายในระบบ ไม่ใช่เงินสดจริงและไม่ได้ทำรายการโอนผ่านธนาคาร
 
 ## 7. User Permissions
 
 | Capability | Owner | Admin | Subcontractor |
 |---|---:|---:|---:|
 | เห็น Operations Detail | Yes | Yes | No |
-| เห็น Available/Commitments | Yes | Yes | No |
+| เห็น Available Margin/Forecast Allocation | Yes | Yes | No |
 | เห็น Allocation History | Yes | Yes | No |
-| จัดสรรเงิน | Yes | No | No |
+| จัดสรร Margin | Yes | No | No |
 | Reverse Allocation | Yes | No | No |
-| กำหนด Opening Balance | Yes | No | No |
+| กำหนด Opening Forecast Balance | Yes | No | No |
 | เปลี่ยน display name | Yes | No | No |
 | ลบ/Archive Operations | No | No | No |
 
@@ -255,7 +255,7 @@ Company Operations เป็น Internal-only และไม่มีควา�
 - Subcontractor เห็นเฉพาะ Projects ที่ได้รับมอบหมายให้เข้าไปทำงาน
 - Company Operations ต้องไม่ปรากฏใน Project selector ของ Subcontractor
 - Subcontractor ส่ง Income หรือ Expense เข้า Operations ไม่ได้
-- Subcontractor ไม่เห็นหน้า Operations, Available, Opening Balance, Commitments หรือ Allocation History
+- Subcontractor ไม่เห็นหน้า Operations, Available Margin, Opening Forecast Balance, Commitments หรือ Allocation History
 - ค่าใช้จ่าย Operations ถูกบันทึกผ่าน Internal Input Flow โดยผู้ใช้ภายในที่ได้รับสิทธิ์; V1 ให้ Owner เป็นผู้ mutation และ Admin/Accounting เตรียม–ตรวจข้อมูลแบบ read-only
 - หาก Subcontractor ทำงานให้บริษัท เช่นปรับปรุงสำนักงาน ต้องสร้าง Construction/Internal Work Project จริงและ assign ให้ Subcontractor ห้ามใช้ Company Operations แทน Project
 
@@ -263,17 +263,17 @@ Company Operations เป็น Internal-only และไม่มีควา�
 
 - Loading summary/history
 - Empty Operations
-- Opening Balance required
-- Funding Deficit
-- Available เท่ากับ 0
+- Opening Forecast Balance required
+- Forecast Deficit
+- Available Margin เท่ากับ 0
 - Read-only Admin
 - Feature disabled
 - Operations bucket missing/configuration error
 - Stale balance ระหว่างเปิด Dialog
-- Insufficient funds
+- Insufficient available margin
 - Duplicate submit
 - Allocation success
-- Reverse blocked เพราะ target available ไม่พอ
+- Reverse blocked เพราะ target Available Margin ไม่พอ
 
 หาก Operations record หาย ระบบไม่ควรสร้างใหม่จากหน้า UI แบบเงียบ ๆ เพราะอาจเกิด duplicate ให้แสดง configuration error และใช้ bootstrap/recovery process ที่ตรวจสอบได้
 
@@ -284,12 +284,12 @@ Company Operations เป็น Internal-only และไม่มีควา�
 | Operations title | `Company Operations` |
 | Operations subtitle | `ค่าใช้จ่ายส่วนกลางของบริษัท` |
 | System badge | `System Bucket` |
-| Available card | `Available to Allocate` / `พร้อมจัดสรร` |
-| Zero balance | `ยังไม่มีเงินที่สามารถจัดสรรได้` |
-| Deficit | `ยอดที่ต้องเติมเพื่อรองรับภาระผูกพัน` |
-| Allocation CTA | `จัดสรรเงิน` |
-| Opening CTA | `กำหนดยอดเริ่มต้น` |
-| Internal-only notice | `เป็นการจัดสรรเงินภายในระบบ ไม่ได้ทำรายการโอนผ่านธนาคาร` |
+| Available card | `Available Margin to Allocate` / `Margin พร้อมจัดสรร` |
+| Zero balance | `ยังไม่มี Forecast Margin ที่สามารถจัดสรรได้` |
+| Deficit | `Forecast Margin ต่ำกว่ายอดที่จัดสรรไปแล้ว` |
+| Allocation CTA | `จัดสรร Margin` |
+| Opening CTA | `กำหนด Opening Forecast Balance` |
+| Internal-only notice | `เป็นการจัดสรร Margin ที่คาดการณ์ ไม่ใช่เงินสดจริงและไม่ได้ทำรายการโอนผ่านธนาคาร` |
 | Admin state | `Read only — Owner permission is required` |
 
 ## 10. UX Acceptance Criteria
@@ -297,21 +297,23 @@ Company Operations เป็น Internal-only และไม่มีควา�
 1. Operations อยู่บนสุดในส่วน Company Funds และแยกจาก Construction Projects อย่างชัดเจน
 2. ผู้ใช้เข้าใจจากหน้าแรกว่า Operations คือค่าใช้จ่ายส่วนกลาง ไม่ใช่งานก่อสร้าง
 3. Operations ไม่มี BOQ, Margin หรือ Progress UI
-4. Owner เข้าถึง Allocation ได้ภายในไม่เกินสอง actions จากหน้า Projects
+4. Owner เข้าถึง Margin Allocation ได้ภายในไม่เกินสอง actions จากหน้า Projects
 5. Company Operations ถูกเลือกเป็น destination เริ่มต้นเมื่อจัดสรรจาก Construction Project
 6. Owner เห็น Before/After Preview ก่อนยืนยัน
 7. Admin เห็นข้อมูลครบแต่ไม่มี mutation controls
 8. Subcontractor ไม่เห็นหน้า Operations หรือยอดการเงิน
-9. Empty/Deficit/Error states มีคำแนะนำที่ดำเนินการต่อได้
+9. Empty/Forecast Deficit/Error states มีคำแนะนำที่ดำเนินการต่อได้
 10. ลบ/Archive/สร้าง Operations ซ้ำผ่าน UI ไม่ได้
 11. Mobile และ keyboard flow ใช้งาน Primary/Reverse flow ได้ครบ
-12. Allocation ไม่ถูกนำเสนอว่าเป็น Bank Transfer หรือ Income/Expense
+12. Allocation ถูกนำเสนอว่าเป็น Forecast Margin ไม่ใช่ Bank Transfer, เงินสดจริง หรือ Income/Expense
+13. การเปลี่ยนสถานะ `PENDING_ADMIN`/`APPROVED`/`PAID` ไม่เปลี่ยน Available Margin หรือสถานะปุ่ม
+14. เมื่อ BOQ Margin ลดต่ำกว่ายอดที่จัดสรรไปแล้ว ระบบแสดง Forecast Deficit และไม่แก้ประวัติเดิม
 
 ## 11. Activation Inputs
 
 Product/UX decisions เพียงพอสำหรับเริ่ม implementation แล้ว ข้อมูลต่อไปนี้ให้ระบุในขั้นตอนเปิดใช้งาน ไม่จำเป็นต้องทราบตอนเขียนระบบ:
 
-1. จำนวน Initial Opening Balance ที่ Owner จะกรอก
+1. จำนวน Initial Opening Forecast Balance ที่ Owner จะกรอก
 2. เดือนแรกที่เลือกเปิดใช้งาน โดยระบบใช้วันที่ 1 ของเดือนนั้นเป็น Balance Start Date
 3. หลักฐานหรือ working paper ที่ Accounting/Admin ใช้เตรียมตัวเลข
 4. ช่วง observation บน Demo ก่อน rollout ไป Beta
@@ -320,9 +322,9 @@ Product/UX decisions เพียงพอสำหรับเริ่ม impl
 
 - Display name: `Company Operations`
 - Thai subtitle: `ค่าใช้จ่ายส่วนกลางของบริษัท`
-- Protected Reserve: 0
+- Forecast Reserve: 0
 - Operations เป็น default allocation destination
 - Owner-only mutation และ Admin read-only
-- Accounting/Admin เตรียมตัวเลข และ Owner กรอก/ยืนยัน Initial Opening Balance
-- Monthly Opening Balance ยกมาจาก Previous Month Closing อัตโนมัติ
+- Accounting/Admin เตรียมตัวเลข และ Owner กรอก/ยืนยัน Initial Opening Forecast Balance
+- Monthly Forecast Opening ยกมาจาก Previous Month Forecast Closing อัตโนมัติ
 - Subcontractor ไม่มี Operations visibility และเลือก/ส่งรายการเข้า Operations ไม่ได้
