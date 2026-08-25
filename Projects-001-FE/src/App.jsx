@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Navigate, Outlet, Route, Routes, useLocation }
 import Sidebar from './components/Sidebar'
 import Loading from './components/Loading'
 import WorkspaceTopbar from './components/WorkspaceTopbar'
+import AdminFeedbackProvider from './components/adminFeedback/AdminFeedbackProvider'
 import {
   getStoredAuthUser,
   getStoredSessionToken,
@@ -158,7 +159,7 @@ function ProtectedLayout({
     )
   }
 
-  return (
+  const protectedContent = (
     <>
       <Sidebar
         collapsed={sidebarCollapsed}
@@ -172,6 +173,10 @@ function ProtectedLayout({
       </main>
     </>
   )
+
+  return adminOnly
+    ? <AdminFeedbackProvider>{protectedContent}</AdminFeedbackProvider>
+    : protectedContent
 }
 
 function AppRoutes() {

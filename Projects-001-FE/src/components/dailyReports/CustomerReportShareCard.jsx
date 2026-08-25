@@ -13,6 +13,7 @@ import {
   getDailyReportShareLink,
   updateDailyReportShareLink,
 } from '../../api';
+import { useAdminFeedback } from '../adminFeedback/adminFeedbackContext';
 
 const COPY_FEEDBACK_DURATION_MS = 2400;
 
@@ -30,6 +31,7 @@ export default function CustomerReportShareCard({
   refreshKey = '',
   onNotice,
 }) {
+  const { requestConfirmation } = useAdminFeedback();
   const [shareLink, setShareLink] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -116,6 +118,28 @@ export default function CustomerReportShareCard({
         ? 'Copy failed'
         : 'Copy link';
 
+  const rotateLink = async () => {
+    const confirmation = await requestConfirmation({
+      title: 'Rotate customer report link?',
+      message: 'Every previous copy will stop working immediately. Send the new link to the intended customer group afterward.',
+      confirmLabel: 'Rotate link',
+      cancelLabel: 'Keep current link',
+      tone: 'danger',
+    });
+    if (confirmation.confirmed) await updateLink({ enabled: true, rotate: true });
+  };
+
+  const disableLink = async () => {
+    const confirmation = await requestConfirmation({
+      title: 'Disable customer report link?',
+      message: 'Customers using an existing copy will lose access immediately.',
+      confirmLabel: 'Disable link',
+      cancelLabel: 'Keep enabled',
+      tone: 'danger',
+    });
+    if (confirmation.confirmed) await updateLink({ enabled: false });
+  };
+
   return (
     <section className="dr-card dr-share-card" aria-labelledby="customer-share-title">
       <header>
@@ -175,11 +199,7 @@ export default function CustomerReportShareCard({
                 <button
                   type="button"
                   className="dr-button secondary"
-                  onClick={() => {
-                    if (window.confirm('Rotate this link? Every previous copy will stop working.')) {
-                      updateLink({ enabled: true, rotate: true });
-                    }
-                  }}
+                  onClick={rotateLink}
                   disabled={Boolean(busy)}
                 >
                   {busy === 'rotate' ? <LoaderCircle className="spin" /> : <RefreshCw />} Rotate
@@ -187,11 +207,7 @@ export default function CustomerReportShareCard({
                 <button
                   type="button"
                   className="dr-button danger"
-                  onClick={() => {
-                    if (window.confirm('Disable this customer link now?')) {
-                      updateLink({ enabled: false });
-                    }
-                  }}
+                  onClick={disableLink}
                   disabled={Boolean(busy)}
                 >
                   {busy === 'disable' ? <LoaderCircle className="spin" /> : <Link2Off />} Disable

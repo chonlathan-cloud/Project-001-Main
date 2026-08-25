@@ -1,0 +1,303 @@
+:root {
+  --feedback-success: #2f6b51;
+  --feedback-success-soft: #edf6f1;
+  --feedback-error: #b42318;
+  --feedback-error-soft: #fff0ee;
+  --feedback-warning: #8a641f;
+  --feedback-warning-soft: #fbf4e9;
+  --feedback-info: #3d6787;
+  --feedback-info-soft: #eef5fa;
+}
+
+.admin-toast-region {
+  position: fixed;
+  z-index: 2100;
+  top: max(18px, env(safe-area-inset-top));
+  right: 18px;
+  display: grid;
+  width: min(390px, calc(100vw - 36px));
+  gap: 10px;
+  pointer-events: none;
+}
+
+.admin-feedback-toast {
+  --toast-tone: var(--feedback-info);
+  --toast-soft: var(--feedback-info-soft);
+  position: relative;
+  display: grid;
+  min-height: 76px;
+  grid-template-columns: 34px minmax(0, 1fr) 32px;
+  align-items: start;
+  gap: 11px;
+  overflow: hidden;
+  padding: 14px 10px 14px 14px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--toast-tone);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 16px 42px rgba(47, 46, 44, 0.16);
+  color: var(--text-main);
+  pointer-events: auto;
+  animation: admin-toast-enter 180ms ease-out both;
+}
+
+.admin-feedback-toast.tone-success {
+  --toast-tone: var(--feedback-success);
+  --toast-soft: var(--feedback-success-soft);
+}
+
+.admin-feedback-toast.tone-error {
+  --toast-tone: var(--feedback-error);
+  --toast-soft: var(--feedback-error-soft);
+}
+
+.admin-feedback-toast.tone-warning {
+  --toast-tone: var(--feedback-warning);
+  --toast-soft: var(--feedback-warning-soft);
+}
+
+.admin-feedback-toast-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--toast-soft);
+  color: var(--toast-tone);
+}
+
+.admin-feedback-toast-copy {
+  min-width: 0;
+}
+
+.admin-feedback-toast-tone {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--toast-tone);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.admin-feedback-toast-copy strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.admin-feedback-toast-copy p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.admin-feedback-toast-dismiss,
+.admin-confirmation-close {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.admin-feedback-toast-dismiss:hover,
+.admin-confirmation-close:hover {
+  background: var(--bg-primary);
+  color: var(--text-main);
+}
+
+.admin-feedback-toast-dismiss:focus-visible,
+.admin-confirmation-close:focus-visible,
+.admin-confirmation-actions button:focus-visible,
+.admin-confirmation-input textarea:focus-visible {
+  outline: 3px solid rgba(79, 111, 100, 0.24);
+  outline-offset: 2px;
+}
+
+.admin-feedback-toast-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--toast-tone);
+  transform-origin: left;
+  animation: admin-toast-progress linear forwards;
+  animation-play-state: running;
+}
+
+.admin-feedback-toast.is-paused .admin-feedback-toast-progress {
+  animation-play-state: paused;
+}
+
+.admin-confirmation-backdrop {
+  position: fixed;
+  z-index: 2200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(28, 27, 26, 0.5);
+}
+
+.admin-confirmation-dialog {
+  width: min(440px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--card-bg);
+  box-shadow: 0 24px 70px rgba(28, 27, 26, 0.24);
+  color: var(--text-main);
+}
+
+.admin-confirmation-dialog form {
+  padding: 24px;
+}
+
+.admin-confirmation-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-confirmation-symbol {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--feedback-warning-soft);
+  color: var(--feedback-warning);
+}
+
+.admin-confirmation-dialog.tone-danger .admin-confirmation-symbol {
+  background: var(--feedback-error-soft);
+  color: var(--feedback-error);
+}
+
+.admin-confirmation-copy h2 {
+  margin: 15px 0 0;
+  font-size: 20px;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.admin-confirmation-copy p {
+  margin: 7px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.admin-confirmation-input {
+  display: grid;
+  gap: 7px;
+  margin-top: 18px;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-confirmation-input textarea {
+  min-height: 92px;
+  resize: vertical;
+  padding: 10px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.admin-confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.admin-confirmation-actions button {
+  min-height: 42px;
+  padding: 0 15px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--text-main);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-confirmation-actions button.primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.admin-confirmation-actions button.danger {
+  border-color: var(--feedback-error);
+  background: var(--feedback-error);
+  color: #fff;
+}
+
+.admin-confirmation-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@keyframes admin-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes admin-toast-progress {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+@media (max-width: 600px) {
+  .admin-toast-region {
+    top: max(12px, env(safe-area-inset-top));
+    right: 12px;
+    width: calc(100vw - 24px);
+  }
+
+  .admin-confirmation-backdrop {
+    align-items: end;
+    padding: 12px 12px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .admin-confirmation-dialog form {
+    padding: 20px;
+  }
+
+  .admin-confirmation-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-feedback-toast,
+  .admin-feedback-toast-progress {
+    animation-duration: 1ms !important;
+  }
+}

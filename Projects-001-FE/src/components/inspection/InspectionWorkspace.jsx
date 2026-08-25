@@ -24,6 +24,7 @@ import {
   isSubcontractorUser,
   subscribeToAuthChanges,
 } from '../../auth';
+import { useAdminFeedback } from '../adminFeedback/adminFeedbackContext';
 import InspectionDefectDrawer from './InspectionDefectDrawer';
 import InspectionDefectTable from './InspectionDefectTable';
 import InspectionMap from './InspectionMap';
@@ -88,6 +89,7 @@ function InspectionPlaceholder({ view }) {
 }
 
 export default function InspectionWorkspace({ projectId, projectName }) {
+  const { notify } = useAdminFeedback();
   const [rounds, setRounds] = useState([]);
   const [selectedRoundId, setSelectedRoundId] = useState('');
   const [summary, setSummary] = useState(null);
@@ -326,6 +328,11 @@ export default function InspectionWorkspace({ projectId, projectName }) {
       await loadRounds({ preserveSelection: false });
       setSelectedRoundId(createdRound.id);
       setActiveView('overview');
+      notify({
+        tone: 'success',
+        title: 'Inspection round created',
+        message: `"${createdRound.name || name}" is ready for inspection setup.`,
+      });
     } catch (createError) {
       setError(createError.message || 'Failed to create inspection round.');
     } finally {
@@ -342,6 +349,11 @@ export default function InspectionWorkspace({ projectId, projectName }) {
       const createdZone = await createInspectionZone(projectId, selectedRoundId, payload);
       await loadInspectionData({ preserveZone: false });
       setSelectedZoneId(createdZone.id);
+      notify({
+        tone: 'success',
+        title: 'Inspection zone created',
+        message: 'The new zone is ready for a plan and defect pins.',
+      });
       return createdZone;
     } catch (createError) {
       setMapError(createError.message || 'Failed to create inspection zone.');
@@ -363,6 +375,11 @@ export default function InspectionWorkspace({ projectId, projectName }) {
       formData.append('file', file);
       await uploadInspectionFile(projectId, selectedRoundId, formData);
       await loadInspectionData();
+      notify({
+        tone: 'success',
+        title: 'Inspection plan uploaded',
+        message: 'The zone plan is ready for defect mapping.',
+      });
     } catch (uploadError) {
       setMapError(uploadError.message || 'Failed to upload inspection plan.');
     } finally {
@@ -423,6 +440,11 @@ export default function InspectionWorkspace({ projectId, projectName }) {
       setDraftCoordinate(null);
       await Promise.all([loadInspectionData(), loadSummary()]);
       setSelectedDefectId(createdDefect.id);
+      notify({
+        tone: 'success',
+        title: 'Defect recorded',
+        message: 'The defect and its evidence are now in the inspection register.',
+      });
     } catch (createError) {
       setMapError(createError.message || 'Failed to save inspection defect.');
       if (createdDefect?.id) {
@@ -450,6 +472,11 @@ export default function InspectionWorkspace({ projectId, projectName }) {
         comment,
       });
       await refreshWorkflowData(defect.id);
+      notify({
+        tone: 'success',
+        title: 'Inspection status updated',
+        message: `Defect status changed to ${String(status).replace(/_/g, ' ').toLowerCase()}.`,
+      });
     } catch (statusError) {
       setWorkflowError(statusError.message || 'Failed to update inspection status.');
     } finally {
@@ -487,6 +514,11 @@ export default function InspectionWorkspace({ projectId, projectName }) {
         await uploadInspectionFile(projectId, selectedRoundId, formData);
       }
       await refreshWorkflowData(defect.id);
+      notify({
+        tone: 'success',
+        title: 'After photos uploaded',
+        message: `${files.length} photo${files.length === 1 ? '' : 's'} added to the defect record.`,
+      });
     } catch (uploadError) {
       setWorkflowError(uploadError.message || 'Failed to upload after photos.');
     } finally {
@@ -505,6 +537,11 @@ export default function InspectionWorkspace({ projectId, projectName }) {
         filters: filters || {},
       });
       await loadReportLogs();
+      notify({
+        tone: 'success',
+        title: 'Report activity recorded',
+        message: 'The inspection report log has been updated.',
+      });
     } catch (printError) {
       setReportError(printError.message || 'Failed to log inspection report print.');
       throw printError;

@@ -29,6 +29,7 @@ import Loading from './components/Loading';
 import CircularProgress from './components/CircularProgress';
 import SemiCircleGauge from './components/SemiCircleGauge';
 import CompanyFundsCard from './components/funds/CompanyFundsCard';
+import { useAdminFeedback } from './components/adminFeedback/adminFeedbackContext';
 import { canMutateAdminData, getStoredAuthUser } from './auth';
 
 const INITIAL_PROJECT_FORM = {
@@ -406,11 +407,11 @@ const ExpenseListItem = ({ name, amount, percentage, isUp }) => (
 );
 
 const ProjectPage = () => {
+  const { notify } = useAdminFeedback();
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [flashMessage, setFlashMessage] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState('create');
   const [selectedProject, setSelectedProject] = useState(null);
@@ -524,7 +525,11 @@ const ProjectPage = () => {
           .slice(0, MAX_BATCH_SYNC_TABS)
           .map((tab) => tab.name)
       );
-      setFlashMessage(`Loaded ${tabs.length} workbook tabs for review.`);
+      notify({
+        tone: 'info',
+        title: 'Workbook tabs loaded',
+        message: `${tabs.length} tabs are ready for review.`,
+      });
     } catch (loadTabsError) {
       setAvailableTabs([]);
       setSelectedSheetNames([]);
@@ -560,7 +565,11 @@ const ProjectPage = () => {
       setSelectedProject(createdProject);
       setDrawerMode('sync');
       setSyncResult(null);
-      setFlashMessage(`Project "${createdProject.name}" created successfully.`);
+      notify({
+        tone: 'success',
+        title: 'Project created',
+        message: `"${createdProject.name}" is ready for BOQ setup.`,
+      });
     } catch (createError) {
       setDrawerError(createError.message || 'Failed to create project.');
     } finally {
@@ -578,7 +587,11 @@ const ProjectPage = () => {
     setSelectedProject((current) =>
       current && current.id === projectId ? { ...current, ...updatedProject } : current
     );
-    setFlashMessage(`Project renamed to "${updatedProject.name}".`);
+    notify({
+      tone: 'success',
+      title: 'Project renamed',
+      message: `Project name updated to "${updatedProject.name}".`,
+    });
   };
 
   const handleSyncBoq = async (event) => {
@@ -611,7 +624,11 @@ const ProjectPage = () => {
         sheetNames: selectedSheetNames,
       });
       setSyncResult(result);
-      setFlashMessage(`BOQ batch sync queued for "${selectedProject.name}".`);
+      notify({
+        tone: 'info',
+        title: 'BOQ sync queued',
+        message: `Workbook tabs for "${selectedProject.name}" are being processed.`,
+      });
     } catch (syncError) {
       setIsSyncing(false);
       setDrawerError(syncError.message || 'Failed to sync BOQ tabs.');
@@ -633,7 +650,11 @@ const ProjectPage = () => {
         setSyncResult(nextJob);
         if (!ACTIVE_SYNC_JOB_STATUSES.has(nextJob.status)) {
           setIsSyncing(false);
-          setFlashMessage(nextJob.message || 'BOQ batch sync finished.');
+          notify({
+            tone: nextJob.status === 'COMPLETED' ? 'success' : 'error',
+            title: nextJob.status === 'COMPLETED' ? 'BOQ sync completed' : 'BOQ sync needs attention',
+            message: nextJob.message || 'BOQ batch sync finished.',
+          });
           window.clearInterval(intervalId);
         }
       } catch (jobError) {
@@ -650,7 +671,7 @@ const ProjectPage = () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [syncResult?.job_id, syncResult?.status]);
+  }, [notify, syncResult?.job_id, syncResult?.status]);
 
   const resetFilters = () => {
     setStatusFilter('ALL');
@@ -742,20 +763,6 @@ const ProjectPage = () => {
               </button>
             ) : null}
           </div>
-
-          {flashMessage ? (
-            <div
-              className="card"
-              style={{
-                marginBottom: '20px',
-                backgroundColor: '#eefaf2',
-                color: '#217a45',
-                border: '1px solid #d9f0df',
-              }}
-            >
-              {flashMessage}
-            </div>
-          ) : null}
 
           <CompanyFundsCard
             project={operationsProject}

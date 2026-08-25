@@ -33,6 +33,7 @@ import {
   updateDailyReportDraft,
 } from '../../api';
 import { getStoredAuthUser, isOwnerUser } from '../../auth';
+import { useAdminFeedback } from '../adminFeedback/adminFeedbackContext';
 import { requestSidebarBadgeRefresh } from '../sidebarBadgeEvents';
 import {
   DailyReportNotice,
@@ -55,6 +56,7 @@ function draftFromReport(report) {
 }
 
 export default function DailyReportReviewWorkspace() {
+  const { notify, requestConfirmation } = useAdminFeedback();
   const owner = isOwnerUser(getStoredAuthUser());
   const [reports, setReports] = useState([]);
   const [selectedId, setSelectedId] = useState('');
@@ -75,6 +77,23 @@ export default function DailyReportReviewWorkspace() {
   const [settingsBaseline, setSettingsBaseline] = useState('');
   const [notifications, setNotifications] = useState([]);
   const [notificationsLoading, setNotificationsLoading] = useState(true);
+
+  const handleWorkflowNotice = useCallback((nextNotice) => {
+    if (!nextNotice) {
+      setNotice(null);
+      return;
+    }
+    if (nextNotice.tone === 'success') {
+      notify({
+        tone: 'success',
+        title: 'Daily Report updated',
+        message: nextNotice.message,
+      });
+      setNotice(null);
+      return;
+    }
+    setNotice(nextNotice);
+  }, [notify]);
 
   const editable = ['PENDING_REVIEW', 'CHANGES_REQUESTED', 'CORRECTION_DRAFT'].includes(report?.status);
   const issueCount = useMemo(() => draft.issues.filter((issue) => issue?.title).length, [draft.issues]);
@@ -183,7 +202,11 @@ export default function DailyReportReviewWorkspace() {
         progress_percent: draft.progress_percent === '' ? null : Number(draft.progress_percent),
       });
       setReport((current) => ({ ...current, ...updated }));
-      setNotice({ tone: 'success', message: 'Customer-facing draft saved.' });
+      notify({
+        tone: 'success',
+        title: 'Draft saved',
+        message: 'The customer-facing Daily Report draft is up to date.',
+      });
       await loadQueue();
     } catch (error) {
       setNotice({ tone: 'danger', message: error.message || 'Unable to save the draft.' });
@@ -206,7 +229,11 @@ export default function DailyReportReviewWorkspace() {
       });
       setReport((current) => ({ ...current, ...updated }));
       setChangeReason('');
-      setNotice({ tone: 'success', message: 'Change request sent to the source subcontractor(s).' });
+      notify({
+        tone: 'success',
+        title: 'Change request sent',
+        message: 'The source subcontractor team has been notified.',
+      });
       await loadQueue();
     } catch (error) {
       setNotice({ tone: 'danger', message: error.message || 'Unable to request changes.' });
@@ -226,12 +253,18 @@ export default function DailyReportReviewWorkspace() {
       const updated = await publishDailyReport(report.id);
       setReport(updated);
       setDraft(draftFromReport(updated));
-      setNotice({
-        tone: updated.delivery_status === 'SENT' ? 'success' : 'warning',
-        message: updated.delivery_status === 'SENT'
-          ? 'Report published and the LINE summary was sent.'
-          : 'Report published. LINE delivery is not configured or needs attention.',
-      });
+      if (updated.delivery_status === 'SENT') {
+        notify({
+          tone: 'success',
+          title: 'Report published',
+          message: 'The LINE summary was delivered successfully.',
+        });
+      } else {
+        setNotice({
+          tone: 'warning',
+          message: 'Report published. LINE delivery is not configured or needs attention.',
+        });
+      }
       await loadQueue();
     } catch (error) {
       setNotice({ tone: 'danger', message: error.message || 'Unable to publish the report.' });
@@ -245,7 +278,11 @@ export default function DailyReportReviewWorkspace() {
     try {
       const updated = await startDailyReportCorrection(report.id);
       setReport((current) => ({ ...current, ...updated }));
-      setNotice({ tone: 'success', message: 'Correction draft opened. The published version remains preserved.' });
+      notify({
+        tone: 'success',
+        title: 'Correction draft opened',
+        message: 'The published version remains preserved.',
+      });
       await loadQueue();
     } catch (error) {
       setNotice({ tone: 'danger', message: error.message || 'Unable to start a correction.' });
@@ -259,12 +296,18 @@ export default function DailyReportReviewWorkspace() {
     try {
       const updated = await retryDailyReportDelivery(report.id);
       setReport(updated);
-      setNotice({
-        tone: updated.delivery_status === 'SENT' ? 'success' : 'warning',
-        message: updated.delivery_status === 'SENT'
-          ? 'LINE delivery completed.'
-          : 'LINE delivery still needs configuration or attention.',
-      });
+      if (updated.delivery_status === 'SENT') {
+        notify({
+          tone: 'success',
+          title: 'LINE delivery completed',
+          message: 'The customer summary was delivered successfully.',
+        });
+      } else {
+        setNotice({
+          tone: 'warning',
+          message: 'LINE delivery still needs configuration or attention.',
+        });
+      }
       await loadQueue();
     } catch (error) {
       setNotice({ tone: 'danger', message: error.message || 'Unable to retry LINE delivery.' });
@@ -347,7 +390,11 @@ export default function DailyReportReviewWorkspace() {
         projectSettings: updated,
         lineDestination: updatedDestination,
       }));
-      setNotice({ tone: 'success', message: 'Daily Report project settings saved.' });
+      notify({
+        tone: 'success',
+        title: 'Project settings saved',
+        message: 'Daily Report deadlines and delivery settings are up to date.',
+      });
       setShowSettings(false);
     } catch (error) {
       setNotice({ tone: 'danger', message: error.message || 'Unable to save project settings.' });
@@ -356,13 +403,31 @@ export default function DailyReportReviewWorkspace() {
     }
   };
 
-  const closeProjectSettings = () => {
-    if (settingsDirty && !window.confirm('Discard unsaved project report setting changes?')) return;
+  const closeProjectSettings = async () => {
+    if (settingsDirty) {
+      const confirmation = await requestConfirmation({
+        title: 'Discard project setting changes?',
+        message: 'Unsaved deadline and LINE destination changes will be lost.',
+        confirmLabel: 'Discard changes',
+        cancelLabel: 'Continue editing',
+        tone: 'danger',
+      });
+      if (!confirmation.confirmed) return;
+    }
     setShowSettings(false);
   };
 
-  const changeSettingsProject = (projectId) => {
-    if (settingsDirty && !window.confirm('Discard changes and open another project?')) return;
+  const changeSettingsProject = async (projectId) => {
+    if (settingsDirty) {
+      const confirmation = await requestConfirmation({
+        title: 'Open another project?',
+        message: 'Unsaved settings for the current project will be discarded.',
+        confirmLabel: 'Discard and continue',
+        cancelLabel: 'Stay on this project',
+        tone: 'danger',
+      });
+      if (!confirmation.confirmed) return;
+    }
     setSettingsProjectId(projectId);
     loadProjectSettings(projectId);
   };
@@ -534,7 +599,7 @@ export default function DailyReportReviewWorkspace() {
                 report={report}
                 editable={editable}
                 onReportChange={(updated) => setReport(updated)}
-                onNotice={setNotice}
+                onNotice={handleWorkflowNotice}
               />
 
               <section className="dr-source-grid dr-source-grid-single">
@@ -694,7 +759,7 @@ export default function DailyReportReviewWorkspace() {
                 projectId={report.project_id}
                 reportId={report.id}
                 refreshKey={`${report.published_version || 0}-${report.delivery_status || ''}`}
-                onNotice={setNotice}
+                onNotice={handleWorkflowNotice}
               />
 
               {report.status === 'PUBLISHED' ? (

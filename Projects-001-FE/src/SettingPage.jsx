@@ -38,6 +38,7 @@ import {
 } from './api';
 import { canMutateAdminData, canMutateSubcontractorData, getStoredAuthUser } from './auth';
 import Loading from './components/Loading';
+import { useAdminFeedback } from './components/adminFeedback/adminFeedbackContext';
 import CustomerManagementSection from './components/settings/CustomerManagementSection';
 import McpAccessControls from './components/settings/McpAccessControls';
 import {
@@ -322,6 +323,7 @@ const pickFields = (source, fields) => fields.reduce((payload, field) => ({
 }), {});
 
 function SettingPage() {
+  const { notify, requestConfirmation } = useAdminFeedback();
   const [accessRequests, setAccessRequests] = useState([]);
   const [accessRequestStatus, setAccessRequestStatus] = useState('pending');
   const [subcontractors, setSubcontractors] = useState([]);
@@ -691,9 +693,17 @@ function SettingPage() {
       setSubcontractors((current) =>
         current.map((item) => (item.id === selectedSubId ? updated : item))
       );
-      setMessage('Subcontractor profile updated.');
+      notify({
+        tone: 'success',
+        title: 'Subcontractor updated',
+        message: 'Profile and assigned project settings were saved.',
+      });
     } catch (saveError) {
-      setError(saveError.message || 'Failed to save subcontractor profile.');
+      notify({
+        tone: 'error',
+        title: 'Subcontractor update failed',
+        message: saveError.message || 'Failed to save subcontractor profile.',
+      });
     } finally {
       setSaving(false);
     }
@@ -709,9 +719,17 @@ function SettingPage() {
       setCustomers((current) =>
         current.map((item) => (item.id === selectedCustomer.id ? updated : item))
       );
-      setMessage('Customer profile and project access updated.');
+      notify({
+        tone: 'success',
+        title: 'Customer updated',
+        message: 'Profile and project access were saved.',
+      });
     } catch (saveError) {
-      setError(saveError.message || 'Failed to save customer profile.');
+      notify({
+        tone: 'error',
+        title: 'Customer update failed',
+        message: saveError.message || 'Failed to save customer profile.',
+      });
     } finally {
       setSaving(false);
     }
@@ -719,9 +737,15 @@ function SettingPage() {
 
   const handleResetCustomerLine = async (customer) => {
     if (!customer?.id || !canMutateCustomers) return;
-    if (!window.confirm(`Reset the LINE connection for ${customer.contact_name || customer.name || 'this customer'}?`)) {
-      return;
-    }
+    const customerName = customer.contact_name || customer.name || 'this customer';
+    const confirmation = await requestConfirmation({
+      title: 'Reset customer LINE connection?',
+      message: `${customerName} will need to connect their LINE account again before using customer access.`,
+      confirmLabel: 'Reset connection',
+      cancelLabel: 'Cancel',
+      tone: 'danger',
+    });
+    if (!confirmation.confirmed) return;
     setSaving(true);
     setMessage('');
     setError('');
@@ -730,9 +754,17 @@ function SettingPage() {
       setCustomers((current) =>
         current.map((item) => (item.id === customer.id ? updated : item))
       );
-      setMessage('Customer LINE binding reset completed.');
+      notify({
+        tone: 'success',
+        title: 'LINE connection reset',
+        message: `${customerName} can now connect a new LINE account.`,
+      });
     } catch (actionError) {
-      setError(actionError.message || 'Failed to reset customer LINE binding.');
+      notify({
+        tone: 'error',
+        title: 'LINE reset failed',
+        message: actionError.message || 'Failed to reset customer LINE binding.',
+      });
     } finally {
       setSaving(false);
     }
@@ -740,6 +772,17 @@ function SettingPage() {
 
   const handleResetLine = async () => {
     if (!selectedSubId || !canMutateSettings) return;
+    const subcontractorName = selectedSubcontractor?.contact_name
+      || selectedSubcontractor?.name
+      || 'this subcontractor';
+    const confirmation = await requestConfirmation({
+      title: 'Reset subcontractor LINE connection?',
+      message: `${subcontractorName} will need to connect their LINE account again before using subcontractor tools.`,
+      confirmLabel: 'Reset connection',
+      cancelLabel: 'Cancel',
+      tone: 'danger',
+    });
+    if (!confirmation.confirmed) return;
     setSaving(true);
     setMessage('');
     setError('');
@@ -748,9 +791,17 @@ function SettingPage() {
       setSubcontractors((current) =>
         current.map((item) => (item.id === selectedSubId ? updated : item))
       );
-      setMessage('LINE binding reset completed.');
+      notify({
+        tone: 'success',
+        title: 'LINE connection reset',
+        message: `${subcontractorName} can now connect a new LINE account.`,
+      });
     } catch (actionError) {
-      setError(actionError.message || 'Failed to reset LINE binding.');
+      notify({
+        tone: 'error',
+        title: 'LINE reset failed',
+        message: actionError.message || 'Failed to reset LINE binding.',
+      });
     } finally {
       setSaving(false);
     }
@@ -819,7 +870,7 @@ function SettingPage() {
               is_active: adminForm.is_active,
             });
         setAdmins((current) => current.map((item) => (item.id === selectedAdmin.id ? updated : item)));
-        setMessage('Admin updated.');
+        notify({ tone: 'success', title: 'Admin updated' });
       } else {
         const created = await createSettingAdmin({
           ...staffPayload,
@@ -830,10 +881,18 @@ function SettingPage() {
         });
         setAdmins((current) => [...current, created].sort((left, right) => left.email.localeCompare(right.email)));
         setSelectedAdminId(created.id);
-        setMessage('Admin added.');
+        notify({
+          tone: 'success',
+          title: 'Admin added',
+          message: `${created.email} is now available in User Management.`,
+        });
       }
     } catch (saveError) {
-      setError(saveError.message || 'Failed to save admin.');
+      notify({
+        tone: 'error',
+        title: 'Admin save failed',
+        message: saveError.message || 'Failed to save admin.',
+      });
     } finally {
       setSaving(false);
     }
@@ -875,10 +934,14 @@ function SettingPage() {
         role: primaryRoleForRoles(roles),
         roles,
       });
-      setMessage('Access request approved.');
+      notify({ tone: 'success', title: 'Access request approved' });
       await loadPage();
     } catch (approveError) {
-      setError(approveError.message || 'Failed to approve access request.');
+      notify({
+        tone: 'error',
+        title: 'Approval failed',
+        message: approveError.message || 'Failed to approve access request.',
+      });
     } finally {
       setSaving(false);
     }
@@ -893,10 +956,14 @@ function SettingPage() {
       await rejectSettingAccessRequest(selectedAccessRequest.id, {
         reason: accessDecision.rejection_reason || 'Access request rejected by admin.',
       });
-      setMessage('Access request rejected.');
+      notify({ tone: 'success', title: 'Access request rejected' });
       await loadPage();
     } catch (rejectError) {
-      setError(rejectError.message || 'Failed to reject access request.');
+      notify({
+        tone: 'error',
+        title: 'Rejection failed',
+        message: rejectError.message || 'Failed to reject access request.',
+      });
     } finally {
       setSaving(false);
     }
@@ -910,10 +977,18 @@ function SettingPage() {
     try {
       await reopenSettingAccessRequest(selectedAccessRequest.id);
       setAccessRequestStatus('pending');
-      setMessage('Access request reopened and returned to pending review.');
+      notify({
+        tone: 'success',
+        title: 'Access request reopened',
+        message: 'The request was returned to pending review.',
+      });
       await loadPage();
     } catch (reopenError) {
-      setError(reopenError.message || 'Failed to reopen access request.');
+      notify({
+        tone: 'error',
+        title: 'Reopen failed',
+        message: reopenError.message || 'Failed to reopen access request.',
+      });
     } finally {
       setSaving(false);
     }
@@ -927,9 +1002,13 @@ function SettingPage() {
         throw new Error('Clipboard is not available in this browser.');
       }
       await navigator.clipboard.writeText(text);
-      setMessage(`${label} copied.`);
+      notify({ tone: 'success', title: `${label} copied` });
     } catch (copyError) {
-      setError(copyError.message || `Failed to copy ${label.toLowerCase()}.`);
+      notify({
+        tone: 'error',
+        title: 'Copy failed',
+        message: copyError.message || `Failed to copy ${label.toLowerCase()}.`,
+      });
     }
   };
 

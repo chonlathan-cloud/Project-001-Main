@@ -22,6 +22,7 @@ import {
   reviewAdminPaymentConfirmation,
 } from '../api';
 import { getStoredAuthUser, isAdminPortalUser } from '../auth';
+import { useAdminFeedback } from './adminFeedback/adminFeedbackContext';
 import Loading from './Loading';
 import '../payment-confirmation-review.css';
 
@@ -303,6 +304,7 @@ function ReviewDialog({
 }
 
 function PaymentConfirmationReviewWorkspace({ onPendingCountChange }) {
+  const { notify } = useAdminFeedback();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [confirmations, setConfirmations] = useState([]);
@@ -312,7 +314,6 @@ function PaymentConfirmationReviewWorkspace({ onPendingCountChange }) {
   const [projectFilter, setProjectFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [pageError, setPageError] = useState('');
-  const [flashMessage, setFlashMessage] = useState('');
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
@@ -466,7 +467,6 @@ function PaymentConfirmationReviewWorkspace({ onPendingCountChange }) {
   const openReviewDialog = (action) => {
     setReviewNote('');
     setReviewDialog({ action });
-    setFlashMessage('');
   };
 
   const closeReviewDialog = () => {
@@ -494,11 +494,11 @@ function PaymentConfirmationReviewWorkspace({ onPendingCountChange }) {
           item.confirmation_id === updated.confirmation_id ? updated : item
         ))
       ));
-      setFlashMessage(
-        reviewDialog.action === 'VERIFY'
-          ? `ยืนยันหลักฐาน ${selectedConfirmation.internal_reference} เรียบร้อยแล้ว`
-          : `ส่งคำขอแก้ไข ${selectedConfirmation.internal_reference} เรียบร้อยแล้ว`,
-      );
+      notify({
+        tone: 'success',
+        title: reviewDialog.action === 'VERIFY' ? 'ยืนยันหลักฐานแล้ว' : 'ส่งคำขอแก้ไขแล้ว',
+        message: `รายการ ${selectedConfirmation.internal_reference} ได้รับการอัปเดตเรียบร้อย`,
+      });
       setReviewDialog(null);
       setReviewNote('');
     } catch (error) {
@@ -547,13 +547,6 @@ function PaymentConfirmationReviewWorkspace({ onPendingCountChange }) {
           <button type="button" onClick={() => loadData()}>
             ลองอีกครั้ง
           </button>
-        </div>
-      ) : null}
-
-      {flashMessage ? (
-        <div className="payment-review-message success" role="status">
-          <CheckCircle2 size={18} />
-          <span>{flashMessage}</span>
         </div>
       ) : null}
 
@@ -631,7 +624,6 @@ function PaymentConfirmationReviewWorkspace({ onPendingCountChange }) {
                   key={item.confirmation_id}
                   onClick={() => {
                     setSelectedId(item.confirmation_id);
-                    setFlashMessage('');
                   }}
                 >
                   <div className="approval-queue-topline">

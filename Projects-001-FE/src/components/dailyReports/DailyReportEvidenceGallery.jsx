@@ -15,6 +15,7 @@ import {
   updateDailyReportMediaVisibility,
   uploadDailyReportSupplementalMedia,
 } from '../../api';
+import { useAdminFeedback } from '../adminFeedback/adminFeedbackContext';
 import CustomerPhotoLightbox from './CustomerPhotoLightbox';
 
 export default function DailyReportEvidenceGallery({
@@ -23,6 +24,7 @@ export default function DailyReportEvidenceGallery({
   onReportChange,
   onNotice,
 }) {
+  const { requestConfirmation } = useAdminFeedback();
   const fileInputRef = useRef(null);
   const [accessById, setAccessById] = useState({});
   const [loadingIds, setLoadingIds] = useState(new Set());
@@ -157,7 +159,14 @@ export default function DailyReportEvidenceGallery({
   };
 
   const removeSupplemental = async (item) => {
-    if (!window.confirm('Remove this supplemental photo from the report? The audit record will remain.')) return;
+    const confirmation = await requestConfirmation({
+      title: 'Remove supplemental photo?',
+      message: 'The photo will leave the working report, but its audit record will remain available.',
+      confirmLabel: 'Remove photo',
+      cancelLabel: 'Keep photo',
+      tone: 'danger',
+    });
+    if (!confirmation.confirmed) return;
     setBusyId(`remove-${item.id}`);
     try {
       const updated = await removeDailyReportSupplementalMedia(report.id, item.id);

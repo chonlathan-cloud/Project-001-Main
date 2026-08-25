@@ -40,6 +40,7 @@ import {
 } from './components/ApprovalWorkspace';
 import InputLineItemsEditor from './components/InputLineItemsEditor';
 import PaymentConfirmationReviewWorkspace from './components/PaymentConfirmationReviewWorkspace';
+import { useAdminFeedback } from './components/adminFeedback/adminFeedbackContext';
 import { createEmptyLineItem, sumLineItems } from './components/inputLineItemsUtils';
 
 const STATUS_OPTIONS = [
@@ -193,6 +194,7 @@ const normalizeLineItemsForSave = (items = [], selectedRequest = null) =>
     }));
 
 function ApprovalRequestsWorkspace() {
+  const { notify, requestConfirmation } = useAdminFeedback();
   const location = useLocation();
   const deepLinkParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const deepLinkRequestId = deepLinkParams.get('request_id') || '';
@@ -217,7 +219,6 @@ function ApprovalRequestsWorkspace() {
   const [attentionFilter, setAttentionFilter] = useState('all');
   const [pageError, setPageError] = useState('');
   const [actionError, setActionError] = useState('');
-  const [flashMessage, setFlashMessage] = useState('');
   const [busyAction, setBusyAction] = useState('');
   const [receiptPreview, setReceiptPreview] = useState(null);
   const [receiptPreviewLoading, setReceiptPreviewLoading] = useState(false);
@@ -455,7 +456,6 @@ function ApprovalRequestsWorkspace() {
   const handleEditorChange = (field) => (event) => {
     setEditor((current) => ({ ...current, [field]: event.target.value }));
     setActionError('');
-    setFlashMessage('');
   };
 
   const handleEditorLineItemsChange = (nextLineItems) => {
@@ -467,7 +467,6 @@ function ApprovalRequestsWorkspace() {
       amount: totalAmount ? String(Number(totalAmount.toFixed(2))) : '',
     }));
     setActionError('');
-    setFlashMessage('');
   };
 
   const replaceRequest = (nextItem) => {
@@ -542,7 +541,11 @@ function ApprovalRequestsWorkspace() {
       const updated = await updateAdminInputRequest(selectedRequest.request_id, savePayload);
       replaceRequest(updated);
       await refreshReceiptPreview(updated);
-      setFlashMessage('บันทึกการแก้ไขเรียบร้อย');
+      notify({
+        tone: 'success',
+        title: 'บันทึกการแก้ไขแล้ว',
+        message: 'ข้อมูลคำขอได้รับการอัปเดตเรียบร้อย',
+      });
     } catch (error) {
       setActionError(error.message || 'Failed to save review changes.');
     } finally {
@@ -569,7 +572,11 @@ function ApprovalRequestsWorkspace() {
       } else {
         await loadData({ keepSelection: false });
       }
-      setFlashMessage('อนุมัติคำขอเรียบร้อย');
+      notify({
+        tone: 'success',
+        title: 'อนุมัติคำขอแล้ว',
+        message: 'สถานะรายการได้รับการอัปเดตเรียบร้อย',
+      });
     } catch (error) {
       setActionError(error.message || 'Failed to approve request.');
     } finally {
@@ -586,7 +593,6 @@ function ApprovalRequestsWorkspace() {
     setRejectReason(editor.review_note.trim());
     setRejectDialogError('');
     setActionError('');
-    setFlashMessage('');
     setRejectDialogOpen(true);
   };
 
@@ -621,7 +627,6 @@ function ApprovalRequestsWorkspace() {
   const openSaveDialog = () => {
     if (!selectedRequest) return;
     setActionError('');
-    setFlashMessage('');
     setConfirmDialog({
       type: 'save',
       busyAction: 'save',
@@ -643,7 +648,6 @@ function ApprovalRequestsWorkspace() {
     const approvedLineItems = normalizeLineItemsForSave(editor.line_items, selectedRequest);
     const approvedAmount = sumLineItems(approvedLineItems) || Number(editor.amount || selectedRequest.amount || 0);
     setActionError('');
-    setFlashMessage('');
     setConfirmDialog({
       type: 'approve',
       busyAction: 'approve',
@@ -665,7 +669,6 @@ function ApprovalRequestsWorkspace() {
   const openSyncFlowAccountDialog = () => {
     if (!selectedRequest) return;
     setActionError('');
-    setFlashMessage('');
     setConfirmDialog({
       type: 'sync-flowaccount',
       busyAction: 'sync-flowaccount',
@@ -692,7 +695,6 @@ function ApprovalRequestsWorkspace() {
     if (!selectedRequest) return;
     const isIncome = selectedRequest.entry_type === 'INCOME';
     setActionError('');
-    setFlashMessage('');
     setConfirmDialog({
       type: 'mark-paid',
       busyAction: 'mark-paid',
@@ -751,7 +753,11 @@ function ApprovalRequestsWorkspace() {
       } else {
         await loadData({ keepSelection: false });
       }
-      setFlashMessage('ปฏิเสธคำขอเรียบร้อย');
+      notify({
+        tone: 'success',
+        title: 'ปฏิเสธคำขอแล้ว',
+        message: 'เหตุผลการปฏิเสธถูกบันทึกเรียบร้อย',
+      });
     } catch (error) {
       setActionError(error.message || 'Failed to reject request.');
     } finally {
@@ -777,10 +783,11 @@ function ApprovalRequestsWorkspace() {
       } else {
         await loadData({ keepSelection: false });
       }
-      setFlashMessage(
-        `${isIncome ? 'บันทึกว่ารับเงินแล้ว' : 'บันทึกว่าจ่ายเงินแล้ว'} · `
-        + `เลขอ้างอิง ${paid.internal_payment_reference || 'สร้างเรียบร้อย'}`,
-      );
+      notify({
+        tone: 'success',
+        title: isIncome ? 'บันทึกรับเงินแล้ว' : 'บันทึกจ่ายเงินแล้ว',
+        message: `เลขอ้างอิง ${paid.internal_payment_reference || 'สร้างเรียบร้อย'}`,
+      });
     } catch (error) {
       setActionError(
         error.message ||
@@ -802,7 +809,11 @@ function ApprovalRequestsWorkspace() {
         override_reason: overrideDuplicate ? 'Owner confirmed duplicate FlowAccount sync in Approval UI.' : null,
       });
       replaceRequest(synced);
-      setFlashMessage('FlowAccount sync updated.');
+      notify({
+        tone: 'success',
+        title: 'อัปเดต FlowAccount แล้ว',
+        message: 'สถานะการซิงก์ของคำขอเป็นข้อมูลล่าสุด',
+      });
     } catch (error) {
       setActionError(error.message || 'Failed to sync FlowAccount.');
     } finally {
@@ -817,7 +828,11 @@ function ApprovalRequestsWorkspace() {
       setActionError('');
       const updated = await retryInputRequestFlowAccountAttachment(selectedRequest.request_id);
       replaceRequest(updated);
-      setFlashMessage('FlowAccount attachment retry finished.');
+      notify({
+        tone: 'info',
+        title: 'ลองส่งไฟล์แนบซ้ำแล้ว',
+        message: 'ตรวจสอบสถานะ FlowAccount ล่าสุดในรายละเอียดคำขอ',
+      });
     } catch (error) {
       setActionError(error.message || 'Failed to retry FlowAccount attachment.');
     } finally {
@@ -832,7 +847,11 @@ function ApprovalRequestsWorkspace() {
       setActionError('');
       const updated = await retryInputRequestFlowAccountSupplierInvoice(selectedRequest.request_id);
       replaceRequest(updated);
-      setFlashMessage('FlowAccount Supplier Invoice retry finished.');
+      notify({
+        tone: 'info',
+        title: 'ลองสร้าง Supplier Invoice ซ้ำแล้ว',
+        message: 'ตรวจสอบสถานะ FlowAccount ล่าสุดในรายละเอียดคำขอ',
+      });
     } catch (error) {
       setActionError(error.message || 'Failed to retry Supplier Invoice.');
     } finally {
@@ -842,21 +861,48 @@ function ApprovalRequestsWorkspace() {
 
   const handleLinkFlowAccountDocument = async () => {
     if (!selectedRequest) return;
-    const expenseId = window.prompt('FlowAccount Expense recordId/documentId');
-    if (!expenseId?.trim()) return;
-    const documentNo = window.prompt('FlowAccount document number (optional)') || '';
+    const expenseIdConfirmation = await requestConfirmation({
+      title: 'Link existing FlowAccount document',
+      message: 'Enter the Expense recordId or documentId to connect with this request.',
+      confirmLabel: 'Continue',
+      cancelLabel: 'Cancel',
+      input: {
+        label: 'Expense recordId / documentId',
+        placeholder: 'FlowAccount document identifier',
+        required: true,
+        maxLength: 120,
+      },
+    });
+    if (!expenseIdConfirmation.confirmed) return;
+
+    const documentNoConfirmation = await requestConfirmation({
+      title: 'Add the FlowAccount document number',
+      message: 'This field is optional. Leave it blank if the document number is not available yet.',
+      confirmLabel: 'Link document',
+      cancelLabel: 'Back',
+      input: {
+        label: 'Document number (optional)',
+        placeholder: 'For example EXP-2026-001',
+        maxLength: 120,
+      },
+    });
+    if (!documentNoConfirmation.confirmed) return;
 
     try {
       setBusyAction('link-flowaccount');
       setActionError('');
       const linked = await linkInputRequestFlowAccountDocument(selectedRequest.request_id, {
-        expense_id: expenseId.trim(),
-        document_no: documentNo.trim() || null,
+        expense_id: expenseIdConfirmation.inputValue,
+        document_no: documentNoConfirmation.inputValue || null,
         external_document_id: selectedRequest.flowaccount_external_document_id || null,
         note: editor.review_note.trim() || null,
       });
       replaceRequest(linked);
-      setFlashMessage('Linked existing FlowAccount document.');
+      notify({
+        tone: 'success',
+        title: 'เชื่อมเอกสาร FlowAccount แล้ว',
+        message: 'คำขอนี้เชื่อมกับเอกสารที่มีอยู่เรียบร้อย',
+      });
     } catch (error) {
       setActionError(error.message || 'Failed to link FlowAccount document.');
     } finally {
@@ -963,13 +1009,6 @@ function ApprovalRequestsWorkspace() {
     (isFlowAccountStage || hasFlowAccountHistory)
   );
   const requestAlerts = selectedRequest ? [
-    flashMessage ? {
-      tone: 'success',
-      level: 'Done',
-      title: 'Action completed',
-      message: flashMessage,
-      nextAction: 'ตรวจสถานะล่าสุดของรายการก่อนดำเนินงานต่อ',
-    } : null,
     actionError ? {
       tone: 'critical',
       level: 'Blocked',
