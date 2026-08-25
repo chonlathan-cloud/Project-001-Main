@@ -27,6 +27,8 @@ Instructions
 3. Ensure responsiveness and maintain strict adherence to the design system.
 4. Do not alter business logic or API data fetching layers without explicit permission.
 
+Use `$ui-ux-review` for frontend critiques, approved UI implementation plans, and post-implementation design reviews. Do not apply it to unrelated backend, infrastructure, database, or DevOps work.
+
 Frontend:
 
 ```bash

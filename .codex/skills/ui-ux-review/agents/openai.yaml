@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI/UX Review"
+  short_description: "Product-specific frontend design review"
+  default_prompt: "Use $ui-ux-review to critique this page and identify the highest-impact UX and visual hierarchy improvements."
