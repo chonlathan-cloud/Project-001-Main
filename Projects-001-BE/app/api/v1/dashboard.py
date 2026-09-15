@@ -27,6 +27,7 @@ from app.schemas.dashboard_schema import (
     DashboardZoneStatusItem,
 )
 from app.schemas.responses import StandardResponse
+from app.services.project_budget_service import load_project_budget_contexts
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -87,17 +88,9 @@ async def get_dashboard_summary(
         boq_item_rows = (
             await db.execute(select(BOQItem.id, BOQItem.project_id))
         ).all()
-        boq_budget_rows = (
-            await db.execute(
-                select(
-                    BOQItem.project_id,
-                    BOQItem.boq_type,
-                    BOQItem.grand_total,
-                )
-                .filter(BOQItem.valid_to.is_(None))
-                .filter(BOQItem.parent_id.is_(None))
-            )
-        ).all()
+        budget_contexts = await load_project_budget_contexts(
+            db, list(construction_project_ids)
+        )
         installments = (
             await db.execute(select(Installment).options(noload("*")))
         ).scalars().all()
@@ -120,26 +113,14 @@ async def get_dashboard_summary(
             installment.id: boq_project_lookup.get(installment.boq_item_id)
             for installment in installments
         }
-        budget_components_by_project: dict[str, dict[str, float]] = defaultdict(
-            lambda: {"CUSTOMER": 0.0, "SUBCONTRACTOR": 0.0}
-        )
-        for project_id, boq_type, grand_total in boq_budget_rows:
-            if project_id not in construction_project_ids:
-                continue
-            project_key = str(project_id)
-            type_key = str(boq_type or "CUSTOMER").upper()
-            if type_key not in {"CUSTOMER", "SUBCONTRACTOR"}:
-                type_key = "CUSTOMER"
-            budget_components_by_project[project_key][type_key] += _money(grand_total)
-
         project_budget_lookup: dict[str, float] = {}
         for project in construction_projects:
             project_key = str(project.id)
-            components = budget_components_by_project.get(project_key, {})
-            project_budget_lookup[project_key] = (
-                components.get("CUSTOMER", 0.0)
-                or components.get("SUBCONTRACTOR", 0.0)
-                or _money(project.contingency_budget)
+            context = budget_contexts.get(project.id)
+            project_budget_lookup[project_key] = _money(
+                context.legacy_dashboard_budget
+                if context is not None
+                else project.contingency_budget
             )
 
         total_budget = sum(project_budget_lookup.values())

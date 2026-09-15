@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
 from app.core.config import Settings, get_settings
-from app.models.boq import BOQItem, Project
+from app.models.boq import Project
 from app.models.input_request import InputPayment, InputRequest
 from app.schemas.mcp_schema import (
     McpDailyReportRequest,
@@ -45,6 +45,7 @@ from app.services.mcp_read_service import (
     _project_url,
     _utc_now,
 )
+from app.services.project_budget_service import load_project_budget_contexts
 
 MAX_SOURCE_SCAN = 250
 MAX_DASHBOARD_PROJECTS = 50
@@ -530,18 +531,7 @@ async def get_dashboard_summary(
             "source_read_at": _utc_now(),
         }
 
-    budget_rows = (
-        await db.execute(
-            select(BOQItem.project_id, func.coalesce(func.sum(BOQItem.grand_total), 0))
-            .where(
-                BOQItem.project_id.in_(ids),
-                BOQItem.valid_to.is_(None),
-                BOQItem.parent_id.is_(None),
-                func.upper(func.trim(BOQItem.boq_type)) == "CUSTOMER",
-            )
-            .group_by(BOQItem.project_id)
-        )
-    ).all()
+    budget_contexts = await load_project_budget_contexts(db, ids)
     amount_value = func.coalesce(InputRequest.approved_amount, InputRequest.amount)
     approved_expense_value = case(
         (
@@ -612,7 +602,10 @@ async def get_dashboard_summary(
         payment_statement = payment_statement.where(InputPayment.payment_date <= request.date_to)
     payment_rows = (await db.execute(payment_statement.group_by(InputRequest.project_id))).all()
 
-    budget_by = _decimal_map(list(budget_rows))
+    budget_by = {
+        str(project_id): Decimal(context.legacy_mcp_customer_budget)
+        for project_id, context in budget_contexts.items()
+    }
     paid_by = _decimal_map(list(payment_rows))
     requests_by = {
         str(project_id): tuple(Decimal(str(value or 0)) for value in values)

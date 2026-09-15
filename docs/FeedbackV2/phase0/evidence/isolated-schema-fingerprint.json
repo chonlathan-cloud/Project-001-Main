@@ -1,0 +1,33 @@
+{
+  "captured_at": "2026-09-14",
+  "source": "current registered SQLAlchemy Base.metadata",
+  "target": "127.0.0.1:55432/projects001_phase0_test",
+  "postgresql_image": "pgvector/pgvector:pg16@sha256:7d400e340efb42f4d8c9c12c6427adb253f726881a9985d2a471bf0eed824dff",
+  "server_version": "16.13 (Debian 16.13-1.pgdg12+1)",
+  "vector_extension_version": "0.8.2",
+  "table_count": 15,
+  "boq_v2_table_count": 0,
+  "fingerprint_sha256": "1f5ef82d148f9a809709c2a2adfdc543aaee0b5d6e7556fd7aaf218fb6a1ac5a",
+  "tables": [
+    "boq_items",
+    "chat_history",
+    "fund_allocations",
+    "fund_audit_events",
+    "fund_buckets",
+    "fund_ledger_entries",
+    "input_option_suggestions",
+    "input_payment_confirmations",
+    "input_payment_reference_counters",
+    "input_payments",
+    "input_request_line_items",
+    "input_requests",
+    "installments",
+    "projects",
+    "transactions"
+  ],
+  "notes": [
+    "Credentials are intentionally omitted.",
+    "The fingerprint covers extensions, columns, constraints, and indexes, not fixture rows.",
+    "This is an isolated current-ORM baseline, not evidence of any deployed environment schema."
+  ]
+}

@@ -22,6 +22,7 @@ from sqlalchemy.orm import noload
 from app.models.boq import BOQItem, Project
 from app.models.finance import Installment, Transaction
 from app.models.input_request import InputRequest
+from app.services.project_budget_service import legacy_budget_facts_from_items
 
 PENDING_INSTALLMENT_STATUSES = {"PENDING", "PENDING_ADMIN", "ADVANCE"}
 OPEN_RECEIVABLE_STATUSES = {"PENDING", "PENDING_ADMIN", "ADVANCE", "BILLING", "RE-BILLING"}
@@ -516,11 +517,12 @@ async def _load_snapshot(
             project_name=None,
         )
 
-    boq_query = select(BOQItem).options(noload("*")).filter(BOQItem.valid_to.is_(None))
+    boq_query = select(BOQItem).options(noload("*"))
     if scoped_project_ids:
         boq_query = boq_query.filter(BOQItem.project_id.in_(scoped_project_ids))
-    boq_items = (await db.execute(boq_query)).scalars().all()
-    boq_item_by_id = {item.id: item for item in boq_items}
+    all_boq_items = (await db.execute(boq_query)).scalars().all()
+    boq_items = [item for item in all_boq_items if item.valid_to is None]
+    boq_item_by_id = {item.id: item for item in all_boq_items}
     parent_ids = {item.parent_id for item in boq_items if item.parent_id is not None}
     leaf_boq_items = [item for item in boq_items if item.id not in parent_ids]
 
@@ -528,7 +530,6 @@ async def _load_snapshot(
         select(Installment)
         .join(BOQItem, Installment.boq_item_id == BOQItem.id)
         .options(noload("*"))
-        .filter(BOQItem.valid_to.is_(None))
     )
     if scoped_project_ids:
         installments_query = installments_query.filter(BOQItem.project_id.in_(scoped_project_ids))
@@ -540,7 +541,6 @@ async def _load_snapshot(
         .join(Installment, Transaction.installment_id == Installment.id)
         .join(BOQItem, Installment.boq_item_id == BOQItem.id)
         .options(noload("*"))
-        .filter(BOQItem.valid_to.is_(None))
     )
     if scoped_project_ids:
         transactions_query = transactions_query.filter(BOQItem.project_id.in_(scoped_project_ids))
@@ -692,11 +692,19 @@ def _build_project_rollups(
         if status == "DRAFT" and created_in_scope:
             project_rollup["draft_request_count"] += 1
 
-    for project_rollup in rollups.values():
-        budget_baseline = (
-            project_rollup["subcontractor_boq_total"]
-            or project_rollup["customer_boq_total"]
-            or project_rollup["contingency_budget"]
+    current_items_by_project: dict[UUID, list[BOQItem]] = {
+        project_id: [] for project_id in rollups
+    }
+    for item in snapshot.boq_items:
+        current_items_by_project.setdefault(item.project_id, []).append(item)
+
+    for project_id, project_rollup in rollups.items():
+        budget_baseline = float(
+            legacy_budget_facts_from_items(
+                project_id=project_id,
+                contingency_budget=project_rollup["contingency_budget"],
+                items=current_items_by_project.get(project_id, []),
+            ).chat_budget
         )
         actual_cost = project_rollup["transaction_cost"] + project_rollup["approved_expense_requests"]
         project_rollup["budget_baseline"] = budget_baseline

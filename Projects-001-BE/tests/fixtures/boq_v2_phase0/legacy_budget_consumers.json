@@ -1,0 +1,83 @@
+{
+  "contract_version": 1,
+  "currency": "THB",
+  "description": "Current public legacy projections. Divergence is intentional until each consumer migrates explicitly.",
+  "encoding": "Money is stored as exact decimal strings in this fixture; existing public payload types remain unchanged.",
+  "scenarios": [
+    {
+      "id": "dual_boq",
+      "inputs": {
+        "customer_root_total": "1000000.00",
+        "subcontractor_root_total": "750000.00",
+        "contingency_budget": "125000.00",
+        "project_list_has_grouped_boq_row": true
+      },
+      "expected": {
+        "project_list_total_budget": "1750000.00",
+        "project_detail_customer_total_budget": "1000000.00",
+        "project_detail_subcontractor_total_budget": "750000.00",
+        "project_detail_total_variance": "250000.00",
+        "project_detail_margin_percent": "25.00",
+        "fund_forecast_base": "250000.00",
+        "dashboard_total_budget": "1000000.00",
+        "chat_display_budget": "750000.00",
+        "mcp_current_boq_budget": {
+          "amount": "1000000.00",
+          "currency": "THB"
+        },
+        "frontend_card_total_budget": "1000000.00",
+        "frontend_card_budget_source": "Customer BOQ"
+      }
+    },
+    {
+      "id": "subcontractor_only",
+      "inputs": {
+        "customer_root_total": "0.00",
+        "subcontractor_root_total": "750000.00",
+        "contingency_budget": "125000.00",
+        "project_list_has_grouped_boq_row": true
+      },
+      "expected": {
+        "project_list_total_budget": "750000.00",
+        "project_detail_customer_total_budget": "0.00",
+        "project_detail_subcontractor_total_budget": "750000.00",
+        "project_detail_total_variance": "-750000.00",
+        "project_detail_margin_percent": null,
+        "fund_forecast_base": "-750000.00",
+        "dashboard_total_budget": "750000.00",
+        "chat_display_budget": "750000.00",
+        "mcp_current_boq_budget": {
+          "amount": "0.00",
+          "currency": "THB"
+        },
+        "frontend_card_total_budget": "750000.00",
+        "frontend_card_budget_source": "Subcontractor BOQ"
+      }
+    },
+    {
+      "id": "no_boq",
+      "inputs": {
+        "customer_root_total": "0.00",
+        "subcontractor_root_total": "0.00",
+        "contingency_budget": "125000.00",
+        "project_list_has_grouped_boq_row": false
+      },
+      "expected": {
+        "project_list_total_budget": "125000.00",
+        "project_detail_customer_total_budget": "0.00",
+        "project_detail_subcontractor_total_budget": "0.00",
+        "project_detail_total_variance": "0.00",
+        "project_detail_margin_percent": null,
+        "fund_forecast_base": "0.00",
+        "dashboard_total_budget": "125000.00",
+        "chat_display_budget": "125000.00",
+        "mcp_current_boq_budget": {
+          "amount": "0.00",
+          "currency": "THB"
+        },
+        "frontend_card_total_budget": "125000.00",
+        "frontend_card_budget_source": "Project budget"
+      }
+    }
+  ]
+}

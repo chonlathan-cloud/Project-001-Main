@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rayadee:boq-v2:project-budget-snapshot:1",
+  "title": "ProjectBudgetSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_kind",
+    "status",
+    "project_id",
+    "currency",
+    "baseline_id",
+    "baseline_version",
+    "main_revision_id",
+    "accepted_change_order_ids",
+    "cost_plan_version",
+    "calculation_version",
+    "activated_at",
+    "net_sell_ex_vat",
+    "original_estimated_cost",
+    "agreed_cost",
+    "forecast_cost",
+    "forecast_margin",
+    "cost_completeness",
+    "forecast_basis",
+    "as_of"
+  ],
+  "properties": {
+    "source_kind": {"enum": ["LEGACY", "V2"]},
+    "status": {
+      "enum": ["READY", "NO_BUDGET_DATA", "NO_ACTIVE_BASELINE", "UNKNOWN_COST"]
+    },
+    "project_id": {"type": "string", "format": "uuid"},
+    "currency": {"const": "THB"},
+    "baseline_id": {"$ref": "#/$defs/nullableUuid"},
+    "baseline_version": {"type": ["integer", "null"], "minimum": 1},
+    "main_revision_id": {"$ref": "#/$defs/nullableUuid"},
+    "accepted_change_order_ids": {
+      "type": "array",
+      "items": {"type": "string", "format": "uuid"},
+      "uniqueItems": true
+    },
+    "cost_plan_version": {"type": ["integer", "null"], "minimum": 1},
+    "calculation_version": {"type": "string", "minLength": 1},
+    "activated_at": {"$ref": "#/$defs/nullableDateTime"},
+    "net_sell_ex_vat": {"$ref": "#/$defs/nullableMoney"},
+    "original_estimated_cost": {"$ref": "#/$defs/nullableMoney"},
+    "agreed_cost": {"$ref": "#/$defs/nullableMoney"},
+    "forecast_cost": {"$ref": "#/$defs/nullableMoney"},
+    "forecast_margin": {"$ref": "#/$defs/nullableMoney"},
+    "forecast_basis": {
+      "enum": ["LEGACY_SYNC", "ESTIMATED", "PARTLY_AGREED", "AGREED", "NONE"]
+    },
+    "cost_completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "required_count", "priced_count", "missing_component_ids"],
+      "properties": {
+        "state": {
+          "enum": ["COMPLETE", "INCOMPLETE", "LEGACY_UNVERIFIED", "NOT_APPLICABLE"]
+        },
+        "required_count": {"type": "integer", "minimum": 0},
+        "priced_count": {"type": "integer", "minimum": 0},
+        "missing_component_ids": {
+          "type": "array",
+          "items": {"type": "string", "format": "uuid"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "as_of": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "nullableUuid": {
+      "anyOf": [
+        {"type": "string", "format": "uuid"},
+        {"type": "null"}
+      ]
+    },
+    "nullableDateTime": {
+      "anyOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "nullableMoney": {
+      "anyOf": [
+        {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)\\.[0-9]{2}$"},
+        {"type": "null"}
+      ]
+    }
+  }
+}

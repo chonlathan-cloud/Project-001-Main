@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
 from app.core.config import get_settings
-from app.models.boq import BOQItem, Project
+from app.models.boq import Project
 from app.models.funds import FundAllocation, FundAuditEvent, FundBucket, FundLedgerEntry
 from app.schemas.fund_schema import (
     FundAllocationListResponse,
@@ -25,7 +25,11 @@ from app.schemas.fund_schema import (
     FundBucketOption,
     FundSummaryResponse,
 )
-from app.services.boq_margin_service import projected_boq_totals
+from app.services.project_budget_service import (
+    budget_source_fingerprint,
+    load_project_budget_context,
+    lock_project_budget_state,
+)
 
 MONEY_QUANTUM = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -56,6 +60,20 @@ class AvailableValues:
     raw_forecast_available: Decimal
     available_margin_to_allocate: Decimal
     forecast_deficit: Decimal
+
+
+def _assert_outward_budget_ready(budget_context) -> None:
+    if (
+        budget_context is not None
+        and budget_context.snapshot.source_kind == "V2"
+        and budget_context.snapshot.status != "READY"
+    ):
+        raise FundDomainError(
+            "BOQ_BUDGET_NOT_READY",
+            "The source Project budget is not ready for a new outward allocation.",
+            status_code=409,
+            context={"budget_status": budget_context.snapshot.status},
+        )
 
 
 def money(value: object) -> Decimal:
@@ -164,17 +182,8 @@ async def _bucket_context(
 
 
 async def _projected_boq_margin(db: AsyncSession, project_id: UUID) -> Decimal:
-    items = list(
-        (
-            await db.execute(
-                select(BOQItem)
-                .options(noload("*"))
-                .where(BOQItem.project_id == project_id)
-                .where(BOQItem.valid_to.is_(None))
-            )
-        ).scalars().all()
-    )
-    return money(projected_boq_totals(items).margin)
+    context = await load_project_budget_context(db, project_id)
+    return money(context.legacy_fund_forecast_base if context else ZERO)
 
 
 def _source_fingerprint(
@@ -184,6 +193,7 @@ def _source_fingerprint(
     *,
     forecast_base_type: str,
     forecast_base: Decimal,
+    budget_source: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "bucket": [
@@ -193,6 +203,7 @@ def _source_fingerprint(
             str(money(bucket.protected_reserve)),
         ],
         "forecast_base": [forecast_base_type, str(money(forecast_base))],
+        "budget_source": budget_source or {"source_kind": "LEGACY"},
         "values": [
             str(values.raw_forecast_available),
             str(values.available_margin_to_allocate),
@@ -235,8 +246,13 @@ async def calculate_fund_summary(
     forecast_base_type = (
         "OPENING_FORECAST_BALANCE" if is_operations else "PROJECTED_BOQ_MARGIN"
     )
-    projected_boq_margin = (
-        ZERO if is_operations else await _projected_boq_margin(db, project.id)
+    budget_context = (
+        None if is_operations else await load_project_budget_context(db, project.id)
+    )
+    projected_boq_margin = money(
+        ZERO
+        if is_operations or budget_context is None
+        else budget_context.legacy_fund_forecast_base
     )
     opening_forecast_balance = ledger_totals["opening_forecast_balance"]
     forecast_base = (
@@ -279,6 +295,11 @@ async def calculate_fund_summary(
             values,
             forecast_base_type=forecast_base_type,
             forecast_base=forecast_base,
+            budget_source=(
+                budget_source_fingerprint(budget_context.snapshot)
+                if budget_context is not None
+                else {"source_kind": "OPERATIONS"}
+            ),
         )
     )
     opening_forecast_balance_set = bucket.balance_start_date is not None
@@ -384,7 +405,7 @@ async def _locked_bucket_contexts(
             .join(Project, Project.id == FundBucket.project_id)
             .options(noload("*"))
             .where(Project.id.in_(project_ids))
-            .order_by(FundBucket.id.asc())
+            .order_by(Project.id.asc())
             .with_for_update(of=FundBucket)
         )
     ).all()
@@ -496,6 +517,11 @@ async def post_allocation(
     normalized_amount = money(amount)
     allocation: FundAllocation
     async with db.begin():
+        await lock_project_budget_state(db, (source_project_id, target_project_id))
+        contexts = await _locked_bucket_contexts(
+            db,
+            (source_project_id, target_project_id),
+        )
         await _advisory_idempotency_lock(db, idempotency_key)
         existing = (
             await db.execute(
@@ -530,14 +556,14 @@ async def post_allocation(
                 )
             allocation = existing
         else:
-            contexts = await _locked_bucket_contexts(
-                db,
-                (source_project_id, target_project_id),
-            )
             source_context = contexts[source_project_id]
             target_context = contexts[target_project_id]
             _validate_active_context(source_context, target=False)
             _validate_active_context(target_context, target=True)
+            source_budget_context = await load_project_budget_context(
+                db, source_project_id
+            )
+            _assert_outward_budget_ready(source_budget_context)
             source_summary = await calculate_fund_summary(
                 db,
                 source_project_id,
@@ -661,6 +687,25 @@ async def reverse_allocation(
 ) -> FundAllocationResponse:
     reversal: FundAllocation
     async with db.begin():
+        original_reference = (
+            await db.execute(
+                select(FundAllocation)
+                .options(noload("*"))
+                .where(FundAllocation.id == allocation_id)
+            )
+        ).scalar_one_or_none()
+        if original_reference is None:
+            raise FundDomainError(
+                "ALLOCATION_NOT_FOUND", "Allocation not found.", status_code=404
+            )
+        source_party = await _party_for_bucket(db, original_reference.target_bucket_id)
+        target_party = await _party_for_bucket(db, original_reference.source_bucket_id)
+        await lock_project_budget_state(
+            db, (source_party.project_id, target_party.project_id)
+        )
+        contexts = await _locked_bucket_contexts(
+            db, (source_party.project_id, target_party.project_id)
+        )
         await _advisory_idempotency_lock(db, idempotency_key)
         replay = (
             await db.execute(
@@ -695,12 +740,6 @@ async def reverse_allocation(
                     status_code=409,
                 )
 
-            source_party = await _party_for_bucket(db, original.target_bucket_id)
-            target_party = await _party_for_bucket(db, original.source_bucket_id)
-            contexts = await _locked_bucket_contexts(
-                db,
-                (source_party.project_id, target_party.project_id),
-            )
             source_context = contexts[source_party.project_id]
             target_context = contexts[target_party.project_id]
             _validate_active_context(source_context, target=False)
@@ -834,8 +873,9 @@ async def set_operations_opening_balance(
             status_code=400,
         )
     async with db.begin():
-        await _advisory_idempotency_lock(db, idempotency_key)
+        await lock_project_budget_state(db, (project_id,))
         bucket, project = await _bucket_context(db, project_id, lock=True)
+        await _advisory_idempotency_lock(db, idempotency_key)
         if project.system_key != OPERATIONS_SYSTEM_KEY:
             raise FundDomainError(
                 "INVALID_OPERATIONS_BUCKET",

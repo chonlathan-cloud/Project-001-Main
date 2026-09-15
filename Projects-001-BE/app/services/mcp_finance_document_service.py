@@ -50,6 +50,7 @@ from app.services.mcp_read_service import (
     _project_url,
     _utc_now,
 )
+from app.services.project_budget_service import load_project_budget_context
 
 FINANCE_PERMISSION = frozenset({"financial_data_read"})
 SENSITIVE_DOCUMENT_PERMISSION = frozenset({"sensitive_documents_read"})
@@ -249,31 +250,11 @@ async def get_project_financial_summary(
     if project is None:
         raise McpNotFoundOrForbidden
 
-    boq_filters = [
-        BOQItem.project_id == request.project_id,
-        BOQItem.parent_id.is_(None),
-        func.upper(func.trim(BOQItem.boq_type)) == "CUSTOMER",
-    ]
-    if request.as_of is None:
-        boq_filters.append(BOQItem.valid_to.is_(None))
-    else:
-        boq_filters.extend(
-            [
-                or_(BOQItem.valid_from.is_(None), BOQItem.valid_from <= request.as_of),
-                or_(BOQItem.valid_to.is_(None), BOQItem.valid_to > request.as_of),
-            ]
-        )
+    budget_context = await load_project_budget_context(
+        db, request.project_id, as_of=request.as_of
+    )
     budget = Decimal(
-        str(
-            (
-                await db.execute(
-                    select(func.coalesce(func.sum(BOQItem.grand_total), 0)).where(
-                        *boq_filters
-                    )
-                )
-            ).scalar_one()
-            or 0
-        )
+        budget_context.legacy_mcp_customer_budget if budget_context else "0.00"
     )
 
     approved_filters = [

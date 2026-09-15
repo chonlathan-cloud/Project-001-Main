@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
@@ -29,18 +29,15 @@ from app.schemas.boq_schema import (
     ProjectExecutionSummaryItem,
     ProjectDetailResponse,
     ProjectItem,
-    ProjectListResponse,
     SheetTabsRequest,
     SheetTabsResponse,
     SyncBOQRequest,
     SyncBOQBatchRequest,
     SyncBOQBatchJobResponse,
-    SyncBOQBatchResponse,
     SyncBOQResponse,
     UpdateProjectRequest,
 )
 from app.schemas.responses import StandardResponse
-from app.services.boq_margin_service import projected_boq_totals
 from app.services.boq_sync_job_service import (
     create_boq_sync_job,
     get_boq_sync_job,
@@ -48,6 +45,10 @@ from app.services.boq_sync_job_service import (
     serialize_boq_sync_job,
 )
 from app.services.boq_sync_service import fetch_google_sheet_tabs, sync_boq_sheet
+from app.services.project_budget_service import (
+    legacy_budget_facts_from_items,
+    load_project_budget_contexts,
+)
 
 router = APIRouter(prefix="/projects", tags=["Projects & BOQ"])
 
@@ -490,28 +491,16 @@ async def list_projects(
         result = await db.execute(select(Project).options(noload("*")))
         projects = result.scalars().all()
         project_ids = [project.id for project in projects]
-        budget_by_project_id: dict[UUID, float] = {}
-
-        if project_ids:
-            budget_result = await db.execute(
-                select(
-                    BOQItem.project_id,
-                    func.coalesce(func.sum(BOQItem.grand_total), 0),
-                )
-                .filter(BOQItem.project_id.in_(project_ids))
-                .filter(BOQItem.valid_to.is_(None))
-                .filter(BOQItem.parent_id.is_(None))
-                .group_by(BOQItem.project_id)
-            )
-            budget_by_project_id = {
-                project_id: float(total_budget or 0)
-                for project_id, total_budget in budget_result.all()
-            }
+        budget_contexts = await load_project_budget_contexts(db, project_ids)
 
         items = [
             _to_project_list_item(
                 project,
-                total_budget=budget_by_project_id.get(project.id, float(project.contingency_budget or 0)),
+                total_budget=(
+                    budget_contexts[project.id].legacy_project_list_budget
+                    if project.id in budget_contexts
+                    else project.contingency_budget
+                ),
             )
             for project in projects
         ]
@@ -736,9 +725,15 @@ async def get_project_boq(
         compare_tree = _build_compare_tree(customer_tree, subcontractor_tree)
         wbs_summary = [_to_wbs_summary_item(node) for node in compare_tree]
 
-        boq_totals = projected_boq_totals(all_items)
-        customer_total_budget = float(boq_totals.customer_total)
-        subcontractor_total_budget = float(boq_totals.subcontractor_total)
+        legacy_budget = legacy_budget_facts_from_items(
+            project_id=project_id,
+            contingency_budget=project.contingency_budget,
+            items=all_items,
+        )
+        customer_total_budget = float(legacy_budget.projected_customer_total)
+        subcontractor_total_budget = float(
+            legacy_budget.projected_subcontractor_total
+        )
         total_variance = customer_total_budget - subcontractor_total_budget
         compare_counts = _count_compare_statuses(compare_tree)
         sheet_names = sorted(

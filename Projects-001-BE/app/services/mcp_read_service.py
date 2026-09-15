@@ -43,6 +43,10 @@ from app.services.identity_service import (
     list_subcontractors,
 )
 from app.services.mcp_access_service import resolve_mcp_access
+from app.services.project_budget_service import (
+    load_project_budget_context,
+    load_project_budget_contexts,
+)
 
 MAX_BOQ_LINES = 500
 
@@ -184,22 +188,8 @@ async def list_projects(
     app_settings = settings or get_settings()
     access = _authorize(request, settings=app_settings)
     offset = _decode_cursor(request.cursor, "projects", app_settings)
-    budget = (
-        select(
-            BOQItem.project_id.label("project_id"),
-            func.coalesce(func.sum(BOQItem.grand_total), 0).label("total_budget"),
-        )
-        .where(
-            BOQItem.valid_to.is_(None),
-            BOQItem.parent_id.is_(None),
-            func.upper(func.trim(BOQItem.boq_type)) == "CUSTOMER",
-        )
-        .group_by(BOQItem.project_id)
-        .subquery()
-    )
     statement = (
-        select(Project, func.coalesce(budget.c.total_budget, 0))
-        .outerjoin(budget, budget.c.project_id == Project.id)
+        select(Project)
         .options(noload("*"))
         .order_by(Project.name, Project.id)
     )
@@ -216,11 +206,27 @@ async def list_projects(
     statuses = {item.strip().upper() for item in request.statuses if item.strip()}
     if statuses:
         statement = statement.where(func.upper(Project.status).in_(statuses))
-    rows = (await db.execute(statement.offset(offset).limit(request.limit + 1))).all()
-    has_more = len(rows) > request.limit
-    page = rows[: request.limit]
+    projects = list(
+        (
+            await db.execute(statement.offset(offset).limit(request.limit + 1))
+        ).scalars().all()
+    )
+    has_more = len(projects) > request.limit
+    page = projects[: request.limit]
+    contexts = await load_project_budget_contexts(db, [project.id for project in page])
     return {
-        "items": [_project_item(project, app_settings, total) for project, total in page],
+        "items": [
+            _project_item(
+                project,
+                app_settings,
+                (
+                    contexts[project.id].legacy_mcp_customer_budget
+                    if project.id in contexts
+                    else 0
+                ),
+            )
+            for project in page
+        ],
         "returned_count": len(page),
         "next_cursor": (
             _encode_cursor("projects", offset + len(page), app_settings) if has_more else None
@@ -241,17 +247,8 @@ async def _load_project(db: AsyncSession, project_id: UUID) -> Project:
 
 
 async def _current_customer_budget(db: AsyncSession, project_id: UUID) -> Decimal:
-    value = (
-        await db.execute(
-            select(func.coalesce(func.sum(BOQItem.grand_total), 0)).where(
-                BOQItem.project_id == project_id,
-                BOQItem.valid_to.is_(None),
-                BOQItem.parent_id.is_(None),
-                func.upper(func.trim(BOQItem.boq_type)) == "CUSTOMER",
-            )
-        )
-    ).scalar_one()
-    return Decimal(str(value or 0))
+    context = await load_project_budget_context(db, project_id)
+    return Decimal(context.legacy_mcp_customer_budget if context else "0.00")
 
 
 async def get_project(
