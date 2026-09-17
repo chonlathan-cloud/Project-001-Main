@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   Database,
+  FileSpreadsheet,
   Layers3,
   TriangleAlert,
   Wallet,
@@ -29,6 +30,7 @@ import Loading from './components/Loading';
 import ProjectCashflowCards from './components/ProjectCashflowCards';
 import ProjectFundsWorkspace from './components/funds/ProjectFundsWorkspace';
 import { canMutateAdminData, getStoredAuthUser } from './auth';
+import { BOQ_V2_ENABLED } from './config/features';
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
@@ -683,6 +685,27 @@ function ProjectDetailPage() {
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+            {BOQ_V2_ENABLED && !isOperations ? (
+              <Link
+                to={`/project/detail/${projectId}/boq`}
+                state={{ projectName, projectId }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '7px',
+                  padding: '9px 13px',
+                  borderRadius: '8px',
+                  backgroundColor: 'var(--primary)',
+                  color: 'white',
+                  textDecoration: 'none',
+                  fontSize: '13px',
+                  fontWeight: '700',
+                }}
+              >
+                <FileSpreadsheet size={15} />
+                Open Native BOQ
+              </Link>
+            ) : null}
             <span
               style={{
                 display: 'inline-flex',

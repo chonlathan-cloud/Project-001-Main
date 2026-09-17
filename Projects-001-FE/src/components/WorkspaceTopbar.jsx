@@ -11,7 +11,7 @@ const routeMeta = [
   {
     match: (path) => path.startsWith('/project'),
     title: 'Projects',
-    description: 'Project budgets, BOQ sync status, and execution details.',
+    description: 'Project budgets, native BOQ workspace, legacy history, and execution details.',
   },
   {
     match: (path) => path.startsWith('/approval'),

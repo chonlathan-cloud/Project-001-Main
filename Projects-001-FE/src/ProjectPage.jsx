@@ -13,6 +13,7 @@ import {
   Plus,
   RotateCw,
   SlidersHorizontal,
+  TableProperties,
   X,
 } from 'lucide-react';
 import { motion as Motion } from 'framer-motion';
@@ -31,6 +32,7 @@ import SemiCircleGauge from './components/SemiCircleGauge';
 import CompanyFundsCard from './components/funds/CompanyFundsCard';
 import { useAdminFeedback } from './components/adminFeedback/adminFeedbackContext';
 import { canMutateAdminData, getStoredAuthUser } from './auth';
+import { BOQ_V2_ENABLED } from './config/features';
 
 const INITIAL_PROJECT_FORM = {
   name: '',
@@ -129,7 +131,7 @@ const DrawerField = ({ label, children, helper }) => (
   </label>
 );
 
-const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync, canMutate = true }) => {
+const ProjectCard = ({ project, index, onClick, onEditName, onOpenBoq, nativeBoqEnabled, canMutate = true }) => {
   const { id, name, spent, total, status, progressPercent, projectType, budgetSource, pendingAmount = 0 } = project;
   const left = total - spent;
   const isOverBudget = left < 0;
@@ -248,7 +250,7 @@ const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync, canMutat
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                onOpenSync(project);
+                onOpenBoq(project);
               }}
               style={{
                 width: '32px',
@@ -263,9 +265,9 @@ const ProjectCard = ({ project, index, onClick, onEditName, onOpenSync, canMutat
                 flexShrink: 0,
                 backgroundColor: 'white',
               }}
-              title="Connect BOQ sheet"
+              title={nativeBoqEnabled ? 'Open native BOQ workspace' : 'Connect BOQ sheet'}
             >
-              <Link2 size={14} />
+              {nativeBoqEnabled ? <TableProperties size={14} /> : <Link2 size={14} />}
             </button>
             <button
               type="button"
@@ -562,14 +564,21 @@ const ProjectPage = () => {
       });
 
       setProjects((current) => [createdProject, ...current]);
-      setSelectedProject(createdProject);
-      setDrawerMode('sync');
-      setSyncResult(null);
       notify({
         tone: 'success',
         title: 'Project created',
         message: `"${createdProject.name}" is ready for BOQ setup.`,
       });
+      if (BOQ_V2_ENABLED) {
+        closeDrawer();
+        navigate(`/project/detail/${createdProject.id}/boq`, {
+          state: { projectName: createdProject.name, projectId: createdProject.id },
+        });
+      } else {
+        setSelectedProject(createdProject);
+        setDrawerMode('sync');
+        setSyncResult(null);
+      }
     } catch (createError) {
       setDrawerError(createError.message || 'Failed to create project.');
     } finally {
@@ -859,7 +868,16 @@ const ProjectPage = () => {
                   project={project}
                   index={index}
                   onEditName={handleRenameProject}
-                  onOpenSync={openSyncDrawer}
+                  onOpenBoq={(selected) => {
+                    if (BOQ_V2_ENABLED) {
+                      navigate(`/project/detail/${selected.id}/boq`, {
+                        state: { projectName: selected.name, projectId: selected.id },
+                      });
+                      return;
+                    }
+                    openSyncDrawer(selected);
+                  }}
+                  nativeBoqEnabled={BOQ_V2_ENABLED}
                   canMutate={canMutateProjects}
                   onClick={() =>
                     navigate(`/project/detail/${project.id}`, {

@@ -33,6 +33,7 @@ function getStoredSidebarCollapsed() {
 const DashboardPage = lazy(() => import('./DashboardPage'))
 const ProjectPage = lazy(() => import('./ProjectPage'))
 const ProjectDetailPage = lazy(() => import('./ProjectDetailPage'))
+const BoqWorkspace = lazy(() => import('./components/boq/BoqWorkspace'))
 const InsightsPage = lazy(() => import('./InsightsPage'))
 const InputPage = lazy(() => import('./InputPage'))
 const ApprovalPage = lazy(() => import('./ApprovalPage'))
@@ -228,6 +229,7 @@ function AppRoutes() {
         <Route path="/project" element={<ProjectPage />} />
         <Route path="/project/detail" element={<ProjectDetailPage />} />
         <Route path="/project/detail/:projectId" element={<ProjectDetailPage />} />
+        <Route path="/project/detail/:projectId/boq" element={<BoqWorkspace />} />
         <Route path="/insights" element={<InsightsPage />} />
         <Route path="/approval" element={<ApprovalPage />} />
         <Route path="/profile" element={<ProfilePage />} />

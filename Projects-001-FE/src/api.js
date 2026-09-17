@@ -977,6 +977,51 @@ export async function getProjectBoqSyncJob(jobId) {
   });
 }
 
+export function createBoqIdempotencyKey(prefix = 'boq') {
+  const suffix = globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${suffix}`;
+}
+
+export async function getNativeBoqWorkspace(projectId) {
+  return apiRequest(`/api/v1/projects/${projectId}/boq-workspace`);
+}
+
+export async function getNativeBoqRevision(revisionId) {
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}`);
+}
+
+export async function createNativeBoqDocument(projectId, { idempotencyKey } = {}) {
+  return apiRequest(`/api/v1/projects/${projectId}/boq/documents`, {
+    method: 'POST',
+    headers: {
+      'Idempotency-Key': idempotencyKey || createBoqIdempotencyKey('boq-create'),
+    },
+    body: JSON.stringify({ document_kind: 'MAIN' }),
+  });
+}
+
+export async function saveNativeBoqDraft(revisionId, payload, { idempotencyKey } = {}) {
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}`, {
+    method: 'PATCH',
+    headers: {
+      'Idempotency-Key': idempotencyKey || createBoqIdempotencyKey('boq-save'),
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function copyNativeBoqRevision(projectId, sourceRevisionId, { idempotencyKey } = {}) {
+  return apiRequest(`/api/v1/projects/${projectId}/boq/revisions/${sourceRevisionId}/copy`, {
+    method: 'POST',
+    headers: {
+      'Idempotency-Key': idempotencyKey || createBoqIdempotencyKey('boq-copy'),
+    },
+    body: JSON.stringify({}),
+  });
+}
+
 export async function getProjectDetailData(projectId) {
   const project = await apiRequest(`/api/v1/projects/${projectId}`);
 

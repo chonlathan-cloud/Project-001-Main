@@ -10957,6 +10957,19 @@ h3 {
     padding: 24px 20px;
   }
 
+  .workspace-topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .workspace-actions {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
   .app-sidebar {
     width: 100% !important;
     height: auto !important;

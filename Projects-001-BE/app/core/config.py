@@ -30,6 +30,7 @@ class Settings(BaseSettings):
         default=False,
         alias="FUND_ALLOCATION_ENABLED",
     )
+    boq_v2_enabled: bool = Field(default=False, alias="BOQ_V2_ENABLED")
     rate_limit_auth_per_minute: int = Field(
         default=20,
         ge=1,
