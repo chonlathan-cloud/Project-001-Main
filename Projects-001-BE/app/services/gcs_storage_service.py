@@ -284,6 +284,40 @@ async def upload_input_receipt_to_temp_storage(
     )
 
 
+async def upload_boq_export_artifact(
+    *,
+    project_id: str,
+    document_id: str,
+    revision_id: str,
+    snapshot_id: str,
+    artifact_id: str,
+    file_name: str,
+    file_bytes: bytes,
+    content_type: str,
+) -> str:
+    """Upload a BOQ export under a non-temporary private prefix."""
+
+    safe_name = _sanitize_filename(file_name)
+    identifiers = [project_id, document_id, revision_id, snapshot_id, artifact_id]
+    if any(not re.fullmatch(r"[A-Za-z0-9-]+", value) for value in identifiers):
+        raise ValueError("Invalid BOQ export storage identity")
+    prefix = str(_settings.boq_export_gcs_prefix or "boq_exports").strip("/")
+    if not prefix or ".." in prefix:
+        raise ValueError("Invalid BOQ export GCS prefix")
+    object_name = (
+        f"{prefix}/{project_id}/{document_id}/{revision_id}/"
+        f"{snapshot_id}/{artifact_id}-{safe_name}"
+    )
+    return await asyncio.to_thread(
+        _upload_bytes_to_bucket_sync,
+        bucket_name=get_default_bucket_name(),
+        object_name=object_name,
+        file_bytes=file_bytes,
+        content_type=content_type,
+        cache_control="private, no-store, max-age=0",
+    )
+
+
 async def upload_kyc_image_to_storage(
     *,
     file_bytes: bytes,

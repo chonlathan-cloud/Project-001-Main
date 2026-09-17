@@ -11,13 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.boq import BOQItem, Project
 from app.models.boq_v2 import (
+    BOQV2Acceptance,
     BOQV2AuditEvent,
+    BOQV2BaselineChangeOrder,
+    BOQV2ChangeOrderDeduction,
     BOQV2CommandIdempotency,
     BOQV2CostComponent,
     BOQV2CostPlan,
     BOQV2Document,
+    BOQV2ProjectBaseline,
     BOQV2ProjectBudgetSource,
     BOQV2Revision,
+    BOQV2RevisionSnapshot,
     BOQV2ScopeNode,
 )
 from app.schemas.boq_v2_schema import (
@@ -25,6 +30,9 @@ from app.schemas.boq_v2_schema import (
     BOQV2CostComponentDraft,
     BOQV2CostComponentResponse,
     BOQV2CreateDocumentRequest,
+    BOQV2PaymentScheduleResponse,
+    BOQV2QuotationDraft,
+    BOQV2QuotationResponse,
     BOQV2ReuseSource,
     BOQV2RevisionResponse,
     BOQV2RevisionSummary,
@@ -41,6 +49,8 @@ from app.services.boq_calculation_service import (
     calculate_cost_component,
     extended_amount,
     money,
+    allocate_payment_percentages,
+    vat_amount,
     validate_quantity_or_rate,
 )
 from app.services.boq_domain_service import (
@@ -52,6 +62,7 @@ from app.services.boq_domain_service import (
     canonical_request_hash,
     validate_scope_hierarchy,
 )
+from app.services.boq_numbering_service import next_document_number
 
 
 ZERO_RATE = Decimal("0.0000")
@@ -79,6 +90,129 @@ def _timestamp(value: datetime | None) -> str:
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
     return current.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _optional_timestamp(value: datetime | None) -> str | None:
+    return _timestamp(value) if value is not None else None
+
+
+def _quotation_draft_from_revision(revision: BOQV2Revision) -> BOQV2QuotationDraft:
+    return BOQV2QuotationDraft.model_validate(
+        {
+            "title": revision.quotation_title,
+            "customer_name": revision.customer_name,
+            "customer_address": revision.customer_address,
+            "customer_tax_id": revision.customer_tax_id,
+            "customer_contact": revision.customer_contact,
+            "quotation_date": revision.quotation_date,
+            "valid_until": revision.valid_until,
+            "currency": revision.currency,
+            "vat_rate": revision.vat_rate,
+            "discount_type": revision.discount_type,
+            "discount_value": revision.discount_value,
+            "payment_schedule": revision.payment_schedule or [],
+            "commercial_terms": revision.commercial_terms or [],
+            "document_pages": revision.document_pages or ["BOQ"],
+        }
+    )
+
+
+def _apply_quotation_totals(
+    revision: BOQV2Revision,
+    quotation: BOQV2QuotationDraft,
+    *,
+    subtotal: Decimal,
+    forecast_cost: Decimal | None,
+) -> None:
+    subtotal_value = money(subtotal)
+    if quotation.discount_type == "NONE":
+        discount_amount = ZERO_MONEY
+    elif quotation.discount_type == "FIXED":
+        discount_amount = money(quotation.discount_value)
+    else:
+        discount_amount = money(
+            subtotal_value * quotation.discount_value / Decimal("100")
+        )
+    if discount_amount > subtotal_value:
+        raise BOQDomainError(
+            "INVALID_QUOTATION_DISCOUNT",
+            "Quotation discount cannot exceed the sell subtotal",
+        )
+    net_sell = money(subtotal_value - discount_amount)
+    vat = vat_amount(net_sell, quotation.vat_rate)
+    grand_total = money(net_sell + vat)
+
+    schedule = quotation.payment_schedule
+    if schedule:
+        percentages = [item.percentage for item in schedule]
+        if all(value is not None for value in percentages):
+            allocate_payment_percentages(grand_total, percentages)
+        else:
+            fixed_total = money(
+                sum((item.fixed_amount or ZERO_MONEY for item in schedule), ZERO_MONEY)
+            )
+            if fixed_total != grand_total:
+                raise BOQDomainError(
+                    "INVALID_PAYMENT_SCHEDULE_TOTAL",
+                    "Fixed payment schedule amounts must equal the quotation grand total",
+                )
+
+    revision.quotation_title = _clean_text(quotation.title)
+    revision.customer_name = _clean_text(quotation.customer_name)
+    revision.customer_address = _clean_text(quotation.customer_address)
+    revision.customer_tax_id = _clean_text(quotation.customer_tax_id)
+    revision.customer_contact = _clean_text(quotation.customer_contact)
+    revision.quotation_date = quotation.quotation_date
+    revision.valid_until = quotation.valid_until
+    revision.currency = quotation.currency
+    revision.vat_rate = quotation.vat_rate
+    revision.discount_type = quotation.discount_type
+    revision.discount_value = quotation.discount_value
+    revision.subtotal = subtotal_value
+    revision.discount_amount = discount_amount
+    revision.net_sell_ex_vat = net_sell
+    revision.vat_amount = vat
+    revision.grand_total = grand_total
+    revision.payment_schedule = [
+        item.model_dump(mode="json") for item in quotation.payment_schedule
+    ]
+    revision.commercial_terms = [
+        str(item).strip() for item in quotation.commercial_terms
+    ]
+    revision.document_pages = list(quotation.document_pages)
+    revision.forecast_margin = (
+        money(net_sell - forecast_cost) if forecast_cost is not None else None
+    )
+
+
+def _payment_schedule_response(
+    revision: BOQV2Revision,
+) -> list[BOQV2PaymentScheduleResponse]:
+    schedule = list(revision.payment_schedule or [])
+    if not schedule:
+        return []
+    percentages = [item.get("percentage") for item in schedule]
+    if all(value is not None for value in percentages):
+        amounts = allocate_payment_percentages(revision.grand_total, percentages)
+    else:
+        amounts = tuple(money(item.get("fixed_amount") or 0) for item in schedule)
+    return [
+        BOQV2PaymentScheduleResponse(
+            label=str(item.get("label") or ""),
+            percentage=(
+                _rate_string(item.get("percentage"))
+                if item.get("percentage") is not None
+                else None
+            ),
+            fixed_amount=(
+                _money_string(item.get("fixed_amount"))
+                if item.get("fixed_amount") is not None
+                else None
+            ),
+            amount=_money_string(amount),
+        )
+        for item, amount in zip(schedule, amounts, strict=True)
+    ]
 
 
 async def _project_or_error(db: AsyncSession, project_id: UUID) -> Project:
@@ -255,6 +389,24 @@ async def load_boq_revision(
 ) -> BOQV2RevisionResponse:
     revision, document, project = await _revision_context(db, revision_id)
     plan = await _current_cost_plan(db, revision_id)
+    issued_snapshot = (
+        await db.execute(
+            select(BOQV2RevisionSnapshot)
+            .where(
+                BOQV2RevisionSnapshot.revision_id == revision_id,
+                BOQV2RevisionSnapshot.purpose == "ISSUE",
+            )
+            .order_by(BOQV2RevisionSnapshot.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    acceptance = (
+        await db.execute(
+            select(BOQV2Acceptance).where(
+                BOQV2Acceptance.revision_id == revision_id
+            )
+        )
+    ).scalar_one_or_none()
     nodes = list(
         (
             await db.execute(
@@ -409,9 +561,16 @@ async def load_boq_revision(
         project_id=project.id,
         project_name=project.name,
         document_id=document.id,
+        document_number=document.document_number,
         revision_id=revision.id,
         predecessor_revision_id=revision.predecessor_revision_id,
         document_kind=document.document_kind,
+        direction=document.direction,
+        alternative_group_id=document.alternative_group_id,
+        base_baseline_id=revision.base_baseline_id or document.base_baseline_id,
+        base_baseline_version=(
+            revision.base_baseline_version or document.base_baseline_version
+        ),
         status=revision.status,
         revision_number=revision.revision_number,
         version=revision.version,
@@ -435,6 +594,36 @@ async def load_boq_revision(
             required_count=revision.required_cost_count,
             priced_count=revision.priced_cost_count,
             missing_component_ids=missing_component_ids,
+        ),
+        quotation=BOQV2QuotationResponse(
+            title=revision.quotation_title,
+            customer_name=revision.customer_name,
+            customer_address=revision.customer_address,
+            customer_tax_id=revision.customer_tax_id,
+            customer_contact=revision.customer_contact,
+            quotation_date=revision.quotation_date,
+            valid_until=revision.valid_until,
+            currency=revision.currency,
+            vat_rate=_rate_string(revision.vat_rate) or "0.0000",
+            discount_type=revision.discount_type,
+            discount_value=_rate_string(revision.discount_value) or "0.0000",
+            subtotal=_money_string(revision.subtotal),
+            discount_amount=_money_string(revision.discount_amount),
+            net_sell_ex_vat=_money_string(revision.net_sell_ex_vat),
+            vat_amount=_money_string(revision.vat_amount),
+            grand_total=_money_string(revision.grand_total),
+            payment_schedule=_payment_schedule_response(revision),
+            commercial_terms=list(revision.commercial_terms or []),
+            document_pages=list(revision.document_pages or []),
+        ),
+        issued_at=_optional_timestamp(revision.issued_at),
+        issued_by=revision.issued_by,
+        issued_snapshot_id=issued_snapshot.id if issued_snapshot else None,
+        accepted_at=_optional_timestamp(acceptance.recorded_at if acceptance else None),
+        accepted_by=acceptance.actor if acceptance else None,
+        accepted_agreed_date=acceptance.agreed_date if acceptance else None,
+        acceptance_evidence_reference=(
+            acceptance.evidence_reference if acceptance else None
         ),
         nodes=response_nodes,
         created_at=_timestamp(revision.created_at),
@@ -474,6 +663,27 @@ async def load_boq_workspace(
             )
         )
     ).scalar_one_or_none()
+    active_baseline = (
+        await db.execute(
+            select(BOQV2ProjectBaseline).where(
+                BOQV2ProjectBaseline.project_id == project_id,
+                BOQV2ProjectBaseline.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    active_change_order_ids: list[UUID] = []
+    if active_baseline is not None:
+        active_change_order_ids = list(
+            (
+                await db.execute(
+                    select(BOQV2BaselineChangeOrder.revision_id)
+                    .where(
+                        BOQV2BaselineChangeOrder.baseline_id == active_baseline.id
+                    )
+                    .order_by(BOQV2BaselineChangeOrder.position)
+                )
+            ).scalars()
+        )
 
     reuse_rows = (
         await db.execute(
@@ -497,11 +707,20 @@ async def load_boq_workspace(
         active_source_kind=source.source_kind if source is not None else "LEGACY",
         legacy_available=legacy_row_count > 0,
         legacy_row_count=legacy_row_count,
+        active_baseline_id=active_baseline.id if active_baseline else None,
+        active_baseline_version=active_baseline.version if active_baseline else None,
+        active_main_revision_id=(
+            active_baseline.main_revision_id if active_baseline else None
+        ),
+        active_change_order_revision_ids=active_change_order_ids,
         revisions=[
             BOQV2RevisionSummary(
                 revision_id=revision.id,
                 document_id=document.id,
+                document_number=document.document_number,
                 document_kind=document.document_kind,
+                direction=document.direction,
+                alternative_group_id=document.alternative_group_id,
                 revision_number=revision.revision_number,
                 status=revision.status,
                 version=revision.version,
@@ -521,6 +740,7 @@ async def load_boq_workspace(
                 project_name=source_project.name,
                 revision_id=revision.id,
                 document_id=document.id,
+                document_number=document.document_number,
                 revision_number=revision.revision_number,
                 status=revision.status,
                 net_sell_ex_vat=_money_string(revision.net_sell_ex_vat),
@@ -554,11 +774,14 @@ async def create_boq_document(
 
     await _replace_current_working_plan(db, project.id)
     cost_plan_version = await _next_cost_plan_version(db, project.id)
+    document_number = await next_document_number(db, document_kind="MAIN")
 
     document = BOQV2Document(
         id=uuid4(),
         project_id=project.id,
+        document_number=document_number,
         document_kind="MAIN",
+        revision_counter=1,
         created_by=actor,
     )
     revision = BOQV2Revision(
@@ -569,7 +792,18 @@ async def create_boq_document(
         status="DRAFT",
         version=1,
         calculation_version=CALCULATION_VERSION,
+        currency="THB",
+        vat_rate=project.vat_percent or Decimal("7.0000"),
+        discount_type="NONE",
+        discount_value=ZERO_RATE,
+        subtotal=ZERO_MONEY,
+        discount_amount=ZERO_MONEY,
         net_sell_ex_vat=ZERO_MONEY,
+        vat_amount=ZERO_MONEY,
+        grand_total=ZERO_MONEY,
+        payment_schedule=[],
+        commercial_terms=[],
+        document_pages=["BOQ", "PAYMENT_TERMS", "COMMERCIAL_TERMS"],
         known_estimated_cost=ZERO_MONEY,
         forecast_cost=ZERO_MONEY,
         forecast_margin=ZERO_MONEY,
@@ -636,7 +870,7 @@ async def save_boq_draft(
 ) -> BOQV2RevisionResponse:
     initial_revision, _, _ = await _revision_context(db, revision_id)
     await acquire_project_budget_locks(db, [initial_revision.project_id])
-    revision, _, _ = await _revision_context(db, revision_id, for_update=True)
+    revision, document, _ = await _revision_context(db, revision_id, for_update=True)
     command, prior_revision_id = await _begin_command(
         db,
         actor=actor,
@@ -650,6 +884,38 @@ async def save_boq_draft(
 
     assert_mutable_draft(revision.status)
     assert_expected_version(current=revision.version, expected=request.expected_version)
+    if document.document_kind == "CHANGE_ORDER" and document.direction == "DEDUCT":
+        deductions = list(
+            (
+                await db.execute(
+                    select(BOQV2ChangeOrderDeduction).where(
+                        BOQV2ChangeOrderDeduction.revision_id == revision.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        deduction_by_logical = {item.target_logical_id: item for item in deductions}
+        draft_items = [item for item in request.nodes if item.node_kind == "ITEM"]
+        if {item.logical_id for item in draft_items} != set(deduction_by_logical):
+            raise BOQDomainError(
+                "IMMUTABLE_DEDUCTION_SCOPE",
+                "DEDUCT scope membership is fixed; revise the change order instead",
+            )
+        for item in draft_items:
+            deduction = deduction_by_logical[item.logical_id]
+            quantity = Decimal(str(item.quantity or 0))
+            rate = Decimal(str(item.sell_material_unit_rate or 0)) + Decimal(
+                str(item.sell_labor_unit_rate or 0)
+            )
+            if quantity != Decimal(deduction.quantity) or rate != Decimal(
+                deduction.unit_rate
+            ):
+                raise BOQDomainError(
+                    "IMMUTABLE_DEDUCTION_SCOPE",
+                    "DEDUCT quantity and sell rate are frozen from the accepted target",
+                )
     plan = await _current_cost_plan(db, revision_id, for_update=True)
     if plan is None:
         await _replace_current_working_plan(db, revision.project_id)
@@ -993,10 +1259,15 @@ async def save_boq_draft(
     }
     revision.version += 1
     revision.calculation_version = result.calculation_version
-    revision.net_sell_ex_vat = result.net_sell_ex_vat
+    quotation = request.quotation or _quotation_draft_from_revision(revision)
+    _apply_quotation_totals(
+        revision,
+        quotation,
+        subtotal=result.net_sell_ex_vat,
+        forecast_cost=result.forecast_cost,
+    )
     revision.known_estimated_cost = result.known_estimated_cost
     revision.forecast_cost = result.forecast_cost
-    revision.forecast_margin = result.forecast_margin
     revision.required_cost_count = result.required_count
     revision.priced_cost_count = result.priced_count
     revision.updated_at = func.now()
@@ -1009,7 +1280,7 @@ async def save_boq_draft(
     after = {
         "version": revision.version,
         "node_count": len(request.nodes),
-        "net_sell_ex_vat": _money_string(result.net_sell_ex_vat),
+        "net_sell_ex_vat": _money_string(revision.net_sell_ex_vat),
         "required_cost_count": result.required_count,
         "priced_cost_count": result.priced_count,
     }
@@ -1065,6 +1336,7 @@ async def copy_boq_revision(
 
     await _replace_current_working_plan(db, target_project.id)
     cost_plan_version = await _next_cost_plan_version(db, target_project.id)
+    document_number = await next_document_number(db, document_kind="MAIN")
 
     source_nodes = list(
         (
@@ -1095,7 +1367,9 @@ async def copy_boq_revision(
     document = BOQV2Document(
         id=uuid4(),
         project_id=target_project.id,
+        document_number=document_number,
         document_kind="MAIN",
+        revision_counter=1,
         created_by=actor,
     )
     revision = BOQV2Revision(
@@ -1107,7 +1381,25 @@ async def copy_boq_revision(
         status="DRAFT",
         version=1,
         calculation_version=source_revision.calculation_version,
+        quotation_title=source_revision.quotation_title,
+        customer_name=source_revision.customer_name,
+        customer_address=source_revision.customer_address,
+        customer_tax_id=source_revision.customer_tax_id,
+        customer_contact=source_revision.customer_contact,
+        quotation_date=source_revision.quotation_date,
+        valid_until=source_revision.valid_until,
+        currency=source_revision.currency,
+        vat_rate=source_revision.vat_rate,
+        discount_type=source_revision.discount_type,
+        discount_value=source_revision.discount_value,
+        subtotal=source_revision.subtotal,
+        discount_amount=source_revision.discount_amount,
         net_sell_ex_vat=source_revision.net_sell_ex_vat,
+        vat_amount=source_revision.vat_amount,
+        grand_total=source_revision.grand_total,
+        payment_schedule=list(source_revision.payment_schedule or []),
+        commercial_terms=list(source_revision.commercial_terms or []),
+        document_pages=list(source_revision.document_pages or []),
         known_estimated_cost=source_revision.known_estimated_cost,
         forecast_cost=source_revision.forecast_cost,
         forecast_margin=source_revision.forecast_margin,

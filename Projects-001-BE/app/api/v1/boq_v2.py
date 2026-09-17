@@ -18,6 +18,17 @@ from app.schemas.boq_v2_schema import (
     BOQV2SaveDraftRequest,
     BOQV2WorkspaceResponse,
 )
+from app.schemas.boq_quotation_schema import (
+    BOQV2AcceptanceResponse,
+    BOQV2CreateAlternativeRequest,
+    BOQV2CreateChangeOrderRequest,
+    BOQV2ExpectedVersionRequest,
+    BOQV2ExportArtifactResponse,
+    BOQV2ExportRequest,
+    BOQV2QuotationPreviewResponse,
+    BOQV2RecordAcceptanceRequest,
+    BOQV2TransitionRequest,
+)
 from app.schemas.responses import StandardResponse
 from app.services.boq_document_service import (
     copy_boq_revision,
@@ -27,6 +38,22 @@ from app.services.boq_document_service import (
     save_boq_draft,
 )
 from app.services.boq_domain_service import BOQDomainError
+from app.services.boq_export_service import (
+    create_export_download,
+    load_export_response,
+    render_and_upload_export,
+    request_export,
+)
+from app.services.boq_quotation_service import (
+    create_alternative,
+    create_change_order,
+    create_preview_snapshot,
+    issue_quotation,
+    load_quotation_preview,
+    record_acceptance,
+    revise_quotation,
+    transition_quotation,
+)
 
 
 router = APIRouter(tags=["Native BOQ V2"])
@@ -71,8 +98,21 @@ def _domain_http_exception(
         "FINANCIAL_DISCARD_CONFIRMATION_REQUIRED",
         "BOQ_NOT_AVAILABLE",
         "PHASE_2_MAIN_ONLY",
+        "INVALID_REVISION_SOURCE",
+        "INVALID_ACCEPTANCE_STATE",
+        "INVALID_TRANSITION",
+        "STALE_BASELINE_VERSION",
+        "ACTIVE_BASELINE_REQUIRED",
+        "BASELINE_REPLACEMENT_CONFIRMATION_REQUIRED",
+        "CHANGE_ORDER_REPLACEMENT_MAPPING_INCOMPLETE",
+        "DEDUCTION_EXCEEDS_REMAINING_SCOPE",
+        "CHANGE_ORDER_TARGET_NOT_ACTIVE",
+        "EXPORT_NOT_READY",
+        "EXPORT_COST_PLAN_MISMATCH",
     }:
         http_status = status.HTTP_409_CONFLICT
+    elif error.code in {"EXPORT_STORAGE_FAILED", "EXPORT_RENDER_FAILED"}:
+        http_status = status.HTTP_503_SERVICE_UNAVAILABLE
     else:
         http_status = status.HTTP_422_UNPROCESSABLE_CONTENT
     detail: dict[str, object] = {"code": error.code, "message": error.message}
@@ -235,3 +275,398 @@ async def copy_native_boq_revision(
                 "message": "The BOQ copy conflicted with another command; retry safely",
             },
         ) from error
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/preview-snapshots",
+    response_model=StandardResponse[BOQV2QuotationPreviewResponse],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def create_native_boq_preview_snapshot(
+    revision_id: UUID,
+    request: BOQV2ExpectedVersionRequest,
+    idempotency_key: IdempotencyKey,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    try:
+        data = await create_preview_snapshot(
+            db,
+            revision_id=revision_id,
+            request=request,
+            actor=_actor(user),
+            idempotency_key=idempotency_key,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+
+
+@router.get(
+    "/boq/revisions/{revision_id}/preview",
+    response_model=StandardResponse[BOQV2QuotationPreviewResponse],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def get_native_boq_preview(
+    revision_id: UUID,
+    snapshot_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    try:
+        return StandardResponse(
+            data=await load_quotation_preview(
+                db,
+                revision_id=revision_id,
+                snapshot_id=snapshot_id,
+            )
+        )
+    except BOQDomainError as error:
+        raise _domain_http_exception(error) from error
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/issue",
+    response_model=StandardResponse[BOQV2RevisionResponse],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def issue_native_boq_quotation(
+    revision_id: UUID,
+    request: BOQV2ExpectedVersionRequest,
+    idempotency_key: IdempotencyKey,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    try:
+        data = await issue_quotation(
+            db,
+            revision_id=revision_id,
+            request=request,
+            actor=_actor(user),
+            idempotency_key=idempotency_key,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "BOQ_WRITE_CONFLICT",
+                "message": "The quotation changed concurrently; reload and retry",
+            },
+        ) from error
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/revise",
+    response_model=StandardResponse[BOQV2RevisionResponse],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def revise_native_boq_quotation(
+    revision_id: UUID,
+    request: BOQV2ExpectedVersionRequest,
+    idempotency_key: IdempotencyKey,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    try:
+        data = await revise_quotation(
+            db,
+            revision_id=revision_id,
+            request=request,
+            actor=_actor(user),
+            idempotency_key=idempotency_key,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "BOQ_WRITE_CONFLICT",
+                "message": "The quotation revision conflicted; reload and retry",
+            },
+        ) from error
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/alternatives",
+    response_model=StandardResponse[BOQV2RevisionResponse],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def create_native_boq_alternative(
+    revision_id: UUID,
+    request: BOQV2CreateAlternativeRequest,
+    idempotency_key: IdempotencyKey,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    try:
+        data = await create_alternative(
+            db,
+            revision_id=revision_id,
+            request=request,
+            actor=_actor(user),
+            idempotency_key=idempotency_key,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "BOQ_WRITE_CONFLICT",
+                "message": "The alternative conflicted with another command",
+            },
+        ) from error
+
+
+@router.post(
+    "/projects/{project_id}/boq/change-orders",
+    response_model=StandardResponse[BOQV2RevisionResponse],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def create_native_boq_change_order(
+    project_id: UUID,
+    request: BOQV2CreateChangeOrderRequest,
+    idempotency_key: IdempotencyKey,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    try:
+        data = await create_change_order(
+            db,
+            project_id=project_id,
+            request=request,
+            actor=_actor(user),
+            idempotency_key=idempotency_key,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "BOQ_WRITE_CONFLICT",
+                "message": "The active baseline changed; reload and retry",
+            },
+        ) from error
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/record-acceptance",
+    response_model=StandardResponse[BOQV2AcceptanceResponse],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def record_native_boq_acceptance(
+    revision_id: UUID,
+    request: BOQV2RecordAcceptanceRequest,
+    idempotency_key: IdempotencyKey,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    try:
+        data = await record_acceptance(
+            db,
+            revision_id=revision_id,
+            request=request,
+            actor=_actor(user),
+            idempotency_key=idempotency_key,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "BOQ_WRITE_CONFLICT",
+                "message": "Acceptance conflicted with the active baseline",
+            },
+        ) from error
+
+
+async def _transition_native_boq(
+    *,
+    revision_id: UUID,
+    action: str,
+    request: BOQV2TransitionRequest,
+    idempotency_key: str,
+    db: AsyncSession,
+    user: AuthenticatedUser,
+) -> StandardResponse[BOQV2RevisionResponse]:
+    try:
+        data = await transition_quotation(
+            db,
+            revision_id=revision_id,
+            action=action,
+            request=request,
+            actor=_actor(user),
+            idempotency_key=idempotency_key,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/withdraw",
+    response_model=StandardResponse[BOQV2RevisionResponse],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def withdraw_native_boq_quotation(
+    revision_id: UUID,
+    request: BOQV2TransitionRequest,
+    idempotency_key: IdempotencyKey,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    return await _transition_native_boq(
+        revision_id=revision_id,
+        action="WITHDRAW",
+        request=request,
+        idempotency_key=idempotency_key,
+        db=db,
+        user=user,
+    )
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/reject",
+    response_model=StandardResponse[BOQV2RevisionResponse],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def reject_native_boq_quotation(
+    revision_id: UUID,
+    request: BOQV2TransitionRequest,
+    idempotency_key: IdempotencyKey,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    return await _transition_native_boq(
+        revision_id=revision_id,
+        action="REJECT",
+        request=request,
+        idempotency_key=idempotency_key,
+        db=db,
+        user=user,
+    )
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/exports",
+    response_model=StandardResponse[BOQV2ExportArtifactResponse],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def export_native_boq_quotation(
+    revision_id: UUID,
+    request: BOQV2ExportRequest,
+    idempotency_key: IdempotencyKey,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_admin_user),
+):
+    try:
+        artifact = await request_export(
+            db,
+            revision_id=revision_id,
+            request=request,
+            actor=_actor(user),
+            idempotency_key=idempotency_key,
+        )
+        await db.commit()
+        data = await render_and_upload_export(
+            db,
+            revision_id=revision_id,
+            artifact_id=artifact.id,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        if error.code.startswith("EXPORT_"):
+            await db.commit()
+        else:
+            await db.rollback()
+        raise _domain_http_exception(error) from error
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "EXPORT_WRITE_CONFLICT",
+                "message": "Export request conflicted; retry with the same key",
+            },
+        ) from error
+
+
+@router.get(
+    "/boq/revisions/{revision_id}/exports/{artifact_id}",
+    response_model=StandardResponse[BOQV2ExportArtifactResponse],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def get_native_boq_export(
+    revision_id: UUID,
+    artifact_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    try:
+        return StandardResponse(
+            data=await load_export_response(
+                db,
+                revision_id=revision_id,
+                artifact_id=artifact_id,
+            )
+        )
+    except BOQDomainError as error:
+        raise _domain_http_exception(error) from error
+
+
+@router.get(
+    "/boq/revisions/{revision_id}/exports/{artifact_id}/download",
+    response_model=StandardResponse[BOQV2ExportArtifactResponse],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def download_native_boq_export(
+    revision_id: UUID,
+    artifact_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    try:
+        return StandardResponse(
+            data=await create_export_download(
+                db,
+                revision_id=revision_id,
+                artifact_id=artifact_id,
+            )
+        )
+    except BOQDomainError as error:
+        raise _domain_http_exception(error) from error

@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
+from app.core.database import engine
 from main import app
 
 
@@ -371,3 +372,4 @@ def test_native_boq_phase2_create_save_reload_copy_reorder_and_roles() -> None:
                 await connection.close()
 
         assert asyncio.run(operational_rows()) == (0, 0)
+        client.portal.call(engine.dispose)

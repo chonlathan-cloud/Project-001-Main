@@ -163,6 +163,11 @@
 }
 
 .boq-empty-state {
+  --boq-primary: #4f6f64;
+  --boq-ink: #252a28;
+  --boq-muted: #6b716e;
+  --boq-border: #deded8;
+  --boq-paper: #fff;
   display: flex;
   min-height: 330px;
   flex-direction: column;
@@ -172,6 +177,8 @@
   padding: 42px 24px;
   border: 1px dashed #c9c6be;
   background: var(--boq-paper);
+  color: var(--boq-ink);
+  font-family: Inter, Sarabun, sans-serif;
   text-align: center;
 }
 

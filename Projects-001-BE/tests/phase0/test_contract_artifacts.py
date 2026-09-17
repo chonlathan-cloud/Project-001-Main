@@ -131,13 +131,13 @@ def test_schema_preflight_accepts_only_safe_local_test_target_by_default() -> No
         )
 
 
-def test_phase1_registers_v2_tables_without_public_snapshot_route() -> None:
+def test_current_v2_schema_remains_additive_to_the_project_contract() -> None:
     import app.models  # noqa: F401
     from app.core.database import Base
 
     assert len(
         [name for name in Base.metadata.tables if name.startswith("boq_v2_")]
-    ) == 10
+    ) == 15
     project_router = (BACKEND_DIR / "app/api/v1/projects.py").read_text(
         encoding="utf-8"
     )

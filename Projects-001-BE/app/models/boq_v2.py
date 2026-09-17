@@ -13,6 +13,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -34,6 +35,19 @@ QUANTITY = Numeric(20, 4)
 MONEY = Numeric(20, 2)
 
 
+class BOQV2DocumentSequence(Base):
+    __tablename__ = "boq_v2_document_sequences"
+    __table_args__ = (
+        CheckConstraint("next_value > 0", name="ck_boq_v2_document_sequence_value"),
+    )
+
+    sequence_key = Column(String(32), primary_key=True)
+    next_value = Column(Integer, nullable=False, server_default=text("1"))
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class BOQV2Document(Base):
     __tablename__ = "boq_v2_documents"
     __table_args__ = (
@@ -51,14 +65,37 @@ class BOQV2Document(Base):
             "OR (document_kind <> 'ALTERNATIVE' AND alternative_group_id IS NULL)",
             name="ck_boq_v2_document_alternative_group",
         ),
+        CheckConstraint(
+            "(document_kind = 'CHANGE_ORDER' AND base_baseline_id IS NOT NULL "
+            "AND base_baseline_version IS NOT NULL) OR "
+            "(document_kind <> 'CHANGE_ORDER' AND base_baseline_id IS NULL "
+            "AND base_baseline_version IS NULL)",
+            name="ck_boq_v2_document_change_order_baseline",
+        ),
+        CheckConstraint(
+            "revision_counter > 0", name="ck_boq_v2_document_revision_counter"
+        ),
+        UniqueConstraint("document_number", name="uq_boq_v2_document_number"),
         Index("ix_boq_v2_documents_project", "project_id", "created_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    document_number = Column(String(64), nullable=False)
     document_kind = Column(String(24), nullable=False)
     direction = Column(String(8), nullable=True)
     alternative_group_id = Column(UUID(as_uuid=True), nullable=True)
+    base_baseline_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "boq_v2_project_baselines.id",
+            name="fk_boq_v2_documents_base_baseline",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
+    base_baseline_version = Column(Integer, nullable=True)
+    revision_counter = Column(Integer, nullable=False, server_default=text("1"))
     created_by = Column(String, nullable=False)
     created_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -75,6 +112,25 @@ class BOQV2Revision(Base):
         ),
         CheckConstraint("revision_number > 0", name="ck_boq_v2_revision_number"),
         CheckConstraint("version > 0", name="ck_boq_v2_revision_version"),
+        CheckConstraint("currency = 'THB'", name="ck_boq_v2_revision_currency"),
+        CheckConstraint(
+            "vat_rate >= 0 AND vat_rate <= 100",
+            name="ck_boq_v2_revision_vat_rate",
+        ),
+        CheckConstraint(
+            "discount_type IN ('NONE', 'PERCENT', 'FIXED')",
+            name="ck_boq_v2_revision_discount_type",
+        ),
+        CheckConstraint(
+            "discount_value >= 0 AND discount_amount >= 0 AND subtotal >= 0 "
+            "AND vat_amount >= 0 AND grand_total >= 0",
+            name="ck_boq_v2_revision_document_totals",
+        ),
+        CheckConstraint(
+            "(base_baseline_id IS NULL AND base_baseline_version IS NULL) OR "
+            "(base_baseline_id IS NOT NULL AND base_baseline_version IS NOT NULL)",
+            name="ck_boq_v2_revision_baseline_identity",
+        ),
         CheckConstraint(
             "required_cost_count >= 0 AND priced_cost_count >= 0 "
             "AND priced_cost_count <= required_cost_count",
@@ -94,18 +150,52 @@ class BOQV2Revision(Base):
     predecessor_revision_id = Column(
         UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=True
     )
+    base_baseline_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "boq_v2_project_baselines.id",
+            name="fk_boq_v2_revisions_base_baseline",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
+    base_baseline_version = Column(Integer, nullable=True)
     revision_number = Column(Integer, nullable=False)
     status = Column(String(16), nullable=False, server_default=text("'DRAFT'"))
     version = Column(Integer, nullable=False, server_default=text("1"))
     calculation_version = Column(
         String(32), nullable=False, server_default=text("'boq-v2-calc-v1'")
     )
+    quotation_title = Column(String(500), nullable=True)
+    customer_name = Column(String(500), nullable=True)
+    customer_address = Column(Text, nullable=True)
+    customer_tax_id = Column(String(64), nullable=True)
+    customer_contact = Column(String(255), nullable=True)
+    quotation_date = Column(Date, nullable=True)
+    valid_until = Column(Date, nullable=True)
+    currency = Column(String(3), nullable=False, server_default=text("'THB'"))
+    vat_rate = Column(QUANTITY, nullable=False, server_default=text("7"))
+    discount_type = Column(String(16), nullable=False, server_default=text("'NONE'"))
+    discount_value = Column(QUANTITY, nullable=False, server_default=text("0"))
+    subtotal = Column(MONEY, nullable=False, server_default=text("0"))
+    discount_amount = Column(MONEY, nullable=False, server_default=text("0"))
     net_sell_ex_vat = Column(MONEY, nullable=True)
+    vat_amount = Column(MONEY, nullable=False, server_default=text("0"))
+    grand_total = Column(MONEY, nullable=False, server_default=text("0"))
+    payment_schedule = Column(JSON, nullable=False, server_default=text("'[]'::json"))
+    commercial_terms = Column(JSON, nullable=False, server_default=text("'[]'::json"))
+    document_pages = Column(
+        JSON,
+        nullable=False,
+        server_default=text("'[\"BOQ\", \"PAYMENT_TERMS\", \"COMMERCIAL_TERMS\"]'::json"),
+    )
     known_estimated_cost = Column(MONEY, nullable=True)
     forecast_cost = Column(MONEY, nullable=True)
     forecast_margin = Column(MONEY, nullable=True)
     required_cost_count = Column(Integer, nullable=False, server_default=text("0"))
     priced_cost_count = Column(Integer, nullable=False, server_default=text("0"))
+    issued_by = Column(String, nullable=True)
+    issued_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String, nullable=False)
     created_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -345,6 +435,9 @@ class BOQV2ProjectBaseline(Base):
     main_revision_id = Column(
         UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
     )
+    main_snapshot_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revision_snapshots.id"), nullable=True
+    )
     cost_plan_id = Column(
         UUID(as_uuid=True), ForeignKey("boq_v2_cost_plans.id"), nullable=True
     )
@@ -374,6 +467,9 @@ class BOQV2BaselineChangeOrder(Base):
             "baseline_id", "revision_id", name="uq_boq_v2_baseline_co_revision"
         ),
         UniqueConstraint(
+            "baseline_id", "document_id", name="uq_boq_v2_baseline_co_document"
+        ),
+        UniqueConstraint(
             "baseline_id", "position", name="uq_boq_v2_baseline_co_position"
         ),
     )
@@ -385,7 +481,172 @@ class BOQV2BaselineChangeOrder(Base):
     revision_id = Column(
         UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
     )
+    document_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_documents.id"), nullable=False
+    )
+    snapshot_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revision_snapshots.id"), nullable=False
+    )
     position = Column(Integer, nullable=False)
+
+
+class BOQV2ChangeOrderDeduction(Base):
+    __tablename__ = "boq_v2_change_order_deductions"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_boq_v2_co_deduction_quantity"),
+        CheckConstraint("amount >= 0", name="ck_boq_v2_co_deduction_amount"),
+        UniqueConstraint(
+            "revision_id",
+            "target_logical_id",
+            name="uq_boq_v2_co_deduction_target",
+        ),
+        Index(
+            "ix_boq_v2_co_deduction_project_target",
+            "project_id",
+            "target_logical_id",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    document_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_documents.id"), nullable=False
+    )
+    revision_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
+    )
+    base_baseline_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_project_baselines.id"), nullable=False
+    )
+    base_baseline_version = Column(Integer, nullable=False)
+    target_revision_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
+    )
+    target_logical_id = Column(UUID(as_uuid=True), nullable=False)
+    quantity = Column(QUANTITY, nullable=False)
+    unit_rate = Column(QUANTITY, nullable=False)
+    amount = Column(MONEY, nullable=False)
+
+
+class BOQV2RevisionSnapshot(Base):
+    __tablename__ = "boq_v2_revision_snapshots"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('PREVIEW', 'ISSUE')",
+            name="ck_boq_v2_snapshot_purpose",
+        ),
+        CheckConstraint(
+            "lifecycle_status IN ('DRAFT', 'ISSUED')",
+            name="ck_boq_v2_snapshot_lifecycle_status",
+        ),
+        CheckConstraint("source_version > 0", name="ck_boq_v2_snapshot_version"),
+        UniqueConstraint(
+            "revision_id",
+            "source_version",
+            "purpose",
+            name="uq_boq_v2_snapshot_revision_version_purpose",
+        ),
+        Index("ix_boq_v2_snapshot_project_created", "project_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    document_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_documents.id"), nullable=False
+    )
+    revision_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
+    )
+    source_version = Column(Integer, nullable=False)
+    purpose = Column(String(16), nullable=False)
+    lifecycle_status = Column(String(16), nullable=False)
+    calculation_version = Column(String(32), nullable=False)
+    customer_payload = Column(JSON, nullable=False)
+    internal_payload = Column(JSON, nullable=False)
+    payload_sha256 = Column(String(64), nullable=False)
+    created_by = Column(String, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2Acceptance(Base):
+    __tablename__ = "boq_v2_acceptances"
+    __table_args__ = (
+        UniqueConstraint("revision_id", name="uq_boq_v2_acceptance_revision"),
+        Index("ix_boq_v2_acceptance_project_recorded", "project_id", "recorded_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    document_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_documents.id"), nullable=False
+    )
+    revision_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
+    )
+    snapshot_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revision_snapshots.id"), nullable=False
+    )
+    agreed_date = Column(Date, nullable=False)
+    actor = Column(String, nullable=False)
+    evidence_reference = Column(String(1000), nullable=True)
+    note = Column(Text, nullable=True)
+    recorded_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2ExportArtifact(Base):
+    __tablename__ = "boq_v2_export_artifacts"
+    __table_args__ = (
+        CheckConstraint(
+            "audience IN ('CUSTOMER', 'INTERNAL')",
+            name="ck_boq_v2_export_audience",
+        ),
+        CheckConstraint(
+            "file_format IN ('XLSX', 'PDF')",
+            name="ck_boq_v2_export_format",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'READY', 'FAILED')",
+            name="ck_boq_v2_export_status",
+        ),
+        CheckConstraint(
+            "audience = 'CUSTOMER' OR file_format = 'XLSX'",
+            name="ck_boq_v2_internal_export_xlsx_only",
+        ),
+        Index("ix_boq_v2_export_project_created", "project_id", "created_at"),
+        Index("ix_boq_v2_export_revision_created", "revision_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    document_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_documents.id"), nullable=False
+    )
+    revision_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
+    )
+    snapshot_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revision_snapshots.id"), nullable=False
+    )
+    calculation_version = Column(String(32), nullable=False)
+    audience = Column(String(16), nullable=False)
+    file_format = Column(String(8), nullable=False)
+    cost_plan_version = Column(Integer, nullable=True)
+    status = Column(String(16), nullable=False, server_default=text("'PENDING'"))
+    filename = Column(String(255), nullable=False)
+    mime_type = Column(String(120), nullable=False)
+    storage_key = Column(String, nullable=True)
+    sha256 = Column(String(64), nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    error_code = Column(String(120), nullable=True)
+    created_by = Column(String, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class BOQV2ProjectBudgetSource(Base):

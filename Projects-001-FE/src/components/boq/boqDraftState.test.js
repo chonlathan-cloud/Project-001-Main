@@ -7,6 +7,7 @@ import {
   duplicateDraftItem,
   moveDraftNode,
   moveDraftNodeTo,
+  normalizeQuotationDraft,
   removeDraftNode,
   updateDraftComponent,
 } from './boqDraftState.js';
@@ -37,6 +38,30 @@ test('stable logical IDs survive reorder and move operations', () => {
     section.logical_id
   );
   assert.deepEqual(new Set(moved.map((node) => node.logical_id)), new Set(nodes.map((node) => node.logical_id)));
+});
+
+test('quotation save strips calculated payment amounts and preserves immutable identity inputs', () => {
+  const quotation = normalizeQuotationDraft({
+    title: 'ใบเสนอราคา',
+    customer_name: 'บริษัท ทดสอบ จำกัด',
+    vat_rate: '7.0000',
+    grand_total: '1070.00',
+    payment_schedule: [
+      { label: 'มัดจำ', percentage: '50.0000', amount: '535.00' },
+      { label: 'ส่งมอบ', percentage: '50.0000', amount: '535.00' },
+    ],
+    commercial_terms: ['ยืนราคา 30 วัน'],
+  });
+  const payload = buildSavePayload(7, [], quotation);
+  assert.equal(payload.expected_version, 7);
+  assert.equal(payload.quotation.customer_name, 'บริษัท ทดสอบ จำกัด');
+  assert.equal(payload.quotation.payment_schedule[0].amount, undefined);
+  assert.equal(payload.quotation.grand_total, undefined);
+  assert.deepEqual(payload.quotation.payment_schedule[0], {
+    label: 'มัดจำ',
+    percentage: '50.0000',
+    fixed_amount: null,
+  });
 });
 
 test('duplicate gets new persistence and logical identity while preserving values', () => {
@@ -72,4 +97,3 @@ test('remove deletes the complete subtree and save keeps null cost distinct from
   assert.equal(savedItem.components[1].unit_rate, null);
   assert.equal(payload.expected_version, 4);
 });
-

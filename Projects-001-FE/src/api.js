@@ -1022,6 +1022,113 @@ export async function copyNativeBoqRevision(projectId, sourceRevisionId, { idemp
   });
 }
 
+function nativeBoqCommand(path, payload, prefix, idempotencyKey) {
+  return apiRequest(path, {
+    method: 'POST',
+    headers: {
+      'Idempotency-Key': idempotencyKey || createBoqIdempotencyKey(prefix),
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createNativeBoqPreview(revisionId, expectedVersion, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/boq/revisions/${revisionId}/preview-snapshots`,
+    { expected_version: expectedVersion },
+    'boq-preview',
+    idempotencyKey,
+  );
+}
+
+export async function getNativeBoqPreview(revisionId, snapshotId) {
+  const params = new URLSearchParams({ snapshot_id: snapshotId });
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}/preview?${params}`);
+}
+
+export async function issueNativeBoqQuotation(revisionId, expectedVersion, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/boq/revisions/${revisionId}/issue`,
+    { expected_version: expectedVersion },
+    'boq-issue',
+    idempotencyKey,
+  );
+}
+
+export async function reviseNativeBoqQuotation(revisionId, expectedVersion, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/boq/revisions/${revisionId}/revise`,
+    { expected_version: expectedVersion },
+    'boq-revise',
+    idempotencyKey,
+  );
+}
+
+export async function createNativeBoqAlternative(
+  revisionId,
+  expectedVersion,
+  { alternativeGroupId = null, idempotencyKey } = {},
+) {
+  return nativeBoqCommand(
+    `/api/v1/boq/revisions/${revisionId}/alternatives`,
+    {
+      expected_version: expectedVersion,
+      alternative_group_id: alternativeGroupId,
+    },
+    'boq-alternative',
+    idempotencyKey,
+  );
+}
+
+export async function createNativeBoqChangeOrder(projectId, payload, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/projects/${projectId}/boq/change-orders`,
+    payload,
+    'boq-change-order',
+    idempotencyKey,
+  );
+}
+
+export async function recordNativeBoqAcceptance(revisionId, payload, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/boq/revisions/${revisionId}/record-acceptance`,
+    payload,
+    'boq-accept',
+    idempotencyKey,
+  );
+}
+
+export async function transitionNativeBoqQuotation(
+  revisionId,
+  action,
+  payload,
+  { idempotencyKey } = {},
+) {
+  return nativeBoqCommand(
+    `/api/v1/boq/revisions/${revisionId}/${action}`,
+    payload,
+    `boq-${action}`,
+    idempotencyKey,
+  );
+}
+
+export async function exportNativeBoqQuotation(revisionId, payload, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/boq/revisions/${revisionId}/exports`,
+    payload,
+    'boq-export',
+    idempotencyKey,
+  );
+}
+
+export async function getNativeBoqExport(revisionId, artifactId) {
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}/exports/${artifactId}`);
+}
+
+export async function getNativeBoqExportDownload(revisionId, artifactId) {
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}/exports/${artifactId}/download`);
+}
+
 export async function getProjectDetailData(projectId) {
   const project = await apiRequest(`/api/v1/projects/${projectId}`);
 

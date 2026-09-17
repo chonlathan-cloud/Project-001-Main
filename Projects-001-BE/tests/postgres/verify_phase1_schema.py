@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import asyncpg
 
 
-EXPECTED_REVISION = "20260915_0001"
+EXPECTED_REVISION = "20260917_0002"
 EXPECTED_V2_TABLES = {
     "boq_v2_audit_events",
     "boq_v2_baseline_change_orders",
@@ -21,6 +21,11 @@ EXPECTED_V2_TABLES = {
     "boq_v2_project_budget_sources",
     "boq_v2_revisions",
     "boq_v2_scope_nodes",
+    "boq_v2_document_sequences",
+    "boq_v2_change_order_deductions",
+    "boq_v2_revision_snapshots",
+    "boq_v2_acceptances",
+    "boq_v2_export_artifacts",
 }
 EXPECTED_CONSTRAINTS = {
     "ck_boq_v2_active_baseline_identity",
@@ -32,6 +37,10 @@ EXPECTED_CONSTRAINTS = {
     "ck_boq_v2_document_direction",
     "uq_boq_v2_command_idempotency",
     "uq_boq_v2_scope_revision_logical",
+    "uq_boq_v2_document_number",
+    "uq_boq_v2_snapshot_revision_version_purpose",
+    "uq_boq_v2_acceptance_revision",
+    "ck_boq_v2_internal_export_xlsx_only",
 }
 EXPECTED_INDEXES = {
     "uq_boq_v2_active_project_baseline",
@@ -112,11 +121,11 @@ async def main() -> None:
             await connection.execute(
                 """
                 INSERT INTO boq_v2_documents
-                    (id, project_id, document_kind, direction, created_by)
+                    (id, project_id, document_number, document_kind, created_by)
                 VALUES
                     ('72000000-0000-4000-8000-000000000002',
                      '72000000-0000-4000-8000-000000000001',
-                     'CHANGE_ORDER', 'ADD', 'phase1-test')
+                     'TEST-72000002', 'MAIN', 'phase1-test')
                 """
             )
             invalid_direction_rejected = False
@@ -125,11 +134,11 @@ async def main() -> None:
                     await connection.execute(
                         """
                         INSERT INTO boq_v2_documents
-                            (id, project_id, document_kind, direction, created_by)
+                            (id, project_id, document_number, document_kind, direction, created_by)
                         VALUES
                             ('72000000-0000-4000-8000-000000000003',
                              '72000000-0000-4000-8000-000000000001',
-                             'MAIN', 'DEDUCT', 'phase1-test')
+                             'TEST-72000003', 'MAIN', 'DEDUCT', 'phase1-test')
                         """
                     )
             except asyncpg.CheckViolationError:
@@ -141,11 +150,11 @@ async def main() -> None:
                     await connection.execute(
                         """
                         INSERT INTO boq_v2_documents
-                            (id, project_id, document_kind, created_by)
+                            (id, project_id, document_number, document_kind, created_by)
                         VALUES
                             ('72000000-0000-4000-8000-000000000004',
                              '72000000-0000-4000-8000-000000000001',
-                             'ALTERNATIVE', 'phase1-test')
+                             'TEST-72000004', 'ALTERNATIVE', 'phase1-test')
                         """
                     )
             except asyncpg.CheckViolationError:
@@ -157,7 +166,7 @@ async def main() -> None:
         await connection.close()
 
     print(
-        f"Phase 1 schema verified: revision={revision}, "
+        f"BOQ V2 schema verified through Phase 3: revision={revision}, "
         f"v2_tables={len(EXPECTED_V2_TABLES)}, source_rows=0"
     )
 

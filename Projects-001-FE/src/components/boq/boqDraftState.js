@@ -196,8 +196,38 @@ function nullableDecimal(value) {
   return text === '' ? null : text;
 }
 
-export function buildSavePayload(version, nodes) {
+export function normalizeQuotationDraft(quotation = {}) {
   return {
+    title: quotation.title || '',
+    customer_name: quotation.customer_name || '',
+    customer_address: quotation.customer_address || '',
+    customer_tax_id: quotation.customer_tax_id || '',
+    customer_contact: quotation.customer_contact || '',
+    quotation_date: quotation.quotation_date || '',
+    valid_until: quotation.valid_until || '',
+    currency: 'THB',
+    vat_rate: quotation.vat_rate ?? '7.0000',
+    discount_type: quotation.discount_type || 'NONE',
+    discount_value: quotation.discount_value ?? '0.0000',
+    subtotal: quotation.subtotal ?? '0.00',
+    discount_amount: quotation.discount_amount ?? '0.00',
+    net_sell_ex_vat: quotation.net_sell_ex_vat ?? '0.00',
+    vat_amount: quotation.vat_amount ?? '0.00',
+    grand_total: quotation.grand_total ?? '0.00',
+    payment_schedule: (quotation.payment_schedule || []).map((item) => ({
+      label: item.label || '',
+      percentage: item.percentage ?? null,
+      fixed_amount: item.fixed_amount ?? null,
+    })),
+    commercial_terms: [...(quotation.commercial_terms || [])],
+    document_pages: quotation.document_pages?.length
+      ? [...quotation.document_pages]
+      : ['BOQ', 'PAYMENT_TERMS', 'COMMERCIAL_TERMS'],
+  };
+}
+
+export function buildSavePayload(version, nodes, quotation) {
+  const payload = {
     expected_version: version,
     nodes: normalizeSiblingPositions(nodes).map((node) => ({
       id: node.id || null,
@@ -241,6 +271,18 @@ export function buildSavePayload(version, nodes) {
       confirm_financial_discard: Boolean(node.confirm_financial_discard),
     })),
   };
+  if (quotation) {
+    const {
+      subtotal: _subtotal,
+      discount_amount: _discountAmount,
+      net_sell_ex_vat: _netSellExVat,
+      vat_amount: _vatAmount,
+      grand_total: _grandTotal,
+      ...draft
+    } = normalizeQuotationDraft(quotation);
+    payload.quotation = draft;
+  }
+  return payload;
 }
 
 export function parseRevisionDraft(revision) {
@@ -252,4 +294,3 @@ export function parseRevisionDraft(revision) {
     }))
   );
 }
-

@@ -142,6 +142,10 @@ class Settings(BaseSettings):
     gcs_profile_prefix: str = Field(default="profile_images", alias="GCS_PROFILE_PREFIX")
     gcs_temp_bills_prefix: str = Field(default="temp_bills", alias="GCS_TEMP_BILLS_PREFIX")
     gcs_perm_bills_prefix: str = Field(default="perm_bills", alias="GCS_PERM_BILLS_PREFIX")
+    boq_export_gcs_prefix: str = Field(
+        default="boq_exports", alias="BOQ_EXPORT_GCS_PREFIX"
+    )
+    boq_pdf_font_path: str | None = Field(default=None, alias="BOQ_PDF_FONT_PATH")
     payment_confirmation_max_bytes: int = Field(
         default=10 * 1024 * 1024,
         alias="PAYMENT_CONFIRMATION_MAX_BYTES",

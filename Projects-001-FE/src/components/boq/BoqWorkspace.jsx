@@ -21,9 +21,18 @@ import {
   copyNativeBoqRevision,
   createBoqIdempotencyKey,
   createNativeBoqDocument,
+  createNativeBoqAlternative,
+  createNativeBoqChangeOrder,
+  createNativeBoqPreview,
+  exportNativeBoqQuotation,
+  getNativeBoqExportDownload,
   getNativeBoqRevision,
   getNativeBoqWorkspace,
+  issueNativeBoqQuotation,
+  recordNativeBoqAcceptance,
+  reviseNativeBoqQuotation,
   saveNativeBoqDraft,
+  transitionNativeBoqQuotation,
 } from '../../api';
 import { BOQ_V2_ENABLED } from '../../config/features';
 import Loading from '../Loading';
@@ -33,12 +42,15 @@ import {
   duplicateDraftItem,
   moveDraftNode,
   moveDraftNodeTo,
+  normalizeQuotationDraft,
   normalizeSiblingPositions,
   parseRevisionDraft,
   removeDraftNode,
   updateDraftComponent,
   updateDraftNode,
 } from './boqDraftState';
+import QuotationLifecyclePanel from '../quotations/QuotationLifecyclePanel';
+import '../quotations/quotation.css';
 import './boqWorkspace.css';
 
 const VIEW_MODES = [
@@ -452,6 +464,125 @@ function EmptyWorkspace({ workspace, busy, copySource, onCopySource, onCreate, o
   );
 }
 
+function AcceptanceDialog({ revision, workspace, busy, onCancel, onConfirm }) {
+  const [agreedDate, setAgreedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [evidence, setEvidence] = useState('');
+  const [note, setNote] = useState('');
+  const activeChangeOrders = workspace.active_change_order_revision_ids || [];
+  const replacesMain = Boolean(
+    workspace.active_baseline_id
+    && revision.document_kind !== 'CHANGE_ORDER'
+    && workspace.active_main_revision_id !== revision.revision_id
+  );
+  const [mapping, setMapping] = useState(() => Object.fromEntries(
+    activeChangeOrders.map((revisionId) => [revisionId, 'RETAIN'])
+  ));
+
+  const submit = (event) => {
+    event.preventDefault();
+    const replacement = replacesMain ? {
+      baseline_id: workspace.active_baseline_id,
+      baseline_version: workspace.active_baseline_version,
+      retain_change_order_revision_ids: activeChangeOrders.filter((id) => mapping[id] === 'RETAIN'),
+      absorb_change_order_revision_ids: activeChangeOrders.filter((id) => mapping[id] === 'ABSORB'),
+    } : null;
+    onConfirm({
+      expected_version: revision.version,
+      agreed_date: agreedDate,
+      evidence_reference: evidence || null,
+      note: note || null,
+      ...(replacement ? { replacement } : {}),
+    });
+  };
+
+  return (
+    <div className="quotation-modal-backdrop" role="presentation">
+      <form className="quotation-modal" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="acceptance-title">
+        <span className="boq-eyebrow">INTERNAL RECORD</span>
+        <h2 id="acceptance-title">Record accepted agreement</h2>
+        <p>This records an agreement received outside this system. It is not a customer e-signature.</p>
+        <label><span>Agreed date</span><input type="date" value={agreedDate} onChange={(event) => setAgreedDate(event.target.value)} required /></label>
+        <label><span>Evidence / reference</span><input value={evidence} onChange={(event) => setEvidence(event.target.value)} placeholder="CRM record, signed file, or correspondence" /></label>
+        <label><span>Internal note</span><textarea rows="3" value={note} onChange={(event) => setNote(event.target.value)} /></label>
+        {replacesMain ? (
+          <fieldset>
+            <legend>Accepted change-order treatment</legend>
+            {activeChangeOrders.length ? activeChangeOrders.map((revisionId) => (
+              <div className="quotation-mapping-row" key={revisionId}>
+                <code>{revisionId.slice(0, 8)}</code>
+                <label><input type="radio" name={`mapping-${revisionId}`} checked={mapping[revisionId] === 'RETAIN'} onChange={() => setMapping({ ...mapping, [revisionId]: 'RETAIN' })} /> Retain</label>
+                <label><input type="radio" name={`mapping-${revisionId}`} checked={mapping[revisionId] === 'ABSORB'} onChange={() => setMapping({ ...mapping, [revisionId]: 'ABSORB' })} /> Absorb into new main</label>
+              </div>
+            )) : <p>No active change orders. Confirming still creates an explicit replacement baseline.</p>}
+          </fieldset>
+        ) : null}
+        <div className="quotation-modal-actions">
+          <button type="button" className="boq-button boq-button-secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="submit" className="boq-button boq-button-primary" disabled={busy || !agreedDate}>{busy ? 'Recording…' : 'Record acceptance'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function DeductionDialog({ revision, nodes, workspace, busy, onCancel, onConfirm }) {
+  const activeRevisionIds = new Set([
+    workspace.active_main_revision_id,
+    ...(workspace.active_change_order_revision_ids || []),
+  ].filter(Boolean));
+  const eligible = activeRevisionIds.has(revision.revision_id)
+    && revision.direction !== 'DEDUCT'
+    ? nodes.filter((node) => node.node_kind === 'ITEM' && node.inclusion_state !== 'EXCLUDED')
+    : [];
+  const [quantities, setQuantities] = useState({});
+  const deductions = eligible
+    .filter((node) => Number(quantities[node.logical_id]) > 0)
+    .map((node) => ({
+      target_revision_id: revision.revision_id,
+      target_logical_id: node.logical_id,
+      quantity: quantities[node.logical_id],
+    }));
+
+  return (
+    <div className="quotation-modal-backdrop" role="presentation">
+      <form
+        className="quotation-modal quotation-modal-wide"
+        onSubmit={(event) => { event.preventDefault(); onConfirm(deductions); }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="deduction-title"
+      >
+        <span className="boq-eyebrow">CHANGE ORDER · DEDUCT</span>
+        <h2 id="deduction-title">Select accepted scope to deduct</h2>
+        <p>Open an active accepted MAIN or ADD revision, then enter only the quantity being deducted. Rates are frozen from its accepted snapshot.</p>
+        {eligible.length ? (
+          <div className="quotation-deduction-list">
+            {eligible.map((node) => (
+              <label key={node.logical_id}>
+                <span><strong>{node.description || node.item_code}</strong><small>Available before prior deductions: {node.quantity} {node.unit}</small></span>
+                <input
+                  type="number"
+                  min="0"
+                  max={node.quantity}
+                  step="0.0001"
+                  value={quantities[node.logical_id] || ''}
+                  onChange={(event) => setQuantities({ ...quantities, [node.logical_id]: event.target.value })}
+                  placeholder="0"
+                  aria-label={`Deduct quantity for ${node.description || node.item_code}`}
+                />
+              </label>
+            ))}
+          </div>
+        ) : <div className="boq-notice boq-notice-warning">The selected revision is not an eligible active MAIN or ADD snapshot.</div>}
+        <div className="quotation-modal-actions">
+          <button type="button" className="boq-button boq-button-secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="submit" className="boq-button boq-button-primary" disabled={busy || deductions.length === 0}>Create DEDUCT draft</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function BoqWorkspace() {
   const { projectId } = useParams();
   const location = useLocation();
@@ -461,6 +592,7 @@ export default function BoqWorkspace() {
   const [workspace, setWorkspace] = useState(null);
   const [revision, setRevision] = useState(null);
   const [nodes, setNodes] = useState([]);
+  const [quotation, setQuotation] = useState(() => normalizeQuotationDraft());
   const [viewMode, setViewMode] = useState('consolidated');
   const [copySource, setCopySource] = useState('');
   const [loading, setLoading] = useState(true);
@@ -470,11 +602,14 @@ export default function BoqWorkspace() {
   const [saveError, setSaveError] = useState(null);
   const [recovery, setRecovery] = useState(null);
   const [online, setOnline] = useState(() => navigator.onLine);
+  const [acceptanceOpen, setAcceptanceOpen] = useState(false);
+  const [deductionOpen, setDeductionOpen] = useState(false);
   const pendingSaveRef = useRef(null);
 
   const selectRevision = useCallback((nextRevision) => {
     setRevision(nextRevision);
     setNodes(parseRevisionDraft(nextRevision));
+    setQuotation(normalizeQuotationDraft(nextRevision.quotation));
     setDirty(false);
     setSaveError(null);
     pendingSaveRef.current = null;
@@ -536,11 +671,12 @@ export default function BoqWorkspace() {
         base_version: revision.version,
         saved_at: new Date().toISOString(),
         nodes,
+        quotation,
       }));
     } catch {
       // Server save remains available when browser storage is full or disabled.
     }
-  }, [dirty, nodes, revision]);
+  }, [dirty, nodes, quotation, revision]);
 
   useEffect(() => {
     const beforeUnload = (event) => {
@@ -554,6 +690,13 @@ export default function BoqWorkspace() {
 
   const mutateNodes = (nextNodes) => {
     setNodes(normalizeSiblingPositions(nextNodes));
+    setDirty(true);
+    setSaveError(null);
+    pendingSaveRef.current = null;
+  };
+
+  const mutateQuotation = (updates) => {
+    setQuotation((current) => ({ ...current, ...updates }));
     setDirty(true);
     setSaveError(null);
     pendingSaveRef.current = null;
@@ -594,7 +737,7 @@ export default function BoqWorkspace() {
 
   const saveDraft = useCallback(async () => {
     if (!revision || !workspace?.can_edit || busy || !dirty || !online) return;
-    const payload = buildSavePayload(revision.version, nodes);
+    const payload = buildSavePayload(revision.version, nodes, quotation);
     const fingerprint = JSON.stringify(payload);
     if (pendingSaveRef.current?.fingerprint !== fingerprint) {
       pendingSaveRef.current = {
@@ -618,7 +761,7 @@ export default function BoqWorkspace() {
     } finally {
       setBusy(false);
     }
-  }, [busy, dirty, nodes, online, projectId, revision, selectRevision, workspace?.can_edit]);
+  }, [busy, dirty, nodes, online, projectId, quotation, revision, selectRevision, workspace?.can_edit]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -632,7 +775,7 @@ export default function BoqWorkspace() {
   }, [saveDraft]);
 
   const copyRecovery = async () => {
-    const payload = JSON.stringify(buildSavePayload(revision.version, nodes), null, 2);
+    const payload = JSON.stringify(buildSavePayload(revision.version, nodes, quotation), null, 2);
     try {
       await navigator.clipboard.writeText(payload);
     } catch {
@@ -643,6 +786,157 @@ export default function BoqWorkspace() {
       anchor.download = `boq-recovery-${revision.revision_id}.json`;
       anchor.click();
       URL.revokeObjectURL(url);
+    }
+  };
+
+  const requireSavedDraft = () => {
+    if (!dirty) return true;
+    setSaveError(new Error('Save the current draft before creating a snapshot or changing lifecycle state.'));
+    return false;
+  };
+
+  const previewQuotation = async () => {
+    if (!revision || !requireSavedDraft()) return;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      let snapshotId = revision.issued_snapshot_id;
+      if (!snapshotId) {
+        if (!workspace.can_edit) throw new Error('An Owner must create the first immutable preview snapshot.');
+        const preview = await createNativeBoqPreview(revision.revision_id, revision.version);
+        snapshotId = preview.snapshot.snapshot_id;
+      }
+      navigate(`/project/detail/${projectId}/boq/preview?revision=${revision.revision_id}&snapshot=${snapshotId}`);
+    } catch (requestError) {
+      setSaveError(requestError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const issueQuotation = async () => {
+    if (!revision || !requireSavedDraft()) return;
+    if (!window.confirm(`Issue ${revision.document_number} R${revision.revision_number}? The customer snapshot will become immutable.`)) return;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      const issued = await issueNativeBoqQuotation(revision.revision_id, revision.version);
+      selectRevision(issued);
+      setWorkspace(await getNativeBoqWorkspace(projectId));
+    } catch (requestError) {
+      setSaveError(requestError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reviseQuotation = async () => {
+    if (!revision) return;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      const revised = await reviseNativeBoqQuotation(revision.revision_id, revision.version);
+      await loadWorkspace({ preferredRevisionId: revised.revision_id });
+    } catch (requestError) {
+      setSaveError(requestError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createAlternative = async () => {
+    if (!revision || !requireSavedDraft()) return;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      const alternative = await createNativeBoqAlternative(revision.revision_id, revision.version);
+      await loadWorkspace({ preferredRevisionId: alternative.revision_id });
+    } catch (requestError) {
+      setSaveError(requestError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const recordAcceptance = async (payload) => {
+    if (!revision) return;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      await recordNativeBoqAcceptance(revision.revision_id, payload);
+      setAcceptanceOpen(false);
+      await loadWorkspace({ preferredRevisionId: revision.revision_id });
+    } catch (requestError) {
+      setSaveError(requestError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const transitionQuotation = async (action) => {
+    if (!revision || !requireSavedDraft()) return;
+    if (!window.confirm(`${action === 'reject' ? 'Reject' : 'Withdraw'} this revision?`)) return;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      const transitioned = await transitionNativeBoqQuotation(
+        revision.revision_id,
+        action,
+        { expected_version: revision.version, reason: null },
+      );
+      selectRevision(transitioned);
+      setWorkspace(await getNativeBoqWorkspace(projectId));
+    } catch (requestError) {
+      setSaveError(requestError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createChangeOrder = async (direction, deductions = []) => {
+    if (!workspace.active_baseline_id) return;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      const created = await createNativeBoqChangeOrder(projectId, {
+        baseline_id: workspace.active_baseline_id,
+        baseline_version: workspace.active_baseline_version,
+        direction,
+        deductions,
+      });
+      setDeductionOpen(false);
+      await loadWorkspace({ preferredRevisionId: created.revision_id });
+    } catch (requestError) {
+      setSaveError(requestError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestChangeOrder = (direction) => {
+    if (direction === 'DEDUCT') {
+      setDeductionOpen(true);
+      return;
+    }
+    createChangeOrder('ADD');
+  };
+
+  const exportQuotation = async (audience, fileFormat) => {
+    if (!revision?.issued_snapshot_id) return;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      const artifact = await exportNativeBoqQuotation(revision.revision_id, {
+        snapshot_id: revision.issued_snapshot_id,
+        audience,
+        file_format: fileFormat,
+      });
+      const download = await getNativeBoqExportDownload(revision.revision_id, artifact.artifact_id);
+      window.location.assign(download.download_url);
+    } catch (requestError) {
+      setSaveError(requestError);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -675,6 +969,7 @@ export default function BoqWorkspace() {
   const projectName = workspace.project_name || location.state?.projectName || 'Project';
   const isConflict = saveError && ['STALE_BOQ_VERSION', 'BOQ_WRITE_CONFLICT'].includes(domainCode(saveError));
   const totalsStale = dirty;
+  const mutableDraft = Boolean(revision?.status === 'DRAFT' && workspace.can_edit);
 
   return (
     <div className="boq-workspace">
@@ -701,7 +996,7 @@ export default function BoqWorkspace() {
           <Link className="boq-button boq-button-secondary" to={`/project/detail/${projectId}`}>
             Legacy view{workspace.legacy_available ? ` · ${workspace.legacy_row_count} rows` : ''}
           </Link>
-          {revision && workspace.can_edit ? (
+          {revision && mutableDraft ? (
             <button
               type="button"
               className="boq-button boq-button-primary"
@@ -732,6 +1027,7 @@ export default function BoqWorkspace() {
         recovery={recovery}
         onRestore={() => {
           setNodes(normalizeSiblingPositions(recovery.nodes));
+          if (recovery.quotation) setQuotation(normalizeQuotationDraft(recovery.quotation));
           setDirty(true);
           setRecovery(null);
         }}
@@ -774,7 +1070,7 @@ export default function BoqWorkspace() {
         <div className="boq-workspace-grid">
           <aside className="boq-revision-panel" aria-label="BOQ revisions">
             <div>
-              <span className="boq-eyebrow">DRAFT HISTORY</span>
+              <span className="boq-eyebrow">DOCUMENT HISTORY</span>
               <h2>Revisions</h2>
             </div>
             <div className="boq-revision-list">
@@ -785,16 +1081,16 @@ export default function BoqWorkspace() {
                   className={item.revision_id === revision.revision_id ? 'active' : ''}
                   onClick={() => openRevision(item.revision_id)}
                 >
-                  <span>R{item.revision_number} · {item.status}</span>
+                  <span>{item.document_number} · R{item.revision_number}</span>
                   <strong>{formatMoney(item.net_sell_ex_vat)}</strong>
-                  <small>v{item.version} · {item.completeness_state}</small>
+                  <small>{item.document_kind}{item.direction ? ` ${item.direction}` : ''} · {item.status} · v{item.version}</small>
                 </button>
               ))}
             </div>
             <div className="boq-source-status">
               <span>Operational budget source</span>
               <strong>{workspace.active_source_kind}</strong>
-              <small>This DRAFT is not an operational baseline.</small>
+              <small>{workspace.active_baseline_id ? `Baseline v${workspace.active_baseline_version}` : 'Draft and issued documents remain outside the operational budget.'}</small>
             </div>
           </aside>
 
@@ -810,6 +1106,24 @@ export default function BoqWorkspace() {
               </div>
               {totalsStale ? <p className="boq-stale-totals">Totals are from the last server save. Save to recalculate.</p> : null}
             </section>
+
+            <QuotationLifecyclePanel
+              revision={revision}
+              quotation={quotation}
+              disabled={busy || !online}
+              canEdit={workspace.can_edit}
+              busy={busy}
+              hasActiveBaseline={Boolean(workspace.active_baseline_id)}
+              onChange={mutateQuotation}
+              onPreview={previewQuotation}
+              onIssue={issueQuotation}
+              onAccept={() => setAcceptanceOpen(true)}
+              onRevise={reviseQuotation}
+              onAlternative={createAlternative}
+              onTransition={transitionQuotation}
+              onChangeOrder={requestChangeOrder}
+              onExport={exportQuotation}
+            />
 
             <div className="boq-editor-toolbar">
               <div className="boq-view-switcher" role="group" aria-label="BOQ view">
@@ -827,7 +1141,7 @@ export default function BoqWorkspace() {
               </div>
               <div className="boq-toolbar-actions">
                 {dirty ? <span className="boq-unsaved-mark">Unsaved changes</span> : <span className="boq-saved-mark"><Check size={14} /> Saved</span>}
-                {workspace.can_edit ? (
+                {mutableDraft ? (
                   <button type="button" className="boq-button boq-button-secondary" onClick={() => mutateNodes(addDraftNode(nodes, 'SECTION'))}>
                     <Plus size={15} /> Add section
                   </button>
@@ -838,7 +1152,7 @@ export default function BoqWorkspace() {
             {nodes.length === 0 ? (
               <div className="boq-inline-empty">
                 <p>This draft has no scope rows.</p>
-                {workspace.can_edit ? (
+                {mutableDraft ? (
                   <button type="button" className="boq-button boq-button-primary" onClick={() => mutateNodes(addDraftNode(nodes, 'SECTION'))}>
                     <Plus size={16} /> Add first section
                   </button>
@@ -863,7 +1177,7 @@ export default function BoqWorkspace() {
                         node={node}
                         nodes={nodes}
                         viewMode={viewMode}
-                        disabled={!workspace.can_edit || busy}
+                        disabled={!mutableDraft || busy}
                         onNodesChange={mutateNodes}
                       />
                     ))}
@@ -879,6 +1193,25 @@ export default function BoqWorkspace() {
           </main>
         </div>
       )}
+      {acceptanceOpen && revision ? (
+        <AcceptanceDialog
+          revision={revision}
+          workspace={workspace}
+          busy={busy}
+          onCancel={() => setAcceptanceOpen(false)}
+          onConfirm={recordAcceptance}
+        />
+      ) : null}
+      {deductionOpen && revision ? (
+        <DeductionDialog
+          revision={revision}
+          nodes={nodes}
+          workspace={workspace}
+          busy={busy}
+          onCancel={() => setDeductionOpen(false)}
+          onConfirm={(deductions) => createChangeOrder('DEDUCT', deductions)}
+        />
+      ) : null}
     </div>
   );
 }

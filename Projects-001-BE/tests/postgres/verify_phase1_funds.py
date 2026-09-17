@@ -186,7 +186,9 @@ async def main() -> None:
                 BOQV2Document(
                     id=document_id,
                     project_id=target_project_id,
+                    document_number=f"TEST-{document_id}",
                     document_kind="MAIN",
+                    revision_counter=1,
                     created_by="phase1-test",
                 )
             )
