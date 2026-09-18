@@ -66,6 +66,7 @@ from app.services.boq_numbering_service import (
     next_document_number,
     next_revision_number,
 )
+from app.services.boq_catalog_service import record_sell_observations_from_snapshot
 
 
 ZERO_MONEY = Decimal("0.00")
@@ -179,6 +180,9 @@ def _customer_scope_node(node: object) -> dict[str, object]:
         "depth": node.depth,
         "display_path": node.display_path,
         "item_code": node.item_code,
+        "catalog_item_id": str(node.catalog_item_id) if node.catalog_item_id else None,
+        "catalog_item_version": node.catalog_item_version,
+        "source_logical_id": str(node.source_logical_id) if node.source_logical_id else None,
         "description": node.description,
         "specification": node.specification,
         "quantity": node.quantity,
@@ -543,6 +547,14 @@ async def issue_quotation(
         lifecycle_status="ISSUED",
         actor=actor,
     )
+    await record_sell_observations_from_snapshot(
+        db,
+        snapshot=snapshot,
+        observation_kind="OFFERED_SELL",
+        source_event_type="QUOTATION_ISSUE",
+        source_event_id=snapshot.id,
+        observed_at=now,
+    )
     _complete_command(command, revision_id=revision.id, version=revision.version)
     _audit(
         db,
@@ -675,6 +687,9 @@ async def _clone_revision(
                 inclusion_state=node.inclusion_state,
                 position=node.position,
                 item_code=node.item_code,
+                catalog_item_id=node.catalog_item_id,
+                catalog_item_version=node.catalog_item_version,
+                source_logical_id=node.source_logical_id or node.logical_id,
                 description=node.description,
                 specification=node.specification,
                 quantity=node.quantity,
@@ -1529,6 +1544,14 @@ async def record_acceptance(
         recorded_at=now,
     )
     db.add(acceptance)
+    await record_sell_observations_from_snapshot(
+        db,
+        snapshot=snapshot,
+        observation_kind="ACCEPTED_SELL",
+        source_event_type="QUOTATION_ACCEPTANCE",
+        source_event_id=acceptance.id,
+        observed_at=now,
+    )
     revision.status = "ACCEPTED"
     revision.version += 1
     revision.updated_at = now

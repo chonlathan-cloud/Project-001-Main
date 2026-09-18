@@ -1129,6 +1129,120 @@ export async function getNativeBoqExportDownload(revisionId, artifactId) {
   return apiRequest(`/api/v1/boq/revisions/${revisionId}/exports/${artifactId}/download`);
 }
 
+export async function getProjectVendors(projectId) {
+  return apiRequest(`/api/v1/projects/${projectId}/vendors`);
+}
+
+export async function createProjectVendor(projectId, payload, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/projects/${projectId}/vendors`,
+    payload,
+    'boq-vendor',
+    idempotencyKey,
+  );
+}
+
+export async function getProjectVendorOffers(projectId, revisionId = '') {
+  const query = revisionId ? `?revision_id=${encodeURIComponent(revisionId)}` : '';
+  return apiRequest(`/api/v1/projects/${projectId}/vendor-offers${query}`);
+}
+
+export async function createProjectVendorOffer(
+  projectId,
+  revisionId,
+  payload,
+  { idempotencyKey } = {},
+) {
+  return nativeBoqCommand(
+    `/api/v1/projects/${projectId}/boq/revisions/${revisionId}/vendor-offers`,
+    payload,
+    'boq-vendor-offer',
+    idempotencyKey,
+  );
+}
+
+export async function getProjectCostSelections(projectId) {
+  return apiRequest(`/api/v1/projects/${projectId}/cost-selections`);
+}
+
+export async function selectProjectVendorOffer(projectId, payload, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/projects/${projectId}/cost-selections`,
+    payload,
+    'boq-cost-select',
+    idempotencyKey,
+  );
+}
+
+export async function getProjectCostPlan(projectId) {
+  return apiRequest(`/api/v1/projects/${projectId}/cost-plan`);
+}
+
+export async function openProjectWorkingCostPlan(projectId) {
+  return apiRequest(`/api/v1/projects/${projectId}/cost-plan/working`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function updateProjectCostEstimates(projectId, payload) {
+  return apiRequest(`/api/v1/projects/${projectId}/cost-plan/estimates`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function publishProjectCostPlan(projectId, payload, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/projects/${projectId}/cost-plan/publish`,
+    payload,
+    'boq-cost-publish',
+    idempotencyKey,
+  );
+}
+
+export async function getPriceDatabaseItems({ query = '', category = '', status = 'ACTIVE', page = 1, pageSize = 25 } = {}) {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (query) params.set('q', query);
+  if (category) params.set('category', category);
+  if (status) params.set('status', status);
+  return apiRequest(`/api/v1/price-database/items?${params}`);
+}
+
+export async function getPriceDatabaseItem(itemId) {
+  return apiRequest(`/api/v1/price-database/items/${itemId}`);
+}
+
+export async function promotePriceDatabaseItem(payload) {
+  return apiRequest('/api/v1/price-database/items/promote', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePriceDatabaseItem(itemId, payload) {
+  return apiRequest(`/api/v1/price-database/items/${itemId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePriceDatabaseReference(itemId, payload) {
+  return apiRequest(`/api/v1/price-database/items/${itemId}/reference-prices`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function reusePriceDatabaseItem(itemId, revisionId, payload, { idempotencyKey } = {}) {
+  return nativeBoqCommand(
+    `/api/v1/price-database/items/${itemId}/reuse/${revisionId}`,
+    payload,
+    'boq-catalog-reuse',
+    idempotencyKey,
+  );
+}
+
 export async function getProjectDetailData(projectId) {
   const project = await apiRequest(`/api/v1/projects/${projectId}`);
 

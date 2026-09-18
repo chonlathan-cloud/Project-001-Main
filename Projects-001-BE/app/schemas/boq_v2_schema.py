@@ -132,6 +132,9 @@ class BOQV2ScopeNodeDraft(BaseModel):
     inclusion_state: Literal["REQUIRED", "OPTIONAL", "EXCLUDED"] = "REQUIRED"
     position: int = Field(ge=0)
     item_code: str | None = Field(default=None, max_length=255)
+    catalog_item_id: UUID | None = None
+    catalog_item_version: int | None = Field(default=None, ge=1)
+    source_logical_id: UUID | None = None
     description: str | None = Field(default=None, max_length=4000)
     specification: str | None = Field(default=None, max_length=4000)
     quantity: Quantity | None = None
@@ -213,6 +216,9 @@ class BOQV2ScopeNodeResponse(BaseModel):
     depth: int
     display_path: str
     item_code: str | None = None
+    catalog_item_id: UUID | None = None
+    catalog_item_version: int | None = None
+    source_logical_id: UUID | None = None
     description: str | None = None
     specification: str | None = None
     quantity: str | None = None

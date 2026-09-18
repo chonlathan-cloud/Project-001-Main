@@ -113,13 +113,28 @@ class BOQV2ExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     snapshot_id: UUID
-    audience: Literal["CUSTOMER", "INTERNAL"]
+    audience: Literal["CUSTOMER", "INTERNAL", "RFQ", "VENDOR"]
     file_format: Literal["XLSX", "PDF"]
+    vendor_id: UUID | None = None
+    selected_component_ids: list[UUID] = Field(default_factory=list, max_length=1000)
+    cost_plan_version: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_audience_format(self) -> "BOQV2ExportRequest":
         if self.audience == "INTERNAL" and self.file_format != "XLSX":
-            raise ValueError("internal consolidated export is XLSX-only in Phase 3")
+            raise ValueError("internal consolidated export is XLSX-only")
+        if self.audience in {"RFQ", "VENDOR"} and self.vendor_id is None:
+            raise ValueError("vendor identity is required for vendor exports")
+        if self.audience == "RFQ" and not self.selected_component_ids:
+            raise ValueError("RFQ export requires an explicit component subset")
+        if self.audience in {"CUSTOMER", "INTERNAL"} and (
+            self.vendor_id is not None
+            or self.selected_component_ids
+            or self.cost_plan_version is not None
+        ):
+            raise ValueError("customer/internal exports cannot include vendor scope")
+        if len(self.selected_component_ids) != len(set(self.selected_component_ids)):
+            raise ValueError("selected component IDs must be unique")
         return self
 
 
@@ -132,9 +147,10 @@ class BOQV2ExportArtifactResponse(BaseModel):
     revision_id: UUID
     snapshot_id: UUID
     calculation_version: str
-    audience: Literal["CUSTOMER", "INTERNAL"]
+    audience: Literal["CUSTOMER", "INTERNAL", "RFQ", "VENDOR"]
     file_format: Literal["XLSX", "PDF"]
     cost_plan_version: int | None = None
+    vendor_id: UUID | None = None
     status: Literal["PENDING", "READY", "FAILED"]
     filename: str
     mime_type: str

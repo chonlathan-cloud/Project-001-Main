@@ -13,6 +13,7 @@ import {
   Menu,
   Plus,
   ReceiptText,
+  LibraryBig,
   Settings,
   TrendingUp,
   UserRound,
@@ -334,6 +335,7 @@ const Sidebar = ({ collapsed = false, onToggleCollapsed }) => {
     if (isAdminUser) {
       const sharedAdminItems = [
         { name: 'Projects', icon: Briefcase, path: '/project' },
+        { name: 'Price Database', icon: LibraryBig, path: '/price-database' },
         { name: 'Daily Reports', icon: FileCheck2, path: '/daily-reports', badge: navBadges.dailyReports },
         { name: 'Input', icon: ClipboardList, path: '/input' },
         { name: 'Approvals', icon: BadgeCheck, path: '/approval', badge: navBadges.approvals },

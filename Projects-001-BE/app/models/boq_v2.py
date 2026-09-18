@@ -273,6 +273,11 @@ class BOQV2ScopeNode(Base):
     )
     position = Column(Integer, nullable=False)
     item_code = Column(String, nullable=True)
+    catalog_item_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_catalog_items.id"), nullable=True
+    )
+    catalog_item_version = Column(Integer, nullable=True)
+    source_logical_id = Column(UUID(as_uuid=True), nullable=True)
     description = Column(Text, nullable=True)
     specification = Column(Text, nullable=True)
     quantity = Column(QUANTITY, nullable=True)
@@ -296,6 +301,7 @@ class BOQV2CostPlan(Base):
             name="ck_boq_v2_cost_plan_status",
         ),
         CheckConstraint("version > 0", name="ck_boq_v2_cost_plan_version"),
+        CheckConstraint("lock_version > 0", name="ck_boq_v2_cost_plan_lock_version"),
         CheckConstraint(
             "completeness_state IN ('COMPLETE', 'INCOMPLETE')",
             name="ck_boq_v2_cost_plan_completeness",
@@ -323,7 +329,20 @@ class BOQV2CostPlan(Base):
     scope_revision_id = Column(
         UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
     )
+    source_baseline_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "boq_v2_project_baselines.id",
+            name="fk_boq_v2_cost_plan_source_baseline",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
+    predecessor_plan_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_cost_plans.id"), nullable=True
+    )
     version = Column(Integer, nullable=False)
+    lock_version = Column(Integer, nullable=False, server_default=text("1"))
     status = Column(String(16), nullable=False, server_default=text("'WORKING'"))
     is_current = Column(Boolean, nullable=False, server_default=text("true"))
     completeness_state = Column(
@@ -332,12 +351,16 @@ class BOQV2CostPlan(Base):
     required_count = Column(Integer, nullable=False, server_default=text("0"))
     priced_count = Column(Integer, nullable=False, server_default=text("0"))
     original_estimated_cost = Column(MONEY, nullable=True)
+    estimated_cost = Column(MONEY, nullable=True)
     agreed_cost = Column(MONEY, nullable=True)
     forecast_cost = Column(MONEY, nullable=True)
     calculation_version = Column(
         String(32), nullable=False, server_default=text("'boq-v2-calc-v1'")
     )
     published_at = Column(DateTime(timezone=True), nullable=True)
+    published_by = Column(String, nullable=True)
+    publish_reason = Column(Text, nullable=True)
+    effective_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String, nullable=False)
     created_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -396,9 +419,29 @@ class BOQV2CostComponent(Base):
     unit = Column(String, nullable=True)
     specification = Column(Text, nullable=True)
     basis_version = Column(Integer, nullable=False, server_default=text("1"))
+    source_component_id = Column(UUID(as_uuid=True), nullable=True)
     cost_state = Column(String(20), nullable=False, server_default=text("'UNKNOWN'"))
+    original_unit_rate = Column(QUANTITY, nullable=True)
+    original_total = Column(MONEY, nullable=True)
     unit_rate = Column(QUANTITY, nullable=True)
     total = Column(MONEY, nullable=True)
+    agreed_unit_rate = Column(QUANTITY, nullable=True)
+    agreed_total = Column(MONEY, nullable=True)
+    selected_vendor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_v2_vendors.id", name="fk_boq_v2_component_selected_vendor", use_alter=True),
+        nullable=True,
+    )
+    selected_offer_line_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_v2_vendor_offer_lines.id", name="fk_boq_v2_component_selected_offer", use_alter=True),
+        nullable=True,
+    )
+    selection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_v2_cost_selections.id", name="fk_boq_v2_component_selection", use_alter=True),
+        nullable=True,
+    )
     explicit_zero_reason = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -601,7 +644,7 @@ class BOQV2ExportArtifact(Base):
     __tablename__ = "boq_v2_export_artifacts"
     __table_args__ = (
         CheckConstraint(
-            "audience IN ('CUSTOMER', 'INTERNAL')",
+            "audience IN ('CUSTOMER', 'INTERNAL', 'RFQ', 'VENDOR')",
             name="ck_boq_v2_export_audience",
         ),
         CheckConstraint(
@@ -613,7 +656,7 @@ class BOQV2ExportArtifact(Base):
             name="ck_boq_v2_export_status",
         ),
         CheckConstraint(
-            "audience = 'CUSTOMER' OR file_format = 'XLSX'",
+            "audience <> 'INTERNAL' OR file_format = 'XLSX'",
             name="ck_boq_v2_internal_export_xlsx_only",
         ),
         Index("ix_boq_v2_export_project_created", "project_id", "created_at"),
@@ -635,6 +678,8 @@ class BOQV2ExportArtifact(Base):
     audience = Column(String(16), nullable=False)
     file_format = Column(String(8), nullable=False)
     cost_plan_version = Column(Integer, nullable=True)
+    vendor_id = Column(UUID(as_uuid=True), nullable=True)
+    audience_payload = Column(JSON, nullable=True)
     status = Column(String(16), nullable=False, server_default=text("'PENDING'"))
     filename = Column(String(255), nullable=False)
     mime_type = Column(String(120), nullable=False)
@@ -717,6 +762,309 @@ class BOQV2AuditEvent(Base):
     before_reference = Column(JSON, nullable=True)
     after_reference = Column(JSON, nullable=True)
     reason = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2Vendor(Base):
+    __tablename__ = "boq_v2_vendors"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ACTIVE', 'ARCHIVED')", name="ck_boq_v2_vendor_status"
+        ),
+        Index("ix_boq_v2_vendor_project_name", "project_id", "display_name"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    display_name = Column(String(500), nullable=False)
+    commercial_reference = Column(String(255), nullable=True)
+    linked_party_reference = Column(String(255), nullable=True)
+    tax_id = Column(String(64), nullable=True)
+    contact_name = Column(String(255), nullable=True)
+    contact_detail = Column(String(1000), nullable=True)
+    status = Column(String(16), nullable=False, server_default=text("'ACTIVE'"))
+    created_by = Column(String, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2VendorOffer(Base):
+    __tablename__ = "boq_v2_vendor_offers"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ACTIVE', 'SUPERSEDED', 'WITHDRAWN')",
+            name="ck_boq_v2_vendor_offer_status",
+        ),
+        CheckConstraint("currency = 'THB'", name="ck_boq_v2_vendor_offer_currency"),
+        CheckConstraint(
+            "tax_basis IN ('EXCLUSIVE_VAT', 'INCLUSIVE_VAT', 'NO_VAT', 'UNKNOWN')",
+            name="ck_boq_v2_vendor_offer_tax_basis",
+        ),
+        CheckConstraint(
+            "discount_type IN ('NONE', 'PERCENT', 'FIXED')",
+            name="ck_boq_v2_vendor_offer_discount_type",
+        ),
+        CheckConstraint(
+            "discount_value >= 0", name="ck_boq_v2_vendor_offer_discount_value"
+        ),
+        Index("ix_boq_v2_offer_project_date", "project_id", "quotation_date"),
+        Index("ix_boq_v2_offer_vendor_date", "vendor_id", "quotation_date"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    revision_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
+    )
+    vendor_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_vendors.id"), nullable=False
+    )
+    quotation_reference = Column(String(255), nullable=True)
+    quotation_date = Column(Date, nullable=False)
+    valid_until = Column(Date, nullable=True)
+    currency = Column(String(8), nullable=False, server_default=text("'THB'"))
+    tax_basis = Column(String(20), nullable=False)
+    tax_rate = Column(QUANTITY, nullable=True)
+    discount_type = Column(String(16), nullable=False, server_default=text("'NONE'"))
+    discount_value = Column(QUANTITY, nullable=False, server_default=text("0"))
+    included_charges = Column(Text, nullable=True)
+    charges_amount = Column(MONEY, nullable=False, server_default=text("0"))
+    evidence_storage_key = Column(String, nullable=True)
+    evidence_filename = Column(String(255), nullable=True)
+    evidence_content_type = Column(String(120), nullable=True)
+    evidence_size_bytes = Column(Integer, nullable=True)
+    notes = Column(Text, nullable=True)
+    status = Column(String(16), nullable=False, server_default=text("'ACTIVE'"))
+    created_by = Column(String, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2VendorOfferLine(Base):
+    __tablename__ = "boq_v2_vendor_offer_lines"
+    __table_args__ = (
+        CheckConstraint(
+            "component_type IN ('MATERIAL', 'LABOR')",
+            name="ck_boq_v2_offer_line_component_type",
+        ),
+        CheckConstraint("offered_quantity > 0", name="ck_boq_v2_offer_line_quantity"),
+        CheckConstraint("unit_rate >= 0", name="ck_boq_v2_offer_line_rate"),
+        CheckConstraint(
+            "coverage_state IN ('FULL', 'PARTIAL', 'EXCESS')",
+            name="ck_boq_v2_offer_line_coverage",
+        ),
+        CheckConstraint(
+            "comparison_state IN ('EQUIVALENT', 'UNIT_MISMATCH', 'SPEC_MISMATCH', "
+            "'UNIT_AND_SPEC_MISMATCH')",
+            name="ck_boq_v2_offer_line_comparison",
+        ),
+        UniqueConstraint(
+            "offer_id", "scope_node_id", "component_type",
+            name="uq_boq_v2_offer_line_component",
+        ),
+        Index(
+            "ix_boq_v2_offer_line_component", "project_id", "scope_node_id", "component_type"
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    offer_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_vendor_offers.id"), nullable=False
+    )
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    revision_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
+    )
+    scope_node_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_scope_nodes.id"), nullable=False
+    )
+    source_component_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_cost_components.id"), nullable=False
+    )
+    component_type = Column(String(16), nullable=False)
+    basis_version = Column(Integer, nullable=False)
+    required_quantity = Column(QUANTITY, nullable=False)
+    offered_quantity = Column(QUANTITY, nullable=False)
+    unit = Column(String(120), nullable=True)
+    specification = Column(Text, nullable=True)
+    unit_rate = Column(QUANTITY, nullable=False)
+    subtotal = Column(MONEY, nullable=False)
+    discount_amount = Column(MONEY, nullable=False, server_default=text("0"))
+    charges_amount = Column(MONEY, nullable=False, server_default=text("0"))
+    original_total = Column(MONEY, nullable=False)
+    normalized_unit_rate_ex_vat = Column(QUANTITY, nullable=True)
+    normalized_total_ex_vat = Column(MONEY, nullable=True)
+    coverage_state = Column(String(16), nullable=False)
+    comparison_state = Column(String(32), nullable=False)
+    basis_fingerprint = Column(String(64), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2CostSelection(Base):
+    __tablename__ = "boq_v2_cost_selections"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('DRAFT', 'CONFIRMED', 'STALE', 'REPLACED')",
+            name="ck_boq_v2_cost_selection_status",
+        ),
+        Index(
+            "uq_boq_v2_current_cost_selection",
+            "project_id", "scope_node_id", "component_type",
+            unique=True,
+            postgresql_where=text("is_current"),
+        ),
+        Index("ix_boq_v2_selection_offer_line", "offer_line_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    revision_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_revisions.id"), nullable=False
+    )
+    scope_node_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_scope_nodes.id"), nullable=False
+    )
+    component_type = Column(String(16), nullable=False)
+    offer_line_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_vendor_offer_lines.id"), nullable=False
+    )
+    selected_basis_version = Column(Integer, nullable=False)
+    basis_fingerprint = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, server_default=text("'DRAFT'"))
+    is_current = Column(Boolean, nullable=False, server_default=text("true"))
+    warning_reason = Column(Text, nullable=True)
+    warning_acknowledged = Column(Boolean, nullable=False, server_default=text("false"))
+    selected_by = Column(String, nullable=False)
+    selected_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    confirmed_by = Column(String, nullable=True)
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    cost_plan_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_cost_plans.id"), nullable=True
+    )
+
+
+class BOQV2CatalogItem(Base):
+    __tablename__ = "boq_v2_catalog_items"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ACTIVE', 'ARCHIVED')", name="ck_boq_v2_catalog_status"
+        ),
+        UniqueConstraint("code", name="uq_boq_v2_catalog_code"),
+        Index("ix_boq_v2_catalog_search", "status", "category", "name"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String(255), nullable=False)
+    name = Column(String(1000), nullable=False)
+    specification = Column(Text, nullable=True)
+    unit = Column(String(120), nullable=False)
+    category = Column(String(500), nullable=True)
+    tags = Column(JSON, nullable=False, server_default=text("'[]'::json"))
+    status = Column(String(16), nullable=False, server_default=text("'ACTIVE'"))
+    version = Column(Integer, nullable=False, server_default=text("1"))
+    created_by = Column(String, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_by = Column(String, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2CatalogPriceVersion(Base):
+    __tablename__ = "boq_v2_catalog_price_versions"
+    __table_args__ = (
+        CheckConstraint(
+            "price_kind IN ('MATERIAL_SELL', 'LABOR_SELL', 'MATERIAL_COST', 'LABOR_COST')",
+            name="ck_boq_v2_catalog_price_kind",
+        ),
+        CheckConstraint(
+            "tax_basis IN ('EXCLUSIVE_VAT', 'INCLUSIVE_VAT', 'NO_VAT', 'UNKNOWN')",
+            name="ck_boq_v2_catalog_price_tax_basis",
+        ),
+        CheckConstraint("amount >= 0", name="ck_boq_v2_catalog_price_amount"),
+        UniqueConstraint(
+            "catalog_item_id", "price_kind", "version",
+            name="uq_boq_v2_catalog_price_version",
+        ),
+        Index(
+            "uq_boq_v2_catalog_current_price", "catalog_item_id", "price_kind",
+            unique=True, postgresql_where=text("is_current")
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    catalog_item_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_catalog_items.id"), nullable=False
+    )
+    price_kind = Column(String(24), nullable=False)
+    version = Column(Integer, nullable=False)
+    amount = Column(QUANTITY, nullable=False)
+    tax_basis = Column(String(20), nullable=False)
+    currency = Column(String(8), nullable=False, server_default=text("'THB'"))
+    effective_date = Column(Date, nullable=False)
+    source_observation_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_price_observations.id"), nullable=True
+    )
+    reason = Column(Text, nullable=False)
+    is_current = Column(Boolean, nullable=False, server_default=text("true"))
+    created_by = Column(String, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2PriceObservation(Base):
+    __tablename__ = "boq_v2_price_observations"
+    __table_args__ = (
+        CheckConstraint(
+            "observation_kind IN ('OFFERED_SELL', 'ACCEPTED_SELL', 'ESTIMATED_COST', "
+            "'VENDOR_OFFERED_COST', 'AGREED_VENDOR_COST')",
+            name="ck_boq_v2_price_observation_kind",
+        ),
+        UniqueConstraint("event_key", name="uq_boq_v2_price_observation_event"),
+        Index("ix_boq_v2_observation_catalog_date", "catalog_item_id", "observed_at"),
+        Index("ix_boq_v2_observation_sample", "sample_key", "observation_kind"),
+        Index("ix_boq_v2_observation_project_date", "project_id", "observed_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_key = Column(String(500), nullable=False)
+    sample_key = Column(String(500), nullable=False)
+    observation_kind = Column(String(32), nullable=False)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    document_id = Column(UUID(as_uuid=True), nullable=True)
+    revision_id = Column(UUID(as_uuid=True), nullable=True)
+    scope_node_id = Column(UUID(as_uuid=True), nullable=True)
+    logical_item_id = Column(UUID(as_uuid=True), nullable=True)
+    component_type = Column(String(16), nullable=True)
+    catalog_item_id = Column(
+        UUID(as_uuid=True), ForeignKey("boq_v2_catalog_items.id"), nullable=True
+    )
+    source_event_type = Column(String(64), nullable=False)
+    source_event_id = Column(UUID(as_uuid=True), nullable=False)
+    observed_at = Column(DateTime(timezone=True), nullable=False)
+    quantity = Column(QUANTITY, nullable=True)
+    unit = Column(String(120), nullable=True)
+    specification = Column(Text, nullable=True)
+    tax_basis = Column(String(20), nullable=True)
+    currency = Column(String(8), nullable=False, server_default=text("'THB'"))
+    unit_rate = Column(QUANTITY, nullable=False)
+    total = Column(MONEY, nullable=False)
+    vendor_id = Column(UUID(as_uuid=True), nullable=True)
+    lineage_root_id = Column(UUID(as_uuid=True), nullable=False)
     created_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

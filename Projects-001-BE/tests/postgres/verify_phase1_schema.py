@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import asyncpg
 
 
-EXPECTED_REVISION = "20260917_0002"
+EXPECTED_REVISION = "20260917_0003"
 EXPECTED_V2_TABLES = {
     "boq_v2_audit_events",
     "boq_v2_baseline_change_orders",
@@ -26,6 +26,13 @@ EXPECTED_V2_TABLES = {
     "boq_v2_revision_snapshots",
     "boq_v2_acceptances",
     "boq_v2_export_artifacts",
+    "boq_v2_vendors",
+    "boq_v2_vendor_offers",
+    "boq_v2_vendor_offer_lines",
+    "boq_v2_cost_selections",
+    "boq_v2_catalog_items",
+    "boq_v2_catalog_price_versions",
+    "boq_v2_price_observations",
 }
 EXPECTED_CONSTRAINTS = {
     "ck_boq_v2_active_baseline_identity",
@@ -41,11 +48,21 @@ EXPECTED_CONSTRAINTS = {
     "uq_boq_v2_snapshot_revision_version_purpose",
     "uq_boq_v2_acceptance_revision",
     "ck_boq_v2_internal_export_xlsx_only",
+    "ck_boq_v2_cost_plan_lock_version",
+    "ck_boq_v2_vendor_status",
+    "ck_boq_v2_vendor_offer_status",
+    "ck_boq_v2_offer_line_component_type",
+    "ck_boq_v2_cost_selection_status",
+    "ck_boq_v2_catalog_status",
+    "ck_boq_v2_catalog_price_kind",
+    "ck_boq_v2_price_observation_kind",
 }
 EXPECTED_INDEXES = {
     "uq_boq_v2_active_project_baseline",
     "uq_boq_v2_current_cost_plan",
     "uq_boq_v2_scope_root_position",
+    "uq_boq_v2_current_cost_selection",
+    "uq_boq_v2_catalog_current_price",
 }
 
 
@@ -98,6 +115,16 @@ async def main() -> None:
         source_rows = await connection.fetchval(
             "SELECT count(*) FROM boq_v2_project_budget_sources"
         )
+        phase4_rows = await connection.fetchval(
+            """
+            SELECT
+                (SELECT count(*) FROM boq_v2_vendors) +
+                (SELECT count(*) FROM boq_v2_vendor_offers) +
+                (SELECT count(*) FROM boq_v2_cost_selections) +
+                (SELECT count(*) FROM boq_v2_catalog_items) +
+                (SELECT count(*) FROM boq_v2_price_observations)
+            """
+        )
 
         assert revision == EXPECTED_REVISION, revision
         assert {
@@ -107,6 +134,7 @@ async def main() -> None:
         assert EXPECTED_INDEXES <= indexes, EXPECTED_INDEXES - indexes
         assert source_rows == 0, "Migration must not backfill source selection"
         assert active_sources == 0, "Migration must not activate V2"
+        assert phase4_rows == 0, "Phase 4 migration must not create business data"
 
         transaction = connection.transaction()
         await transaction.start()
@@ -166,8 +194,8 @@ async def main() -> None:
         await connection.close()
 
     print(
-        f"BOQ V2 schema verified through Phase 3: revision={revision}, "
-        f"v2_tables={len(EXPECTED_V2_TABLES)}, source_rows=0"
+        f"BOQ V2 schema verified through Phase 4: revision={revision}, "
+        f"v2_tables={len(EXPECTED_V2_TABLES)}, source_rows=0, phase4_rows=0"
     )
 
 

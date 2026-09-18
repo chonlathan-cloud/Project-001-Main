@@ -137,7 +137,7 @@ def test_current_v2_schema_remains_additive_to_the_project_contract() -> None:
 
     assert len(
         [name for name in Base.metadata.tables if name.startswith("boq_v2_")]
-    ) == 15
+    ) == 22
     project_router = (BACKEND_DIR / "app/api/v1/projects.py").read_text(
         encoding="utf-8"
     )

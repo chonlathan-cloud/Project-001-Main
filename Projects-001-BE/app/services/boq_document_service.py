@@ -546,6 +546,9 @@ async def load_boq_revision(
                 depth=depth,
                 display_path=display_path,
                 item_code=node.item_code,
+                catalog_item_id=node.catalog_item_id,
+                catalog_item_version=node.catalog_item_version,
+                source_logical_id=node.source_logical_id,
                 description=node.description,
                 specification=node.specification,
                 quantity=_rate_string(node.quantity),
@@ -1043,6 +1046,9 @@ async def save_boq_draft(
         node.inclusion_state = draft.inclusion_state
         node.position = draft.position
         node.item_code = _clean_text(draft.item_code)
+        node.catalog_item_id = draft.catalog_item_id
+        node.catalog_item_version = draft.catalog_item_version
+        node.source_logical_id = draft.source_logical_id
         node.description = _clean_text(draft.description)
         node.specification = _clean_text(draft.specification)
         if draft.node_kind == "ITEM":
@@ -1445,6 +1451,9 @@ async def copy_boq_revision(
                 inclusion_state=node.inclusion_state,
                 position=node.position,
                 item_code=node.item_code,
+                catalog_item_id=node.catalog_item_id,
+                catalog_item_version=node.catalog_item_version,
+                source_logical_id=node.source_logical_id or node.logical_id,
                 description=node.description,
                 specification=node.specification,
                 quantity=node.quantity,

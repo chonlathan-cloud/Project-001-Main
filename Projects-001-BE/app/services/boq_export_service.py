@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from io import BytesIO
@@ -33,8 +34,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.boq_v2 import (
+    BOQV2CostPlan,
+    BOQV2CostSelection,
     BOQV2ExportArtifact,
     BOQV2RevisionSnapshot,
+    BOQV2Vendor,
+    BOQV2VendorOffer,
+    BOQV2VendorOfferLine,
 )
 from app.schemas.boq_quotation_schema import (
     BOQV2ExportArtifactResponse,
@@ -306,6 +312,268 @@ def _write_workbook(payload: dict[str, Any], *, internal: bool) -> bytes:
     return output.getvalue()
 
 
+def _write_vendor_workbook(payload: dict[str, Any], *, include_prices: bool) -> bytes:
+    """Render a server-side allowlisted vendor workbook.
+
+    The payload is frozen at request time and contains neither customer sell
+    values nor competing vendor offer data.
+    """
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Selected Vendor Cost" if include_prices else "RFQ"
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A8"
+    sheet.print_title_rows = "7:7"
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.paperSize = sheet.PAPERSIZE_A4
+    sheet.page_setup.fitToWidth = 1
+    sheet.merge_cells("A1:H1")
+    _set_text(sheet["A1"], "Selected Vendor Cost" if include_prices else "Request for Quotation")
+    sheet["A1"].font = Font(size=17, bold=True, color="15324A")
+    sheet["A1"].alignment = Alignment(horizontal="center")
+    identity = [
+        ("Project", payload.get("project_name")),
+        ("Document", payload.get("document_number")),
+        ("Vendor", payload.get("vendor_name")),
+        ("Reference", payload.get("quotation_reference") or ""),
+    ]
+    for index, (label, value) in enumerate(identity, start=2):
+        _set_text(sheet.cell(index, 1), label)
+        _set_text(sheet.cell(index, 2), value)
+        sheet.cell(index, 1).font = Font(bold=True)
+        sheet.merge_cells(start_row=index, start_column=2, end_row=index, end_column=8)
+    columns = ["Item code", "Description", "Specification", "Component", "Quantity", "Unit"]
+    if include_prices:
+        columns.extend(["Agreed rate ex VAT", "Agreed total ex VAT"])
+    else:
+        columns.extend(["Vendor rate", "Vendor total"])
+    for index, label in enumerate(columns, start=1):
+        cell = sheet.cell(7, index)
+        _set_text(cell, label)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = HEADER_FILL
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+    for row_index, line in enumerate(payload.get("lines") or [], start=8):
+        _set_text(sheet.cell(row_index, 1), line.get("item_code"))
+        _set_text(sheet.cell(row_index, 2), line.get("description"))
+        _set_text(sheet.cell(row_index, 3), line.get("specification"))
+        _set_text(sheet.cell(row_index, 4), line.get("component_type"))
+        sheet.cell(row_index, 5, _number(line.get("quantity")))
+        _set_text(sheet.cell(row_index, 6), line.get("unit"))
+        if include_prices:
+            sheet.cell(row_index, 7, _number(line.get("unit_rate")))
+            sheet.cell(row_index, 8, _number(line.get("total")))
+        else:
+            sheet.cell(row_index, 7, None)
+            sheet.cell(row_index, 8, None)
+        for column in range(1, 9):
+            sheet.cell(row_index, column).border = Border(bottom=THIN_GREY)
+            sheet.cell(row_index, column).alignment = Alignment(
+                vertical="top", wrap_text=column in {1, 2, 3, 4, 6},
+                horizontal="right" if column in {5, 7, 8} else "left",
+            )
+        for column in {5, 7, 8}:
+            sheet.cell(row_index, column).number_format = "#,##0.00"
+    widths = [16, 34, 34, 15, 14, 14, 20, 20]
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _snapshot_component_scope(
+    snapshot: BOQV2RevisionSnapshot,
+) -> dict[UUID, dict[str, Any]]:
+    """Return the only fields permitted in a vendor-facing export."""
+
+    internal = snapshot.internal_payload
+    if not isinstance(internal, dict):
+        raise BOQDomainError(
+            "EXPORT_SNAPSHOT_INVALID", "Quotation snapshot payload is invalid"
+        )
+    result: dict[UUID, dict[str, Any]] = {}
+    for node in internal.get("scope") or []:
+        if (
+            not isinstance(node, dict)
+            or node.get("node_kind") != "ITEM"
+            or node.get("inclusion_state") == "EXCLUDED"
+        ):
+            continue
+        try:
+            scope_node_id = UUID(str(node["id"]))
+        except (KeyError, TypeError, ValueError) as error:
+            raise BOQDomainError(
+                "EXPORT_SNAPSHOT_INVALID", "Snapshot contains an invalid scope identity"
+            ) from error
+        for component in node.get("components") or []:
+            if not isinstance(component, dict):
+                continue
+            try:
+                component_id = UUID(str(component["id"]))
+            except (KeyError, TypeError, ValueError) as error:
+                raise BOQDomainError(
+                    "EXPORT_SNAPSHOT_INVALID",
+                    "Snapshot contains an invalid component identity",
+                ) from error
+            result[component_id] = {
+                "component_id": str(component_id),
+                "scope_node_id": str(scope_node_id),
+                "component_type": str(component.get("component_type") or ""),
+                "item_code": _safe_text(node.get("item_code")),
+                "description": _safe_text(node.get("description")),
+                "specification": _safe_text(
+                    component.get("specification") or node.get("specification")
+                ),
+                "quantity": str(component.get("quantity") or node.get("quantity") or "0"),
+                "unit": _safe_text(component.get("unit") or node.get("unit")),
+            }
+    return result
+
+
+def _filename_token(value: object | None) -> str:
+    token = re.sub(r"[^A-Za-z0-9_-]+", "-", str(value or "vendor")).strip("-")
+    return (token or "vendor")[:64]
+
+
+async def _vendor_export_scope(
+    db: AsyncSession,
+    *,
+    snapshot: BOQV2RevisionSnapshot,
+    request: BOQV2ExportRequest,
+    project_id: UUID,
+    document_number: str,
+) -> tuple[BOQV2Vendor, dict[str, Any], int | None]:
+    vendor = (
+        await db.execute(
+            select(BOQV2Vendor).where(
+                BOQV2Vendor.id == request.vendor_id,
+                BOQV2Vendor.project_id == project_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if vendor is None:
+        raise BOQDomainError(
+            "EXPORT_VENDOR_NOT_FOUND", "Vendor does not belong to this project"
+        )
+
+    available = _snapshot_component_scope(snapshot)
+    selected_ids = list(request.selected_component_ids)
+    if any(component_id not in available for component_id in selected_ids):
+        raise BOQDomainError(
+            "EXPORT_SCOPE_INVALID",
+            "Every selected component must belong to the immutable export snapshot",
+        )
+
+    project_payload = snapshot.internal_payload.get("project", {})
+    frozen: dict[str, Any] = {
+        "schema_version": "boq-v2-vendor-export-v1",
+        "project_id": str(project_id),
+        "project_name": _safe_text(
+            project_payload.get("name") if isinstance(project_payload, dict) else None
+        ),
+        "document_number": _safe_text(document_number),
+        "vendor_id": str(vendor.id),
+        "vendor_name": _safe_text(vendor.display_name),
+        "quotation_reference": "",
+        "lines": [],
+    }
+    if request.audience == "RFQ":
+        frozen["lines"] = [available[component_id] for component_id in selected_ids]
+        return vendor, frozen, None
+
+    selection_rows = list(
+        (
+            await db.execute(
+                select(
+                    BOQV2CostSelection,
+                    BOQV2VendorOfferLine,
+                    BOQV2VendorOffer,
+                    BOQV2CostPlan,
+                )
+                .join(
+                    BOQV2VendorOfferLine,
+                    BOQV2VendorOfferLine.id == BOQV2CostSelection.offer_line_id,
+                )
+                .join(
+                    BOQV2VendorOffer,
+                    BOQV2VendorOffer.id == BOQV2VendorOfferLine.offer_id,
+                )
+                .join(BOQV2CostPlan, BOQV2CostPlan.id == BOQV2CostSelection.cost_plan_id)
+                .where(
+                    BOQV2CostSelection.project_id == project_id,
+                    BOQV2CostSelection.is_current.is_(True),
+                    BOQV2CostSelection.status == "CONFIRMED",
+                    BOQV2VendorOffer.vendor_id == vendor.id,
+                    BOQV2CostPlan.status == "PUBLISHED",
+                )
+            )
+        ).all()
+    )
+    by_scope = {
+        (str(selection.scope_node_id), selection.component_type): (line, offer, plan)
+        for selection, line, offer, plan in selection_rows
+    }
+    if not selected_ids:
+        selected_ids = [
+            component_id
+            for component_id, scope in available.items()
+            if (scope["scope_node_id"], scope["component_type"]) in by_scope
+        ]
+    if not selected_ids:
+        raise BOQDomainError(
+            "EXPORT_SCOPE_INVALID", "Vendor has no confirmed selection in this snapshot"
+        )
+
+    plan_versions: set[int] = set()
+    references: set[str] = set()
+    lines: list[dict[str, Any]] = []
+    for component_id in selected_ids:
+        scope = available[component_id]
+        selected = by_scope.get((scope["scope_node_id"], scope["component_type"]))
+        if selected is None:
+            raise BOQDomainError(
+                "EXPORT_SCOPE_INVALID",
+                "Selected component is not a confirmed cost selection for this vendor",
+            )
+        line, offer, plan = selected
+        if line.normalized_unit_rate_ex_vat is None or line.normalized_total_ex_vat is None:
+            raise BOQDomainError(
+                "EXPORT_COST_PLAN_MISMATCH",
+                "Selected vendor cost has no safe ex-VAT normalized value",
+            )
+        plan_versions.add(plan.version)
+        if offer.quotation_reference:
+            references.add(offer.quotation_reference)
+        lines.append(
+            {
+                **scope,
+                "unit_rate": str(line.normalized_unit_rate_ex_vat),
+                "total": str(line.normalized_total_ex_vat),
+                "quotation_reference": _safe_text(offer.quotation_reference),
+            }
+        )
+    if len(plan_versions) != 1:
+        raise BOQDomainError(
+            "EXPORT_COST_PLAN_MISMATCH",
+            "Selected components must come from one published cost-plan version",
+        )
+    cost_plan_version = plan_versions.pop()
+    if (
+        request.cost_plan_version is not None
+        and request.cost_plan_version != cost_plan_version
+    ):
+        raise BOQDomainError(
+            "EXPORT_COST_PLAN_MISMATCH",
+            "Requested cost-plan version does not match the selected vendor costs",
+        )
+    frozen["quotation_reference"] = ", ".join(sorted(references))
+    frozen["cost_plan_version"] = cost_plan_version
+    frozen["lines"] = lines
+    return vendor, frozen, cost_plan_version
+
+
 def _font_candidates() -> list[Path]:
     configured = get_settings().boq_pdf_font_path
     paths: list[Path] = []
@@ -333,6 +601,146 @@ def _register_pdf_font() -> str:
         )
     pdfmetrics.registerFont(TTFont(font_name, str(font_path), shapable=True))
     return font_name
+
+
+def _write_vendor_pdf(payload: dict[str, Any], *, include_prices: bool) -> bytes:
+    font_name = _register_pdf_font()
+    output = BytesIO()
+    title = "Selected Vendor Cost" if include_prices else "Request for Quotation"
+    document_number = _safe_text(payload.get("document_number"))
+    vendor_name = _safe_text(payload.get("vendor_name"))
+    pdf = SimpleDocTemplate(
+        output,
+        pagesize=A4,
+        leftMargin=12 * mm,
+        rightMargin=12 * mm,
+        topMargin=14 * mm,
+        bottomMargin=17 * mm,
+        title=f"{title} {document_number}",
+        author="Projects-001",
+    )
+    base = getSampleStyleSheet()["Normal"]
+    normal = ParagraphStyle(
+        "VendorNormal",
+        parent=base,
+        fontName=font_name,
+        fontSize=8,
+        leading=10.5,
+        textColor=colors.HexColor("#243746"),
+        wordWrap="CJK",
+        shaping=True,
+    )
+    small = ParagraphStyle("VendorSmall", parent=normal, fontSize=7, leading=9)
+    heading = ParagraphStyle(
+        "VendorHeading",
+        parent=normal,
+        fontSize=16,
+        leading=20,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#15324A"),
+    )
+
+    def paragraph(value: object | None, style: ParagraphStyle = normal) -> Paragraph:
+        text = (
+            _safe_text(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        return Paragraph(text or " ", style)
+
+    identity = [
+        [paragraph("Project"), paragraph(payload.get("project_name"))],
+        [paragraph("Document"), paragraph(document_number)],
+        [paragraph("Vendor"), paragraph(vendor_name)],
+        [paragraph("Reference"), paragraph(payload.get("quotation_reference"))],
+    ]
+    identity_table = Table(identity, colWidths=[31 * mm, 151 * mm])
+    identity_table.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), font_name),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E7EEF4")),
+                ("BOX", (0, 0), (-1, -1), 0.35, colors.HexColor("#C5D0D8")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D9E0E7")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    headers = ["Code", "Description / specification", "Component", "Quantity", "Unit"]
+    if include_prices:
+        headers.extend(["Agreed rate ex VAT", "Agreed total ex VAT"])
+    else:
+        headers.extend(["Vendor rate", "Vendor total"])
+    table_rows: list[list[Any]] = [[paragraph(value, small) for value in headers]]
+    for line in payload.get("lines") or []:
+        description = _safe_text(line.get("description"))
+        specification = _safe_text(line.get("specification"))
+        if specification:
+            description = f"{description} — {specification}"
+        row = [
+            paragraph(line.get("item_code"), small),
+            paragraph(description, small),
+            paragraph(line.get("component_type"), small),
+            paragraph(f"{_decimal(line.get('quantity')):,.4f}", small),
+            paragraph(line.get("unit"), small),
+        ]
+        if include_prices:
+            row.extend(
+                [
+                    paragraph(f"{_decimal(line.get('unit_rate')):,.4f}", small),
+                    paragraph(f"{_decimal(line.get('total')):,.2f}", small),
+                ]
+            )
+        else:
+            row.extend([paragraph("", small), paragraph("", small)])
+        table_rows.append(row)
+    details = Table(
+        table_rows,
+        colWidths=[19 * mm, 65 * mm, 21 * mm, 18 * mm, 16 * mm, 22 * mm, 23 * mm],
+        repeatRows=1,
+        splitByRow=1,
+    )
+    details.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), font_name),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#15324A")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("BOX", (0, 0), (-1, -1), 0.35, colors.HexColor("#AEBBC5")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.2, colors.HexColor("#D9E0E7")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+                ("ALIGN", (5, 1), (-1, -1), "RIGHT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    story: list[Any] = [
+        paragraph(title, heading),
+        Spacer(1, 5 * mm),
+        identity_table,
+        Spacer(1, 6 * mm),
+        details,
+    ]
+
+    def footer(canvas: Any, _document: Any) -> None:
+        canvas.saveState()
+        canvas.setFont(font_name, 7)
+        canvas.setFillColor(colors.HexColor("#5F6F7A"))
+        canvas.drawString(12 * mm, 8 * mm, f"{document_number} · {vendor_name}")
+        canvas.drawRightString(A4[0] - 12 * mm, 8 * mm, f"Page {canvas.getPageNumber()}")
+        canvas.restoreState()
+
+    pdf.build(story, onFirstPage=footer, onLaterPages=footer)
+    return output.getvalue()
 
 
 def _write_pdf(payload: dict[str, Any]) -> bytes:
@@ -533,7 +941,19 @@ def render_export_bytes(
     *,
     audience: str,
     file_format: str,
+    audience_payload: dict[str, Any] | None = None,
 ) -> bytes:
+    if audience in {"RFQ", "VENDOR"}:
+        if not isinstance(audience_payload, dict):
+            raise BOQDomainError("EXPORT_SCOPE_INVALID", "Frozen vendor export scope is unavailable")
+        if file_format == "XLSX":
+            return _write_vendor_workbook(
+                audience_payload, include_prices=audience == "VENDOR"
+            )
+        if file_format == "PDF":
+            return _write_vendor_pdf(
+                audience_payload, include_prices=audience == "VENDOR"
+            )
     payload = _payload(snapshot, audience)
     if file_format == "XLSX":
         return _write_workbook(payload, internal=audience == "INTERNAL")
@@ -541,7 +961,7 @@ def render_export_bytes(
         return _write_pdf(payload)
     raise BOQDomainError(
         "EXPORT_FORMAT_NOT_SUPPORTED",
-        "Phase 3 supports customer XLSX/PDF and internal XLSX only",
+        "Unsupported export audience/format combination",
     )
 
 
@@ -561,6 +981,7 @@ def _artifact_response(
         audience=artifact.audience,
         file_format=artifact.file_format,
         cost_plan_version=artifact.cost_plan_version,
+        vendor_id=artifact.vendor_id,
         status=artifact.status,
         filename=artifact.filename,
         mime_type=artifact.mime_type,
@@ -608,6 +1029,9 @@ async def request_export(
             "snapshot_id": str(snapshot.id),
             "audience": request.audience,
             "file_format": request.file_format,
+            "vendor_id": str(request.vendor_id) if request.vendor_id else None,
+            "selected_component_ids": [str(item) for item in request.selected_component_ids],
+            "cost_plan_version": request.cost_plan_version,
         },
     )
     if prior_artifact_id is not None:
@@ -626,6 +1050,18 @@ async def request_export(
             )
         return artifact
 
+    vendor: BOQV2Vendor | None = None
+    audience_payload: dict[str, Any] | None = None
+    vendor_cost_plan_version: int | None = None
+    if request.audience in {"RFQ", "VENDOR"}:
+        vendor, audience_payload, vendor_cost_plan_version = await _vendor_export_scope(
+            db,
+            snapshot=snapshot,
+            request=request,
+            project_id=revision.project_id,
+            document_number=document.document_number,
+        )
+
     frozen_cost = (
         snapshot.internal_payload.get("cost", {})
         if isinstance(snapshot.internal_payload, dict)
@@ -641,7 +1077,12 @@ async def request_export(
             "Frozen internal snapshot has an incomplete cost plan identity",
         )
     extension = request.file_format.lower()
-    suffix = "customer" if request.audience == "CUSTOMER" else "internal"
+    if request.audience == "CUSTOMER":
+        suffix = "customer"
+    elif request.audience == "INTERNAL":
+        suffix = "internal"
+    else:
+        suffix = f"{request.audience.casefold()}-{_filename_token(vendor.display_name if vendor else None)}"
     filename = f"{document.document_number}-R{revision.revision_number}-{suffix}.{extension}"
     artifact = BOQV2ExportArtifact(
         id=uuid4(),
@@ -655,8 +1096,10 @@ async def request_export(
         cost_plan_version=(
             int(frozen_cost_plan_version)
             if request.audience == "INTERNAL" and frozen_cost_plan_version is not None
-            else None
+            else vendor_cost_plan_version
         ),
+        vendor_id=vendor.id if vendor else None,
+        audience_payload=audience_payload,
         status="PENDING",
         filename=filename,
         mime_type=XLSX_MIME if request.file_format == "XLSX" else PDF_MIME,
@@ -723,6 +1166,7 @@ async def render_and_upload_export(
             snapshot,
             audience=artifact.audience,
             file_format=artifact.file_format,
+            audience_payload=artifact.audience_payload,
         )
         storage_key = await upload_boq_export_artifact(
             project_id=str(artifact.project_id),

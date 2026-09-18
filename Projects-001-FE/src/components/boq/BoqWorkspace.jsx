@@ -50,6 +50,7 @@ import {
   updateDraftNode,
 } from './boqDraftState';
 import QuotationLifecyclePanel from '../quotations/QuotationLifecyclePanel';
+import BoqVendorCostPanel from './BoqVendorCostPanel';
 import '../quotations/quotation.css';
 import './boqWorkspace.css';
 
@@ -1185,6 +1186,13 @@ export default function BoqWorkspace() {
                 </table>
               </div>
             )}
+            <BoqVendorCostPanel
+              projectId={projectId}
+              revision={revision}
+              workspace={workspace}
+              dirty={dirty}
+              onPublished={() => loadWorkspace({ preferredRevisionId: revision.revision_id })}
+            />
             <footer className="boq-editor-footer">
               <span>Revision {revision.revision_number} · version {revision.version} · calculation {revision.calculation_version}</span>
               <span>Last server update {formatTimestamp(revision.updated_at)}</span>

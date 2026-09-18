@@ -72,7 +72,21 @@ test('duplicate gets new persistence and logical identity while preserving value
   assert.equal(copies.length, 3);
   assert.equal(copies[1].id, null);
   assert.notEqual(copies[1].logical_id, source.logical_id);
+  assert.equal(copies[1].source_logical_id, source.logical_id);
   assert.equal(copies[1].quantity, source.quantity);
+});
+
+test('catalog identity is copied into save payload without creating live master linkage', () => {
+  const nodes = fixture();
+  const item = nodes.find((node) => node.node_kind === 'ITEM');
+  item.catalog_item_id = '11111111-1111-4111-8111-111111111111';
+  item.catalog_item_version = 3;
+  item.source_logical_id = '22222222-2222-4222-8222-222222222222';
+  const payload = buildSavePayload(2, nodes);
+  const saved = payload.nodes.find((node) => node.logical_id === item.logical_id);
+  assert.equal(saved.catalog_item_id, item.catalog_item_id);
+  assert.equal(saved.catalog_item_version, 3);
+  assert.equal(saved.source_logical_id, item.source_logical_id);
 });
 
 test('remove deletes the complete subtree and save keeps null cost distinct from zero', () => {
