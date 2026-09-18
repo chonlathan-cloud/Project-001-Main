@@ -4,7 +4,6 @@ import {
   ClipboardCheck,
   Cloud,
   Copy,
-  Database,
   ExternalLink,
   KeyRound,
   Link2Off,
@@ -2373,15 +2372,6 @@ function SettingPage() {
       />
 
       <div className="settings-integration-grid">
-        <SettingsIntegrationCard
-          icon={Database}
-          name="Google Sheets API"
-          status="Active"
-          tone="success"
-          description="BOQ and operational worksheet sync source."
-          actionLabel="Manage"
-          onAction={() => setMessage('Google Sheets integration uses the current backend configuration.')}
-        />
         <SettingsIntegrationCard
           icon={Cloud}
           name="Google Firebase"

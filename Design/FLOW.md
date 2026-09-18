@@ -1,5 +1,7 @@
 # Project Flow
 
+> **Phase 5 BOQ supersession:** Google Sheets/Autodesk-style BOQ synchronization flows below are historical references, not active runtime behavior. BOQ authoring is native-only with revision/alternative/change-order lifecycle, immutable snapshots, vendor cost publication, Price Database reuse and audience-safe exports. Legacy BOQ remains read-only history. See [`../docs/FeedbackV2/phase5/README.md`](../docs/FeedbackV2/phase5/README.md).
+
 This document describes the current implementation flow for `Projects-001`.
 It is based on the repository code and the existing product/design documents.
 

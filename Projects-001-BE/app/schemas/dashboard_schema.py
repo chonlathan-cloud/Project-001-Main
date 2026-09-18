@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.schemas.project_budget_schema import ProjectBudgetSnapshot
+
 
 class DashboardKpis(BaseModel):
     total_budget: float = 0.0
@@ -58,6 +60,7 @@ class DashboardProjectHealthItem(BaseModel):
     overdue_amount: float = 0.0
     burn_percent: float = 0.0
     tone: str = "neutral"
+    budget_snapshot: ProjectBudgetSnapshot | None = None
 
 
 class DashboardAttentionItem(BaseModel):
@@ -85,3 +88,4 @@ class DashboardSummaryResponse(BaseModel):
     project_health: list[DashboardProjectHealthItem] = Field(default_factory=list)
     attention_items: list[DashboardAttentionItem] = Field(default_factory=list)
     recent_actions: list[DashboardRecentAction] = Field(default_factory=list)
+    budget_sources: list[ProjectBudgetSnapshot] = Field(default_factory=list)

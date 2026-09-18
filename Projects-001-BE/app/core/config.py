@@ -184,7 +184,6 @@ class Settings(BaseSettings):
 
     gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
     embedding_model: str = Field(default="text-embedding-004", alias="EMBEDDING_MODEL")
-    boq_batch_sync_max_tabs: int = Field(default=3, alias="BOQ_BATCH_SYNC_MAX_TABS")
 
     flowaccount_enabled: bool = Field(default=False, alias="FLOWACCOUNT_ENABLED")
     flowaccount_base_url: str = Field(

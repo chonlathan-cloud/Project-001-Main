@@ -1,13 +1,11 @@
-"""
-Router 2 & 3: Project List, Project Detail, BOQ Tree, BOQ Sync.
-"""
+"""Project CRUD, legacy BOQ history, and retired sync compatibility routes."""
 
 import re
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
@@ -29,23 +27,11 @@ from app.schemas.boq_schema import (
     ProjectExecutionSummaryItem,
     ProjectDetailResponse,
     ProjectItem,
-    SheetTabsRequest,
-    SheetTabsResponse,
-    SyncBOQRequest,
-    SyncBOQBatchRequest,
-    SyncBOQBatchJobResponse,
-    SyncBOQResponse,
     UpdateProjectRequest,
 )
 from app.schemas.responses import StandardResponse
-from app.services.boq_sync_job_service import (
-    create_boq_sync_job,
-    get_boq_sync_job,
-    run_boq_sync_job,
-    serialize_boq_sync_job,
-)
-from app.services.boq_sync_service import fetch_google_sheet_tabs, sync_boq_sheet
 from app.services.project_budget_service import (
+    active_budget_amount,
     legacy_budget_facts_from_items,
     load_project_budget_contexts,
 )
@@ -62,21 +48,39 @@ RESERVED_OPERATIONS_NAMES = {
 }
 
 
-def _to_project_list_item(project: Project, *, total_budget: float | None = None) -> ProjectItem:
+def _to_project_list_item(
+    project: Project,
+    *,
+    total_budget: float | None = None,
+    budget_snapshot=None,
+    execution: dict[str, float] | None = None,
+) -> ProjectItem:
+    execution = execution or {}
+    normalized_budget = float(
+        total_budget if total_budget is not None else (project.contingency_budget or 0)
+    )
+    spent = float(execution.get("spent", 0.0))
     return ProjectItem(
         id=project.id,
         name=project.name,
         project_type=project.project_type,
         system_key=project.system_key,
         status=project.status,
-        total_budget=float(
-            total_budget if total_budget is not None else (project.contingency_budget or 0)
-        ),
-        progress_percent=0.0,  # TODO: calculate from installments
+        total_budget=normalized_budget,
+        progress_percent=(spent / normalized_budget * 100) if normalized_budget else 0.0,
+        spent=spent,
+        pending_amount=float(execution.get("pending_amount", 0.0)),
+        paid_amount=float(execution.get("paid_amount", 0.0)),
+        budget_snapshot=budget_snapshot,
     )
 
 
-def _to_project_detail(project: Project) -> ProjectDetailResponse:
+def _to_project_detail(
+    project: Project,
+    *,
+    total_budget: float | None = None,
+    budget_snapshot=None,
+) -> ProjectDetailResponse:
     return ProjectDetailResponse(
         project_id=project.id,
         name=project.name,
@@ -87,6 +91,30 @@ def _to_project_detail(project: Project) -> ProjectDetailResponse:
         vat_percent=float(project.vat_percent or 0),
         contingency_budget=float(project.contingency_budget or 0),
         status=project.status,
+        total_budget=float(
+            total_budget if total_budget is not None else (project.contingency_budget or 0)
+        ),
+        budget_snapshot=budget_snapshot,
+    )
+
+
+async def _project_detail_with_budget(
+    db: AsyncSession,
+    project: Project,
+) -> ProjectDetailResponse:
+    budget_context = (
+        await load_project_budget_contexts(db, [project.id])
+    ).get(project.id)
+    return _to_project_detail(
+        project,
+        total_budget=(
+            active_budget_amount(budget_context, consumer="PROJECT_LIST")
+            if budget_context is not None
+            else project.contingency_budget
+        ),
+        budget_snapshot=(
+            budget_context.snapshot if budget_context is not None else None
+        ),
     )
 
 
@@ -405,6 +433,7 @@ def _execution_summary_items(
         if bool(item.is_overdue)
         and str(item.status or "").upper() not in {"APPROVED", "PAID", "ACCEPT"}
     ]
+
     pending_input_requests = [
         item
         for item in input_requests
@@ -478,6 +507,78 @@ def _execution_summary_items(
     ]
 
 
+async def _project_execution_totals(
+    db: AsyncSession,
+    project_ids: list[UUID],
+) -> dict[UUID, dict[str, float]]:
+    """Load project-card finance totals in bounded batch queries."""
+
+    totals = {
+        project_id: {"spent": 0.0, "pending_amount": 0.0, "paid_amount": 0.0}
+        for project_id in project_ids
+    }
+    if not project_ids:
+        return totals
+
+    transaction_rows = (
+        await db.execute(
+            select(
+                BOQItem.project_id,
+                Transaction.net_payable,
+                Transaction.base_amount,
+            )
+            .join(Installment, Installment.boq_item_id == BOQItem.id)
+            .join(Transaction, Transaction.installment_id == Installment.id)
+            .where(BOQItem.project_id.in_(project_ids))
+        )
+    ).all()
+    for project_id, net_payable, base_amount in transaction_rows:
+        totals[project_id]["spent"] += _to_float(net_payable or base_amount)
+
+    installment_rows = (
+        await db.execute(
+            select(
+                BOQItem.project_id,
+                Installment.amount,
+                Installment.is_overdue,
+                Installment.status,
+            )
+            .join(Installment, Installment.boq_item_id == BOQItem.id)
+            .where(BOQItem.project_id.in_(project_ids))
+        )
+    ).all()
+    for project_id, amount, is_overdue, installment_status in installment_rows:
+        if bool(is_overdue) and str(installment_status or "").upper() not in {
+            "APPROVED",
+            "PAID",
+            "ACCEPT",
+        }:
+            totals[project_id]["pending_amount"] += _to_float(amount)
+
+    input_rows = (
+        await db.execute(
+            select(
+                InputRequest.project_id,
+                InputRequest.status,
+                InputRequest.amount,
+                InputRequest.approved_amount,
+            ).where(InputRequest.project_id.in_(project_ids))
+        )
+    ).all()
+    for project_id, request_status, amount, approved_amount in input_rows:
+        normalized_status = str(request_status or "").upper()
+        effective_amount = _to_float(
+            approved_amount if approved_amount is not None else amount
+        )
+        if normalized_status in {"APPROVED", "PAID"}:
+            totals[project_id]["spent"] += effective_amount
+        if normalized_status == "PENDING_ADMIN":
+            totals[project_id]["pending_amount"] += _to_float(amount)
+        if normalized_status == "PAID":
+            totals[project_id]["paid_amount"] += effective_amount
+    return totals
+
+
 # ---------------------------------------------------------------------------
 # Router 2: GET /api/v1/projects
 # ---------------------------------------------------------------------------
@@ -492,15 +593,24 @@ async def list_projects(
         projects = result.scalars().all()
         project_ids = [project.id for project in projects]
         budget_contexts = await load_project_budget_contexts(db, project_ids)
+        execution_totals = await _project_execution_totals(db, project_ids)
 
         items = [
             _to_project_list_item(
                 project,
                 total_budget=(
-                    budget_contexts[project.id].legacy_project_list_budget
+                    active_budget_amount(
+                        budget_contexts[project.id], consumer="PROJECT_LIST"
+                    )
                     if project.id in budget_contexts
                     else project.contingency_budget
                 ),
+                budget_snapshot=(
+                    budget_contexts[project.id].snapshot
+                    if project.id in budget_contexts
+                    else None
+                ),
+                execution=execution_totals.get(project.id),
             )
             for project in projects
         ]
@@ -569,7 +679,7 @@ async def create_project(
         await db.commit()
         await db.refresh(project)
 
-        return StandardResponse(data=_to_project_detail(project))
+        return StandardResponse(data=await _project_detail_with_budget(db, project))
 
     except HTTPException:
         await db.rollback()
@@ -639,7 +749,7 @@ async def update_project(
         await db.commit()
         await db.refresh(project)
 
-        return StandardResponse(data=_to_project_detail(project))
+        return StandardResponse(data=await _project_detail_with_budget(db, project))
 
     except HTTPException:
         await db.rollback()
@@ -674,7 +784,7 @@ async def get_project_detail(
                 detail=f"Project {project_id} not found.",
             )
 
-        return StandardResponse(data=_to_project_detail(project))
+        return StandardResponse(data=await _project_detail_with_budget(db, project))
 
     except HTTPException:
         raise
@@ -711,6 +821,9 @@ async def get_project_boq(
             .order_by(BOQItem.boq_type, BOQItem.sheet_name, BOQItem.wbs_level, BOQItem.item_no)
         )
         all_items = items_result.scalars().all()
+        budget_context = (
+            await load_project_budget_contexts(db, [project_id])
+        ).get(project_id)
 
         customer_items = [item for item in all_items if item.boq_type == "CUSTOMER"]
         subcontractor_items = [
@@ -816,6 +929,13 @@ async def get_project_boq(
                     ProjectExecutionSummaryItem.model_validate(item)
                     for item in execution_summary
                 ],
+                active_budget_snapshot=(
+                    budget_context.snapshot if budget_context is not None else None
+                ),
+                legacy_history_only=bool(
+                    budget_context is not None
+                    and budget_context.snapshot.source_kind == "V2"
+                ),
             )
         )
 
@@ -828,125 +948,47 @@ async def get_project_boq(
         ) from exc
 
 
-# ---------------------------------------------------------------------------
-# Router 2: POST /api/v1/boq/sync  (uses AI to parse Google Sheet)
-# ---------------------------------------------------------------------------
-@router.post("/boq/sync", response_model=StandardResponse[SyncBOQResponse])
-async def sync_boq(
-    request: SyncBOQRequest,
-    db: AsyncSession = Depends(get_db),
+def _raise_boq_sync_retired() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "code": "BOQ_SYNC_RETIRED",
+            "message": (
+                "Google Sheets BOQ synchronization has been retired. "
+                "Use the native BOQ workspace for this project."
+            ),
+            "replacement": "/api/v1/projects/{project_id}/boq-workspace",
+        },
+    )
+
+
+@router.post("/boq/sync", status_code=status.HTTP_410_GONE)
+async def sync_boq_retired(
     _user: AuthenticatedUser = Depends(require_owner_user),
 ):
-    """
-    Sync BOQ from a Google Sheet URL.
-    Flow: Fetch one tab → Gemini parses WBS → Save to DB (SCD Type 2).
-    """
-    try:
-        result = await db.execute(
-            select(Project).options(noload("*")).filter_by(id=request.project_id)
-        )
-        project = result.scalar_one_or_none()
+    """Compatibility endpoint for clients deployed before sync retirement."""
 
-        if project is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project {request.project_id} not found.",
-            )
-
-        data = await sync_boq_sheet(
-            session=db,
-            project=project,
-            boq_type=request.boq_type,
-            sheet_url=request.sheet_url,
-            sheet_name=request.sheet_name,
-        )
-        return StandardResponse(data=SyncBOQResponse(**data))
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to sync BOQ: {exc}",
-        ) from exc
+    _raise_boq_sync_retired()
 
 
-@router.post("/boq/tabs", response_model=StandardResponse[SheetTabsResponse])
-async def preview_boq_tabs(
-    request: SheetTabsRequest,
+@router.post("/boq/tabs", status_code=status.HTTP_410_GONE)
+async def preview_boq_tabs_retired(
     _user: AuthenticatedUser = Depends(require_owner_user),
 ):
-    """Preview workbook tabs so the frontend can batch select syncable BOQ tabs."""
-    try:
-        tabs = await fetch_google_sheet_tabs(request.sheet_url)
-        return StandardResponse(
-            data=SheetTabsResponse(
-                sheet_url=request.sheet_url,
-                tabs=tabs,
-            )
-        )
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to preview Google Sheet tabs: {exc}",
-        ) from exc
+    _raise_boq_sync_retired()
 
 
-@router.post("/boq/sync-batch", response_model=StandardResponse[SyncBOQBatchJobResponse])
-async def sync_boq_batch(
-    request: SyncBOQBatchRequest,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+@router.post("/boq/sync-batch", status_code=status.HTTP_410_GONE)
+async def sync_boq_batch_retired(
     _user: AuthenticatedUser = Depends(require_owner_user),
 ):
-    """Queue a background job that syncs multiple BOQ tabs from the same workbook."""
-    try:
-        result = await db.execute(
-            select(Project).options(noload("*")).filter_by(id=request.project_id)
-        )
-        project = result.scalar_one_or_none()
-
-        if project is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project {request.project_id} not found.",
-            )
-
-        job = await create_boq_sync_job(
-            project_id=project.id,
-            project_name=project.name,
-            boq_type=request.boq_type,
-            sheet_url=request.sheet_url,
-            sheet_names=request.sheet_names,
-        )
-        background_tasks.add_task(run_boq_sync_job, job["job_id"])
-        return StandardResponse(data=serialize_boq_sync_job(job))
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to sync BOQ tabs: {exc}",
-        ) from exc
+    _raise_boq_sync_retired()
 
 
-@router.get("/boq/sync-jobs/{job_id}", response_model=StandardResponse[SyncBOQBatchJobResponse])
-async def get_sync_boq_batch_job(
+@router.get("/boq/sync-jobs/{job_id}", status_code=status.HTTP_410_GONE)
+async def get_sync_boq_batch_job_retired(
     job_id: str,
     _user: AuthenticatedUser = Depends(require_owner_user),
 ):
-    """Return current status and per-tab progress for a queued BOQ batch sync job."""
-    try:
-        job = await get_boq_sync_job(job_id)
-        return StandardResponse(data=serialize_boq_sync_job(job))
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch BOQ sync job {job_id}: {exc}",
-        ) from exc
+    del job_id
+    _raise_boq_sync_retired()

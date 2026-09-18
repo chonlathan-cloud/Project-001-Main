@@ -309,8 +309,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["workflow", "job_id"],
-      "properties": {"workflow": {"enum": ["boq_sync", "receipt_ocr", "daily_report_delivery", "flowaccount_sync"]}, "job_id": {"$ref": "#/$defs/opaque_id"}}
+      "properties": {"workflow": {"enum": ["receipt_ocr", "daily_report_delivery", "flowaccount_sync"]}, "job_id": {"$ref": "#/$defs/opaque_id"}}
     }
   }
 }
-

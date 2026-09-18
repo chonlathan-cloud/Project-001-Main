@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.project_budget_schema import ProjectBudgetSnapshot
+
 
 class FundBucketOption(BaseModel):
     bucket_id: UUID
@@ -18,11 +20,13 @@ class FundBucketOption(BaseModel):
     bucket_type: str
     status: str
     currency: str
-    available_margin_to_allocate: Decimal
+    available_margin_to_allocate: Decimal | None
     # Transitional alias retained for clients deployed before the forecast-margin revision.
-    available_to_allocate: Decimal
+    available_to_allocate: Decimal | None
     version: str
     is_active: bool
+    budget_source_kind: str
+    budget_status: str
 
 
 class FundSummaryResponse(BaseModel):
@@ -30,14 +34,14 @@ class FundSummaryResponse(BaseModel):
     bucket_id: UUID
     currency: str
     forecast_base_type: str
-    projected_boq_margin: Decimal
+    projected_boq_margin: Decimal | None
     opening_forecast_balance: Decimal
     forecast_allocated_in: Decimal
     forecast_allocated_out: Decimal
     forecast_reserve: Decimal
-    raw_forecast_available: Decimal
-    available_margin_to_allocate: Decimal
-    forecast_deficit: Decimal
+    raw_forecast_available: Decimal | None
+    available_margin_to_allocate: Decimal | None
+    forecast_deficit: Decimal | None
     monthly_forecast_opening: Decimal | None = None
     monthly_forecast_closing: Decimal | None = None
     balance_start_date: date | None = None
@@ -46,14 +50,17 @@ class FundSummaryResponse(BaseModel):
     mutations_enabled: bool
     calculated_at: datetime
     version: str
+    budget_snapshot: ProjectBudgetSnapshot | None = None
+    forecast_available_known: bool = True
+    correction_available_margin: Decimal = Field(default=Decimal("0.00"), exclude=True)
 
     # Transitional forecast aliases retained for a safe Backend/Frontend rollout.
     allocated_in: Decimal
     allocated_out: Decimal
     protected_reserve: Decimal
-    raw_available: Decimal
-    available_to_allocate: Decimal
-    funding_deficit: Decimal
+    raw_available: Decimal | None
+    available_to_allocate: Decimal | None
+    funding_deficit: Decimal | None
     opening_balance: Decimal | None = None
     monthly_opening: Decimal | None = None
     monthly_closing: Decimal | None = None

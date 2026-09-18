@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException, status
 
 from app.api.v1.mcp_internal import router
 from app.schemas.mcp_schema import McpProcessingStatusRequest
@@ -98,8 +99,8 @@ def test_phase5_processing_route_is_service_internal() -> None:
 def test_processing_permission_denial_stops_before_job_source_read() -> None:
     request = McpProcessingStatusRequest(
         **principal(),
-        workflow="boq_sync",
-        job_id="job-demo-001",
+        workflow="receipt_ocr",
+        job_id=str(JOB_ID),
     )
     with (
         patch(
@@ -107,7 +108,7 @@ def test_processing_permission_denial_stops_before_job_source_read() -> None:
             side_effect=McpNotFoundOrForbidden,
         ),
         patch(
-            "app.services.mcp_processing_service.boq_sync_job_service.get_boq_sync_job",
+            "app.services.mcp_processing_service._input_request",
             new=AsyncMock(),
         ) as source_read,
     ):
@@ -115,3 +116,17 @@ def test_processing_permission_denial_stops_before_job_source_read() -> None:
             asyncio.run(get_processing_status(object(), request))
 
     source_read.assert_not_awaited()
+
+
+def test_boq_sync_processing_status_is_explicitly_retired() -> None:
+    request = McpProcessingStatusRequest(
+        **principal(),
+        workflow="boq_sync",
+        job_id="job-demo-001",
+    )
+    with patch("app.services.mcp_processing_service._authorize"):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(get_processing_status(object(), request))
+
+    assert exc_info.value.status_code == status.HTTP_410_GONE
+    assert exc_info.value.detail["code"] == "BOQ_SYNC_RETIRED"

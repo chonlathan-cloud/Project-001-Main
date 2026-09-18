@@ -1,4 +1,6 @@
 ### **🛠️ Phase 3: Technical Design Document (TDD) - Version 3.0**
+
+> **BOQ V2 / Phase 5 supersession:** Google Sheets BOQ sync DTOs and services are retired; four authenticated legacy routes remain only as `410 BOQ_SYNC_RETIRED` compatibility boundaries. Native V2 owns hierarchy/lifecycle/snapshots/exports/vendor costs; current readers use `ProjectBudgetSnapshot` while finance history retains legacy IDs. See [`FeedbackV2/phase5/README.md`](FeedbackV2/phase5/README.md).
 **Project:** Project_001 (The Hybrid Brain for Modern Construction Management)
 **Architecture:** Serverless Microservices (Cloud Run, Cloud SQL, Firestore)
 

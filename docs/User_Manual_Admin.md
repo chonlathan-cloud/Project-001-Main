@@ -1,5 +1,7 @@
 # User Manual for Admin
 
+> **Phase 5 BOQ update:** Google Sheets BOQ Sync is retired. Owners manage native BOQ, quotations, revisions, alternatives, change orders, vendor costs and exports. Admin remains read-only; legacy BOQ shown in history is not the current V2 budget source.
+
 ## 1. วัตถุประสงค์ของระบบ
 
 ระบบนี้ใช้สำหรับบริหารโครงการก่อสร้าง โดยฝั่งผู้ใช้งานภายในจะแบ่งเป็น 2 บทบาท:
@@ -63,7 +65,7 @@
 - ไม่เห็นและเข้าใช้งานหน้า `Dashboard` ไม่ได้
 - ไม่เห็นและเข้าใช้งานหน้า `Chat AI` ไม่ได้
 - ดูรายการใน `Approval` ได้ แต่ไม่สามารถ `Approve`, `Reject`, `Mark Paid` หรือแก้ไขข้อมูลคำขอได้
-- ดูข้อมูลโครงการและ BOQ ได้ แต่ไม่สามารถสร้าง/แก้ไขโครงการหรือ Sync BOQ ได้
+- ดูข้อมูลโครงการและ BOQ ได้ แต่ไม่สามารถสร้าง/แก้ไขโครงการหรือแก้ไข Native BOQ ได้
 - ดูข้อมูล Settings ได้ แต่ไม่สามารถแก้ไขผู้รับเหมา รีเซ็ต LINE binding หรือจัดการสิทธิ์ผู้ดูแลระบบได้
 
 ## 4. Dashboard
@@ -97,7 +99,7 @@
 
 สิทธิ์:
 
-- `Owner`: ดู สร้าง แก้ไข และ Sync BOQ ได้
+- `Owner`: ดู สร้าง แก้ไข และดำเนิน lifecycle ของ Native BOQ ได้
 - `Admin`: ดูรายการโครงการ รายละเอียดโครงการ และ BOQ ได้เท่านั้น
 
 ### 5.1 สิ่งที่ทำได้

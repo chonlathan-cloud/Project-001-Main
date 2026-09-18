@@ -78,8 +78,13 @@ case "${1:-}" in
     PYTHONDONTWRITEBYTECODE=1 PHASE1_DATABASE_URL="${TEST_URL}" \
       "${PYTHON_BIN}" "${BACKEND_DIR}/tests/postgres/verify_phase1_funds.py"
     ;;
+  phase5-cutover)
+    require_python
+    PYTHONDONTWRITEBYTECODE=1 PHASE5_DATABASE_URL="${TEST_URL}" \
+      "${PYTHON_BIN}" "${BACKEND_DIR}/tests/postgres/verify_phase5_cutover.py"
+    ;;
   *)
-    echo "Usage: $0 {up|down|status|url|upgrade-empty|upgrade-current|check|current|golden|verify|finance-history|funds}" >&2
+    echo "Usage: $0 {up|down|status|url|upgrade-empty|upgrade-current|check|current|golden|verify|finance-history|funds|phase5-cutover}" >&2
     exit 2
     ;;
 esac

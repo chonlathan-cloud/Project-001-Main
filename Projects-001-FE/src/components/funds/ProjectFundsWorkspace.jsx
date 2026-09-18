@@ -151,10 +151,11 @@ function ProjectFundsWorkspace({ project, canMutate = false, initialAction = '' 
     }
   };
 
-  const available = summary?.availableMarginToAllocate || '0.00';
-  const forecastDeficit = summary?.forecastDeficit || '0.00';
+  const forecastAvailableKnown = summary?.forecastAvailableKnown !== false;
+  const available = forecastAvailableKnown ? summary?.availableMarginToAllocate || '0.00' : null;
+  const forecastDeficit = forecastAvailableKnown ? summary?.forecastDeficit || '0.00' : null;
   const openingForecastRequired = isOperations && summary && summary.openingForecastBalanceSet === false;
-  const canAllocate = mutationsAllowed && !openingForecastRequired && isPositiveMoney(available);
+  const canAllocate = mutationsAllowed && forecastAvailableKnown && !openingForecastRequired && isPositiveMoney(available);
   const forecastBase = isOperations ? summary?.openingForecastBalance : summary?.projectedBoqMargin;
   const forecastCapacity = Math.max(
     0,
@@ -219,19 +220,24 @@ function ProjectFundsWorkspace({ project, canMutate = false, initialAction = '' 
               <SummaryMetric
                 icon={BadgeDollarSign}
                 label="Projected BOQ Margin"
-                value={formatMoney(summary.projectedBoqMargin)}
-                badge="Estimate"
-                description="Forecast margin from BOQ; this is not actual cash."
+                value={forecastAvailableKnown ? formatMoney(summary.projectedBoqMargin) : 'Not assessable'}
+                badge={summary?.budgetSnapshot?.status || 'Estimate'}
+                tone={forecastAvailableKnown ? 'neutral' : 'warning'}
+                description={forecastAvailableKnown
+                  ? 'Forecast margin from the active BOQ snapshot; this is not actual cash.'
+                  : 'Active BOQ cost is incomplete. Price or mark every required cost component before allocating outward.'}
               />
             ) : null}
 
             <SummaryMetric
               icon={WalletCards}
               label="Available Margin to Allocate"
-              value={formatMoney(available)}
+              value={forecastAvailableKnown ? formatMoney(available) : 'Not assessable'}
               badge="Available Margin"
               tone={isPositiveMoney(forecastDeficit) ? 'danger' : 'positive'}
-              description={isPositiveMoney(available)
+              description={!forecastAvailableKnown
+                ? 'Available Margin is intentionally withheld while active BOQ cost is incomplete.'
+                : isPositiveMoney(available)
                 ? 'Forecast base plus Allocated In, less Allocated Out and Forecast Reserve.'
                 : 'No forecast margin is currently available to allocate.'}
               action={mutationsAllowed ? allocateButton : null}
@@ -257,7 +263,14 @@ function ProjectFundsWorkspace({ project, canMutate = false, initialAction = '' 
             ) : null}
           </div>
 
-          {isPositiveMoney(forecastDeficit) ? (
+          {!forecastAvailableKnown ? (
+            <div className="fund-deficit-alert" role="alert">
+              <ShieldAlert size={19} />
+              <div><strong>UNKNOWN_COST — outward allocation blocked</strong><span>Incoming allocations and valid reversals remain available. Complete the active BOQ cost plan to publish forecast margin.</span></div>
+            </div>
+          ) : null}
+
+          {forecastAvailableKnown && isPositiveMoney(forecastDeficit) ? (
             <div className="fund-deficit-alert" role="alert">
               <ShieldAlert size={19} />
               <div><strong>Forecast Deficit {formatMoney(forecastDeficit)}</strong><span>Forecast margin is below the amount already allocated. Further outgoing allocation is disabled.</span></div>
@@ -265,11 +278,11 @@ function ProjectFundsWorkspace({ project, canMutate = false, initialAction = '' 
           ) : null}
 
           <div className="fund-formula-strip" aria-label="Available Margin equals forecast base plus allocated in, less allocated out and forecast reserve">
-            <div><span>{isOperations ? 'Opening Forecast Balance' : 'Projected BOQ Margin'}</span><strong>{formatMoney(forecastBase)}</strong></div>
+            <div><span>{isOperations ? 'Opening Forecast Balance' : 'Projected BOQ Margin'}</span><strong>{forecastAvailableKnown ? formatMoney(forecastBase) : 'Not assessable'}</strong></div>
             <div><span>+ Forecast Allocated In</span><strong>{formatMoney(summary.forecastAllocatedIn)}</strong></div>
             <div><span>− Forecast Allocated Out</span><strong>{formatMoney(summary.forecastAllocatedOut)}</strong></div>
             <div><span>− Forecast Reserve</span><strong>{formatMoney(summary.forecastReserve)}</strong></div>
-            <div className="fund-formula-result"><span>= Available Margin</span><strong>{formatMoney(available)}</strong></div>
+            <div className="fund-formula-result"><span>= Available Margin</span><strong>{forecastAvailableKnown ? formatMoney(available) : 'Not assessable'}</strong></div>
           </div>
 
           {forecastCapacity > 0 ? (

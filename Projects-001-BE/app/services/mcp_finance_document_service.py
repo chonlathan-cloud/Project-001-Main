@@ -50,7 +50,10 @@ from app.services.mcp_read_service import (
     _project_url,
     _utc_now,
 )
-from app.services.project_budget_service import load_project_budget_context
+from app.services.project_budget_service import (
+    active_budget_amount,
+    load_project_budget_context,
+)
 
 FINANCE_PERMISSION = frozenset({"financial_data_read"})
 SENSITIVE_DOCUMENT_PERMISSION = frozenset({"sensitive_documents_read"})
@@ -206,6 +209,7 @@ def build_project_financial_summary(
     approved_income: Decimal,
     as_of: datetime | None,
     settings: Settings,
+    budget_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     remaining = budget - approved_expense
     unpaid = approved_expense - paid
@@ -221,7 +225,8 @@ def build_project_financial_summary(
         "pending_requested": _money(pending),
         "approved_income": _money(approved_income),
         "over_budget": remaining < 0,
-        "calculation_method": "customer_boq_root_budget_minus_approved_expense_v1",
+        "budget_snapshot": budget_snapshot,
+        "calculation_method": "active_budget_snapshot_minus_approved_expense_v2",
         "product_url": _project_url(project.id, settings),
         "source_read_at": _utc_now(),
     }
@@ -254,7 +259,9 @@ async def get_project_financial_summary(
         db, request.project_id, as_of=request.as_of
     )
     budget = Decimal(
-        budget_context.legacy_mcp_customer_budget if budget_context else "0.00"
+        active_budget_amount(budget_context, consumer="MCP")
+        if budget_context is not None
+        else "0.00"
     )
 
     approved_filters = [
@@ -352,6 +359,11 @@ async def get_project_financial_summary(
         approved_income=approved_income,
         as_of=request.as_of,
         settings=app_settings,
+        budget_snapshot=(
+            budget_context.snapshot.model_dump(mode="json")
+            if budget_context is not None
+            else None
+        ),
     )
 
 

@@ -19,6 +19,13 @@ from sqlalchemy.orm import noload
 
 from app.core.config import Settings, get_settings
 from app.models.boq import BOQItem, Project
+from app.models.boq_v2 import (
+    BOQV2BaselineChangeOrder,
+    BOQV2Document,
+    BOQV2ProjectBaseline,
+    BOQV2Revision,
+    BOQV2ScopeNode,
+)
 from app.schemas.mcp_schema import (
     McpAccessContext,
     McpBOQCompareRequest,
@@ -44,6 +51,7 @@ from app.services.identity_service import (
 )
 from app.services.mcp_access_service import resolve_mcp_access
 from app.services.project_budget_service import (
+    active_budget_amount,
     load_project_budget_context,
     load_project_budget_contexts,
 )
@@ -167,7 +175,13 @@ def _project_url(project_id: UUID | str, settings: Settings) -> str:
     return f"{settings.frontend_base_url}/project/detail/{project_id}"
 
 
-def _project_item(project: Project, settings: Settings, total_budget: object = 0) -> dict[str, Any]:
+def _project_item(
+    project: Project,
+    settings: Settings,
+    total_budget: object = 0,
+    *,
+    budget_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "project_id": str(project.id),
         "name": project.name,
@@ -175,6 +189,7 @@ def _project_item(project: Project, settings: Settings, total_budget: object = 0
         "status": project.status,
         "contingency_budget": _money(project.contingency_budget),
         "current_boq_budget": _money(total_budget),
+        "budget_snapshot": budget_snapshot,
         "product_url": _project_url(project.id, settings),
     }
 
@@ -220,9 +235,14 @@ async def list_projects(
                 project,
                 app_settings,
                 (
-                    contexts[project.id].legacy_mcp_customer_budget
+                    active_budget_amount(contexts[project.id], consumer="MCP")
                     if project.id in contexts
                     else 0
+                ),
+                budget_snapshot=(
+                    contexts[project.id].snapshot.model_dump(mode="json")
+                    if project.id in contexts
+                    else None
                 ),
             )
             for project in page
@@ -248,7 +268,11 @@ async def _load_project(db: AsyncSession, project_id: UUID) -> Project:
 
 async def _current_customer_budget(db: AsyncSession, project_id: UUID) -> Decimal:
     context = await load_project_budget_context(db, project_id)
-    return Decimal(context.legacy_mcp_customer_budget if context else "0.00")
+    return Decimal(
+        active_budget_amount(context, consumer="MCP")
+        if context is not None
+        else "0.00"
+    )
 
 
 async def get_project(
@@ -260,9 +284,23 @@ async def get_project(
     app_settings = settings or get_settings()
     _authorize(request, project_id=str(request.project_id), settings=app_settings)
     project = await _load_project(db, request.project_id)
-    current_customer_budget = await _current_customer_budget(db, request.project_id)
+    budget_context = await load_project_budget_context(db, request.project_id)
+    current_customer_budget = Decimal(
+        active_budget_amount(budget_context, consumer="MCP")
+        if budget_context is not None
+        else "0.00"
+    )
     return {
-        **_project_item(project, app_settings, current_customer_budget),
+        **_project_item(
+            project,
+            app_settings,
+            current_customer_budget,
+            budget_snapshot=(
+                budget_context.snapshot.model_dump(mode="json")
+                if budget_context is not None
+                else None
+            ),
+        ),
         "overhead_percent": _decimal_string(project.overhead_percent),
         "profit_percent": _decimal_string(project.profit_percent),
         "vat_percent": _decimal_string(project.vat_percent),
@@ -418,6 +456,176 @@ def serialize_boq_snapshot(
         "truncated": len(items) > MAX_BOQ_LINES,
         "product_url": _project_url(project_id, settings),
         "source_read_at": _utc_now(),
+        "source_kind": "LEGACY",
+    }
+
+
+def _v2_version_id(baseline_id: UUID | str) -> str:
+    return f"boqv2_{str(baseline_id).replace('-', '')}"
+
+
+def _v2_line_id(document_id: UUID | str, logical_id: UUID | str) -> str:
+    return (
+        "boqlv2_"
+        f"{str(document_id).replace('-', '')}_"
+        f"{str(logical_id).replace('-', '')}"
+    )
+
+
+async def _v2_boq_manifests(
+    db: AsyncSession,
+    project_id: UUID,
+) -> list[dict[str, Any]]:
+    baselines = list(
+        (
+            await db.execute(
+                select(BOQV2ProjectBaseline)
+                .options(noload("*"))
+                .where(BOQV2ProjectBaseline.project_id == project_id)
+                .order_by(BOQV2ProjectBaseline.version, BOQV2ProjectBaseline.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "version_id": _v2_version_id(baseline.id),
+            "version_number": baseline.version,
+            "source_kind": "V2",
+            "baseline_id": str(baseline.id),
+            "main_revision_id": str(baseline.main_revision_id),
+            "cost_plan_id": str(baseline.cost_plan_id) if baseline.cost_plan_id else None,
+            "calculation_version": baseline.calculation_version,
+            "valid_from": baseline.effective_from,
+            "valid_to": baseline.effective_to,
+            "is_current": baseline.is_active,
+        }
+        for baseline in baselines
+    ]
+
+
+async def _v2_snapshot(
+    db: AsyncSession,
+    project: Project,
+    manifest: dict[str, Any],
+    settings: Settings,
+    *,
+    budget_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    baseline_id = UUID(str(manifest["baseline_id"]))
+    baseline = (
+        await db.execute(
+            select(BOQV2ProjectBaseline)
+            .options(noload("*"))
+            .where(BOQV2ProjectBaseline.id == baseline_id)
+        )
+    ).scalar_one_or_none()
+    if baseline is None or baseline.project_id != project.id:
+        raise McpNotFoundOrForbidden
+
+    change_orders = list(
+        (
+            await db.execute(
+                select(BOQV2BaselineChangeOrder)
+                .options(noload("*"))
+                .where(BOQV2BaselineChangeOrder.baseline_id == baseline.id)
+                .order_by(BOQV2BaselineChangeOrder.position)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    revision_ids = [baseline.main_revision_id, *[row.revision_id for row in change_orders]]
+    revision_rows = (
+        await db.execute(
+            select(BOQV2Revision, BOQV2Document)
+            .join(BOQV2Document, BOQV2Document.id == BOQV2Revision.document_id)
+            .where(BOQV2Revision.id.in_(revision_ids))
+        )
+    ).all()
+    revision_by_id = {revision.id: (revision, document) for revision, document in revision_rows}
+    nodes = list(
+        (
+            await db.execute(
+                select(BOQV2ScopeNode)
+                .options(noload("*"))
+                .where(BOQV2ScopeNode.revision_id.in_(revision_ids))
+                .order_by(
+                    BOQV2ScopeNode.revision_id,
+                    BOQV2ScopeNode.position,
+                    BOQV2ScopeNode.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    nodes_by_revision: dict[UUID, list[BOQV2ScopeNode]] = {}
+    for node in nodes:
+        nodes_by_revision.setdefault(node.revision_id, []).append(node)
+
+    lines: list[dict[str, Any]] = []
+    for revision_id in revision_ids:
+        revision_context = revision_by_id.get(revision_id)
+        if revision_context is None:
+            continue
+        _revision, document = revision_context
+        revision_nodes = nodes_by_revision.get(revision_id, [])
+        logical_by_row = {node.id: node.logical_id for node in revision_nodes}
+        boq_type = (
+            "V2_MAIN"
+            if document.document_kind in {"MAIN", "ALTERNATIVE"}
+            else f"V2_CHANGE_ORDER_{document.direction}"
+        )
+        for node in revision_nodes[:MAX_BOQ_LINES - len(lines)]:
+            line_id = _v2_line_id(document.id, node.logical_id)
+            parent_logical_id = logical_by_row.get(node.parent_id)
+            lines.append(
+                {
+                    "line_id": line_id,
+                    "parent_line_id": (
+                        _v2_line_id(document.id, parent_logical_id)
+                        if parent_logical_id is not None
+                        else None
+                    ),
+                    "boq_type": boq_type,
+                    "sheet_name": document.document_number,
+                    "wbs_level": node.node_kind,
+                    "item_no": node.item_code,
+                    "description": node.description,
+                    "quantity": (
+                        _decimal_string(node.quantity, "0.0001")
+                        if node.quantity is not None
+                        else None
+                    ),
+                    "unit": node.unit,
+                    "material_unit_price": _money(node.sell_material_unit_rate),
+                    "labor_unit_price": _money(node.sell_labor_unit_rate),
+                    "total_material": None,
+                    "total_labor": None,
+                    "grand_total": _money(node.sell_total),
+                    "document_id": str(document.id),
+                    "revision_id": str(revision_id),
+                    "logical_id": str(node.logical_id),
+                    "node_kind": node.node_kind,
+                    "inclusion_state": node.inclusion_state,
+                }
+            )
+        if len(lines) >= MAX_BOQ_LINES:
+            break
+    return {
+        "project_id": str(project.id),
+        "project_name": project.name,
+        "source_kind": "V2",
+        "budget_snapshot": budget_snapshot,
+        "version": manifest,
+        "lines": lines,
+        "line_count": len(nodes),
+        "returned_count": len(lines),
+        "truncated": len(nodes) > MAX_BOQ_LINES,
+        "product_url": _project_url(project.id, settings),
+        "source_read_at": _utc_now(),
     }
 
 
@@ -430,6 +638,40 @@ async def get_boq_current(
     app_settings = settings or get_settings()
     _authorize(request, project_id=str(request.project_id), settings=app_settings)
     project = await _load_project(db, request.project_id)
+    context = await load_project_budget_context(db, request.project_id)
+    if context is not None and context.snapshot.source_kind == "V2":
+        if context.snapshot.baseline_id is None:
+            return {
+                "project_id": str(project.id),
+                "project_name": project.name,
+                "source_kind": "V2",
+                "budget_snapshot": context.snapshot.model_dump(mode="json"),
+                "version": None,
+                "lines": [],
+                "line_count": 0,
+                "returned_count": 0,
+                "truncated": False,
+                "product_url": _project_url(project.id, app_settings),
+                "source_read_at": _utc_now(),
+            }
+        manifests = await _v2_boq_manifests(db, request.project_id)
+        manifest = next(
+            (
+                item
+                for item in manifests
+                if item["baseline_id"] == str(context.snapshot.baseline_id)
+            ),
+            None,
+        )
+        if manifest is None:
+            raise McpNotFoundOrForbidden
+        return await _v2_snapshot(
+            db,
+            project,
+            manifest,
+            app_settings,
+            budget_snapshot=context.snapshot.model_dump(mode="json"),
+        )
     manifests = await _boq_manifests(db, request.project_id)
     rows = await _snapshot_rows(db, request.project_id, as_of=None)
     return serialize_boq_snapshot(
@@ -451,7 +693,16 @@ async def list_boq_versions(
     _authorize(request, project_id=str(request.project_id), settings=app_settings)
     await _load_project(db, request.project_id)
     offset = _decode_cursor(request.cursor, f"boq-versions:{request.project_id}", app_settings)
-    manifests = list(reversed(await _boq_manifests(db, request.project_id)))
+    legacy_manifests = [
+        {**item, "source_kind": "LEGACY"}
+        for item in await _boq_manifests(db, request.project_id)
+    ]
+    v2_manifests = await _v2_boq_manifests(db, request.project_id)
+    manifests = sorted(
+        [*legacy_manifests, *v2_manifests],
+        key=lambda item: (_as_utc(item["valid_from"]), item["version_id"]),
+        reverse=True,
+    )
     page = manifests[offset : offset + request.limit]
     has_more = offset + len(page) < len(manifests)
     return {
@@ -499,6 +750,38 @@ async def get_boq_version(
     app_settings = settings or get_settings()
     _authorize(request, project_id=str(request.project_id), settings=app_settings)
     project = await _load_project(db, request.project_id)
+    v2_manifests = await _v2_boq_manifests(db, request.project_id)
+    if request.version is not None and request.version.startswith("boqv2_"):
+        manifest = _select_manifest(v2_manifests, version=request.version)
+        context = await load_project_budget_context(
+            db,
+            request.project_id,
+            as_of=manifest["valid_from"],
+        )
+        return await _v2_snapshot(
+            db,
+            project,
+            manifest,
+            app_settings,
+            budget_snapshot=(
+                context.snapshot.model_dump(mode="json") if context else None
+            ),
+        )
+    if request.as_of is not None:
+        context = await load_project_budget_context(
+            db,
+            request.project_id,
+            as_of=request.as_of,
+        )
+        if context is not None and context.snapshot.source_kind == "V2":
+            manifest = _select_manifest(v2_manifests, as_of=request.as_of)
+            return await _v2_snapshot(
+                db,
+                project,
+                manifest,
+                app_settings,
+                budget_snapshot=context.snapshot.model_dump(mode="json"),
+            )
     manifests = await _boq_manifests(db, request.project_id)
     manifest = _select_manifest(manifests, version=request.version, as_of=request.as_of)
     rows = await _snapshot_rows(db, request.project_id, as_of=manifest["valid_from"])
@@ -561,17 +844,23 @@ async def compare_boq_versions(
     app_settings = settings or get_settings()
     _authorize(request, project_id=str(request.project_id), settings=app_settings)
     project = await _load_project(db, request.project_id)
-    manifests = await _boq_manifests(db, request.project_id)
-    manifest_a = _select_manifest(manifests, version=request.version_a)
-    manifest_b = _select_manifest(manifests, version=request.version_b)
-    rows_a = await _snapshot_rows(db, request.project_id, as_of=manifest_a["valid_from"])
-    rows_b = await _snapshot_rows(db, request.project_id, as_of=manifest_b["valid_from"])
-    snapshot_a = serialize_boq_snapshot(
-        request.project_id, project.name, manifest_a, rows_a, app_settings
-    )
-    snapshot_b = serialize_boq_snapshot(
-        request.project_id, project.name, manifest_b, rows_b, app_settings
-    )
+    legacy_manifests = await _boq_manifests(db, request.project_id)
+    v2_manifests = await _v2_boq_manifests(db, request.project_id)
+
+    async def load_selected(version: str) -> dict[str, Any]:
+        if version.startswith("boqv2_"):
+            selected = _select_manifest(v2_manifests, version=version)
+            return await _v2_snapshot(db, project, selected, app_settings)
+        selected = _select_manifest(legacy_manifests, version=version)
+        rows = await _snapshot_rows(
+            db, request.project_id, as_of=selected["valid_from"]
+        )
+        return serialize_boq_snapshot(
+            request.project_id, project.name, selected, rows, app_settings
+        )
+
+    snapshot_a = await load_selected(request.version_a)
+    snapshot_b = await load_selected(request.version_b)
     result = compare_boq_snapshots(snapshot_a, snapshot_b)
     result.update(
         {
@@ -593,6 +882,52 @@ async def get_project_summary(
     app_settings = settings or get_settings()
     _authorize(request, project_id=str(request.project_id), settings=app_settings)
     project = await _load_project(db, request.project_id)
+    context = await load_project_budget_context(
+        db,
+        request.project_id,
+        as_of=request.as_of,
+    )
+    if context is not None and context.snapshot.source_kind == "V2":
+        snapshot = context.snapshot
+        current_budget = active_budget_amount(context, consumer="MCP")
+        return {
+            "project": _project_item(
+                project,
+                app_settings,
+                current_budget,
+                budget_snapshot=snapshot.model_dump(mode="json"),
+            ),
+            "boq": {
+                "version": {
+                    "version_id": (
+                        _v2_version_id(snapshot.baseline_id)
+                        if snapshot.baseline_id
+                        else None
+                    ),
+                    "version_number": snapshot.baseline_version,
+                    "source_kind": "V2",
+                    "baseline_id": (
+                        str(snapshot.baseline_id) if snapshot.baseline_id else None
+                    ),
+                },
+                "line_count": None,
+                "customer_budget": _money(current_budget),
+                "subcontractor_budget": (
+                    _money(snapshot.forecast_cost)
+                    if snapshot.forecast_cost is not None
+                    else None
+                ),
+                "gross_margin": (
+                    _money(snapshot.forecast_margin)
+                    if snapshot.forecast_margin is not None
+                    else None
+                ),
+                "status": snapshot.status,
+                "cost_completeness": snapshot.cost_completeness.model_dump(mode="json"),
+            },
+            "calculation_method": "active_project_budget_snapshot_v2",
+            "source_read_at": _utc_now(),
+        }
     manifests = await _boq_manifests(db, request.project_id)
     manifest = (
         _select_manifest(manifests, as_of=request.as_of)
@@ -617,7 +952,14 @@ async def get_project_summary(
         if item.parent_id is None and item.boq_type == "SUBCONTRACTOR"
     )
     return {
-        "project": _project_item(project, app_settings, customer_total),
+        "project": _project_item(
+            project,
+            app_settings,
+            customer_total,
+            budget_snapshot=(
+                context.snapshot.model_dump(mode="json") if context else None
+            ),
+        ),
         "boq": {
             "version": manifest,
             "line_count": len(rows),
@@ -848,12 +1190,42 @@ async def search(
             )
 
         if not record_types or "boq_line" in record_types:
+            project_ids_statement = select(Project.id)
+            if allowed_scope is not None:
+                if allowed_scope:
+                    project_ids_statement = project_ids_statement.where(
+                        Project.id.in_([UUID(item) for item in allowed_scope])
+                    )
+                else:
+                    project_ids_statement = project_ids_statement.where(False)
+            searchable_project_ids = list(
+                (await db.execute(project_ids_statement)).scalars().all()
+            )
+            budget_contexts = await load_project_budget_contexts(
+                db, searchable_project_ids
+            )
+            legacy_project_ids = [
+                project_id
+                for project_id in searchable_project_ids
+                if budget_contexts.get(project_id) is None
+                or budget_contexts[project_id].snapshot.source_kind == "LEGACY"
+            ]
+            v2_revision_to_project: dict[UUID, UUID] = {}
+            for project_id, context in budget_contexts.items():
+                snapshot = context.snapshot
+                if snapshot.source_kind != "V2" or snapshot.main_revision_id is None:
+                    continue
+                v2_revision_to_project[snapshot.main_revision_id] = project_id
+                for revision_id in snapshot.accepted_change_order_ids:
+                    v2_revision_to_project[revision_id] = project_id
+
             boq_statement = (
                 select(BOQItem, Project.name)
                 .join(Project, Project.id == BOQItem.project_id)
                 .options(noload("*"))
                 .where(
                     BOQItem.valid_to.is_(None),
+                    BOQItem.project_id.in_(legacy_project_ids),
                     or_(
                         func.lower(func.coalesce(BOQItem.description, "")).contains(
                             normalized_query,
@@ -867,18 +1239,30 @@ async def search(
                 )
                 .order_by(Project.name, BOQItem.boq_type, BOQItem.sheet_name, BOQItem.id)
             )
-            if allowed_scope is not None:
-                if allowed_scope:
-                    boq_statement = boq_statement.where(
-                        BOQItem.project_id.in_([UUID(item) for item in allowed_scope])
-                    )
-                else:
-                    boq_statement = boq_statement.where(False)
             boq_rows = (await db.execute(boq_statement.limit(100))).all()
+            matched_legacy_project_ids = {
+                item.project_id for item, _name in boq_rows
+            }
+            all_legacy_rows = list(
+                (
+                    await db.execute(
+                        select(BOQItem)
+                        .options(noload("*"))
+                        .where(
+                            BOQItem.project_id.in_(matched_legacy_project_ids),
+                            BOQItem.valid_to.is_(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            legacy_rows_by_project: dict[UUID, list[BOQItem]] = {}
+            for row in all_legacy_rows:
+                legacy_rows_by_project.setdefault(row.project_id, []).append(row)
             stable_ids_by_project: dict[str, dict[str, str]] = {}
-            for project_id in {str(item.project_id) for item, _name in boq_rows}:
-                current_rows = await _snapshot_rows(db, UUID(project_id), as_of=None)
-                stable_ids_by_project[project_id] = _stable_line_ids(current_rows)
+            for project_id, current_rows in legacy_rows_by_project.items():
+                stable_ids_by_project[str(project_id)] = _stable_line_ids(current_rows)
             hits.extend(
                 {
                     "reference": _boq_line_reference(
@@ -894,6 +1278,51 @@ async def search(
                 }
                 for item, project_name in boq_rows
             )
+            active_v2_revision_ids = list(v2_revision_to_project)
+            if active_v2_revision_ids:
+                v2_rows = (
+                    await db.execute(
+                        select(BOQV2ScopeNode, BOQV2Document, Project.name)
+                        .join(
+                            BOQV2Revision,
+                            BOQV2Revision.id == BOQV2ScopeNode.revision_id,
+                        )
+                        .join(
+                            BOQV2Document,
+                            BOQV2Document.id == BOQV2Revision.document_id,
+                        )
+                        .join(Project, Project.id == BOQV2ScopeNode.project_id)
+                        .where(
+                            BOQV2ScopeNode.revision_id.in_(active_v2_revision_ids),
+                            or_(
+                                func.lower(
+                                    func.coalesce(BOQV2ScopeNode.description, "")
+                                ).contains(normalized_query, autoescape=True),
+                                func.lower(
+                                    func.coalesce(BOQV2ScopeNode.item_code, "")
+                                ).contains(normalized_query, autoescape=True),
+                            ),
+                        )
+                        .order_by(Project.name, BOQV2Document.document_number, BOQV2ScopeNode.id)
+                        .limit(100)
+                    )
+                ).all()
+                hits.extend(
+                    {
+                        "reference": _boq_line_reference(
+                            node.project_id,
+                            _v2_line_id(document.id, node.logical_id),
+                        ),
+                        "domain": "projects_boq",
+                        "record_type": "boq_line",
+                        "title": node.description or node.item_code or "BOQ line",
+                        "snippet": f"{project_name} · Native BOQ · {document.document_number}",
+                        "project_id": str(node.project_id),
+                        "source_kind": "V2",
+                        "product_url": _project_url(node.project_id, app_settings),
+                    }
+                    for node, document, project_name in v2_rows
+                )
     if domains.intersection({"finance_payments", "gcs_files"}):
         from app.services.mcp_finance_document_service import search_phase3_hits
 
@@ -966,33 +1395,31 @@ async def fetch(
         )
     if domain == "projects_boq" and record_type == "boq_line":
         project_part, separator, line_id = opaque_id.partition(".")
-        if not separator or not line_id.startswith("boql_"):
+        if not separator or not line_id.startswith(("boql_", "boqlv2_")):
             raise McpInvalidInput("Invalid BOQ line reference.")
         try:
             project_id = UUID(project_part)
         except ValueError as exc:
             raise McpInvalidInput("Invalid BOQ line reference.") from exc
-        app_settings = settings or get_settings()
-        _authorize(request, project_id=str(project_id), settings=app_settings)
-        project = await _load_project(db, project_id)
-        manifests = await _boq_manifests(db, project_id)
         if request.version is not None or request.as_of is not None:
-            manifest = _select_manifest(
-                manifests,
-                version=request.version,
-                as_of=request.as_of,
+            snapshot = await get_boq_version(
+                db,
+                McpBOQVersionRequest(
+                    **principal,
+                    project_id=project_id,
+                    version=request.version,
+                    as_of=request.as_of,
+                ),
+                settings=settings,
             )
-            rows = await _snapshot_rows(db, project_id, as_of=manifest["valid_from"])
         else:
-            manifest = manifests[-1] if manifests else None
-            rows = await _snapshot_rows(db, project_id, as_of=None)
-        stable_ids = _stable_line_ids(rows)
+            snapshot = await get_boq_current(
+                db,
+                McpProjectRequest(**principal, project_id=project_id),
+                settings=settings,
+            )
         item = next(
-            (
-                row
-                for row in rows
-                if stable_ids.get(str(row.id)) == line_id
-            ),
+            (row for row in snapshot.get("lines", []) if row.get("line_id") == line_id),
             None,
         )
         if item is None:
@@ -1000,10 +1427,11 @@ async def fetch(
         return {
             "reference": request.reference,
             "project_id": str(project_id),
-            "project_name": project.name,
-            "version": manifest,
-            "line": _serialize_boq_line(item, stable_ids),
-            "product_url": _project_url(project_id, app_settings),
+            "project_name": snapshot["project_name"],
+            "source_kind": snapshot.get("source_kind", "LEGACY"),
+            "version": snapshot.get("version"),
+            "line": item,
+            "product_url": snapshot["product_url"],
             "source_read_at": _utc_now(),
         }
     if domain == "users_access" and record_type == "user" and not request.version and not request.as_of:

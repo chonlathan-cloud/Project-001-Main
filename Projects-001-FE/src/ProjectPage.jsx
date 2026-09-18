@@ -7,7 +7,6 @@ import {
   Calendar,
   CheckCircle2,
   ChevronDown,
-  Link2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -20,10 +19,7 @@ import { motion as Motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
   createProject,
-  getProjectBoqSyncJob,
-  getProjectBoqTabs,
   getProjectsData,
-  syncProjectBoqBatch,
   updateProject,
 } from './api';
 import Loading from './components/Loading';
@@ -44,15 +40,8 @@ const INITIAL_PROJECT_FORM = {
   status: 'ACTIVE',
 };
 
-const INITIAL_SYNC_FORM = {
-  boqType: 'CUSTOMER',
-  sheetUrl: '',
-};
-
 const PROJECT_TYPE_OPTIONS = ['COMMERCIAL', 'INDUSTRIAL', 'HOTEL', 'WAREHOUSE', 'RESIDENTIAL'];
 const PROJECT_STATUS_OPTIONS = ['ACTIVE', 'PLANNING', 'ON_HOLD', 'COMPLETED'];
-const MAX_BATCH_SYNC_TABS = Number(import.meta.env.VITE_BOQ_BATCH_SYNC_MAX_TABS || 5);
-const ACTIVE_SYNC_JOB_STATUSES = new Set(['QUEUED', 'RUNNING']);
 const currencyFormatter = new Intl.NumberFormat('th-TH', {
   style: 'currency',
   currency: 'THB',
@@ -265,9 +254,10 @@ const ProjectCard = ({ project, index, onClick, onEditName, onOpenBoq, nativeBoq
                 flexShrink: 0,
                 backgroundColor: 'white',
               }}
-              title={nativeBoqEnabled ? 'Open native BOQ workspace' : 'Connect BOQ sheet'}
+              title="Open native BOQ workspace"
+              disabled={!nativeBoqEnabled}
             >
-              {nativeBoqEnabled ? <TableProperties size={14} /> : <Link2 size={14} />}
+              <TableProperties size={14} />
             </button>
             <button
               type="button"
@@ -415,17 +405,9 @@ const ProjectPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerMode, setDrawerMode] = useState('create');
-  const [selectedProject, setSelectedProject] = useState(null);
   const [projectForm, setProjectForm] = useState(INITIAL_PROJECT_FORM);
-  const [syncForm, setSyncForm] = useState(INITIAL_SYNC_FORM);
   const [drawerError, setDrawerError] = useState('');
-  const [syncResult, setSyncResult] = useState(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isLoadingTabs, setIsLoadingTabs] = useState(false);
-  const [availableTabs, setAvailableTabs] = useState([]);
-  const [selectedSheetNames, setSelectedSheetNames] = useState([]);
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [amountFilter, setAmountFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState('DEFAULT');
@@ -450,40 +432,15 @@ const ProjectPage = () => {
 
   const closeDrawer = () => {
     setDrawerOpen(false);
-    setDrawerMode('create');
-    setSelectedProject(null);
     setProjectForm(INITIAL_PROJECT_FORM);
-    setSyncForm(INITIAL_SYNC_FORM);
     setDrawerError('');
-    setSyncResult(null);
-    setAvailableTabs([]);
-    setSelectedSheetNames([]);
-    setIsSyncing(false);
   };
 
   const openCreateDrawer = () => {
     if (!canMutateProjects) return;
     setDrawerOpen(true);
-    setDrawerMode('create');
-    setSelectedProject(null);
     setProjectForm(INITIAL_PROJECT_FORM);
-    setSyncForm(INITIAL_SYNC_FORM);
     setDrawerError('');
-    setSyncResult(null);
-    setAvailableTabs([]);
-    setSelectedSheetNames([]);
-  };
-
-  const openSyncDrawer = (project) => {
-    if (!canMutateProjects) return;
-    setDrawerOpen(true);
-    setDrawerMode('sync');
-    setSelectedProject(project);
-    setSyncForm(INITIAL_SYNC_FORM);
-    setDrawerError('');
-    setSyncResult(null);
-    setAvailableTabs([]);
-    setSelectedSheetNames([]);
   };
 
   const handleProjectFormChange = (field, value) => {
@@ -491,62 +448,6 @@ const ProjectPage = () => {
       ...current,
       [field]: value,
     }));
-  };
-
-  const handleSyncFormChange = (field, value) => {
-    setSyncForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
-    setDrawerError('');
-    setSyncResult(null);
-    if (field === 'sheetUrl') {
-      setAvailableTabs([]);
-      setSelectedSheetNames([]);
-    }
-  };
-
-  const handleLoadTabs = async () => {
-    if (!syncForm.sheetUrl.trim()) {
-      setDrawerError('Add a Google Sheet URL before loading workbook tabs.');
-      return;
-    }
-
-    try {
-      setIsLoadingTabs(true);
-      setDrawerError('');
-      setSyncResult(null);
-      const response = await getProjectBoqTabs({
-        sheetUrl: syncForm.sheetUrl.trim(),
-      });
-      const tabs = Array.isArray(response?.tabs) ? response.tabs : [];
-      setAvailableTabs(tabs);
-      setSelectedSheetNames(
-        tabs
-          .filter((tab) => tab.syncable && tab.default_selected)
-          .slice(0, MAX_BATCH_SYNC_TABS)
-          .map((tab) => tab.name)
-      );
-      notify({
-        tone: 'info',
-        title: 'Workbook tabs loaded',
-        message: `${tabs.length} tabs are ready for review.`,
-      });
-    } catch (loadTabsError) {
-      setAvailableTabs([]);
-      setSelectedSheetNames([]);
-      setDrawerError(loadTabsError.message || 'Failed to load workbook tabs.');
-    } finally {
-      setIsLoadingTabs(false);
-    }
-  };
-
-  const toggleSheetSelection = (sheetName) => {
-    setSelectedSheetNames((current) =>
-      current.includes(sheetName)
-        ? current.filter((value) => value !== sheetName)
-        : [...current, sheetName]
-    );
   };
 
   const handleCreateProject = async (event) => {
@@ -575,9 +476,12 @@ const ProjectPage = () => {
           state: { projectName: createdProject.name, projectId: createdProject.id },
         });
       } else {
-        setSelectedProject(createdProject);
-        setDrawerMode('sync');
-        setSyncResult(null);
+        closeDrawer();
+        notify({
+          tone: 'info',
+          title: 'Native BOQ rollout is disabled',
+          message: 'The project was created. Enable the approved BOQ V2 release flag before entering scope.',
+        });
       }
     } catch (createError) {
       setDrawerError(createError.message || 'Failed to create project.');
@@ -593,94 +497,12 @@ const ProjectPage = () => {
       current.map((project) => (project.id === projectId ? { ...project, ...updatedProject } : project))
     );
 
-    setSelectedProject((current) =>
-      current && current.id === projectId ? { ...current, ...updatedProject } : current
-    );
     notify({
       tone: 'success',
       title: 'Project renamed',
       message: `Project name updated to "${updatedProject.name}".`,
     });
   };
-
-  const handleSyncBoq = async (event) => {
-    event.preventDefault();
-
-    if (!selectedProject?.id) {
-      setDrawerError('Create or select a project before syncing BOQ.');
-      return;
-    }
-    if (!syncForm.sheetUrl.trim()) {
-      setDrawerError('Add a Google Sheet URL before syncing BOQ.');
-      return;
-    }
-    if (selectedSheetNames.length === 0) {
-      setDrawerError('Select at least one workbook tab to sync.');
-      return;
-    }
-    if (selectedSheetNames.length > MAX_BATCH_SYNC_TABS) {
-      setDrawerError(`Sync up to ${MAX_BATCH_SYNC_TABS} tabs per batch for better performance.`);
-      return;
-    }
-
-    try {
-      setIsSyncing(true);
-      setDrawerError('');
-      const result = await syncProjectBoqBatch({
-        projectId: selectedProject.id,
-        boqType: syncForm.boqType,
-        sheetUrl: syncForm.sheetUrl,
-        sheetNames: selectedSheetNames,
-      });
-      setSyncResult(result);
-      notify({
-        tone: 'info',
-        title: 'BOQ sync queued',
-        message: `Workbook tabs for "${selectedProject.name}" are being processed.`,
-      });
-    } catch (syncError) {
-      setIsSyncing(false);
-      setDrawerError(syncError.message || 'Failed to sync BOQ tabs.');
-    }
-  };
-
-  useEffect(() => {
-    if (!syncResult?.job_id || !ACTIVE_SYNC_JOB_STATUSES.has(syncResult.status)) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    const intervalId = window.setInterval(async () => {
-      try {
-        const nextJob = await getProjectBoqSyncJob(syncResult.job_id);
-        if (cancelled) {
-          return;
-        }
-        setSyncResult(nextJob);
-        if (!ACTIVE_SYNC_JOB_STATUSES.has(nextJob.status)) {
-          setIsSyncing(false);
-          notify({
-            tone: nextJob.status === 'COMPLETED' ? 'success' : 'error',
-            title: nextJob.status === 'COMPLETED' ? 'BOQ sync completed' : 'BOQ sync needs attention',
-            message: nextJob.message || 'BOQ batch sync finished.',
-          });
-          window.clearInterval(intervalId);
-        }
-      } catch (jobError) {
-        if (cancelled) {
-          return;
-        }
-        setIsSyncing(false);
-        setDrawerError(jobError.message || 'Failed to refresh BOQ sync job status.');
-        window.clearInterval(intervalId);
-      }
-    }, 3000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [notify, syncResult?.job_id, syncResult?.status]);
 
   const resetFilters = () => {
     setStatusFilter('ALL');
@@ -869,13 +691,10 @@ const ProjectPage = () => {
                   index={index}
                   onEditName={handleRenameProject}
                   onOpenBoq={(selected) => {
-                    if (BOQ_V2_ENABLED) {
-                      navigate(`/project/detail/${selected.id}/boq`, {
-                        state: { projectName: selected.name, projectId: selected.id },
-                      });
-                      return;
-                    }
-                    openSyncDrawer(selected);
+                    if (!BOQ_V2_ENABLED) return;
+                    navigate(`/project/detail/${selected.id}/boq`, {
+                      state: { projectName: selected.name, projectId: selected.id },
+                    });
                   }}
                   nativeBoqEnabled={BOQ_V2_ENABLED}
                   canMutate={canMutateProjects}
@@ -1020,15 +839,13 @@ const ProjectPage = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
               <div>
                 <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                  {drawerMode === 'create' ? 'Create Project' : 'Connect BOQ'}
+                  Create Project
                 </div>
                 <h2 style={{ fontSize: '28px', fontWeight: '700', margin: '8px 0 4px', color: '#1a1a1a' }}>
-                  {drawerMode === 'create' && !selectedProject ? 'New project setup' : selectedProject?.name || 'Project setup'}
+                  New project setup
                 </h2>
                 <p style={{ fontSize: '14px', color: '#777', margin: 0 }}>
-                  {selectedProject
-                    ? 'Manage BOQ source connection for this project.'
-                    : 'Create the project first, then connect a Google Sheet BOQ source.'}
+                  Create the project first, then enter scope in the native BOQ workspace.
                 </p>
               </div>
               <button
@@ -1064,8 +881,7 @@ const ProjectPage = () => {
               </div>
             ) : null}
 
-            {drawerMode === 'create' && !selectedProject ? (
-              <form onSubmit={handleCreateProject} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            <form onSubmit={handleCreateProject} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 <div
                   style={{
                     padding: '18px',
@@ -1151,7 +967,7 @@ const ProjectPage = () => {
                     />
                   </DrawerField>
 
-                  <DrawerField label="Contingency budget" helper="Project list currently uses this value as total budget.">
+                  <DrawerField label="Contingency budget" helper="Fallback used only until an active BOQ budget exists.">
                     <input
                       type="number"
                       min="0"
@@ -1193,233 +1009,7 @@ const ProjectPage = () => {
                     {isCreating ? 'Creating...' : 'Create project'}
                   </button>
                 </div>
-              </form>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                <div
-                  style={{
-                    padding: '18px',
-                    backgroundColor: 'white',
-                    borderRadius: '20px',
-                    border: '1px solid var(--border-color)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                  }}
-                >
-                  <div style={{ fontSize: '13px', color: 'var(--primary)', fontWeight: '700' }}>Selected project</div>
-                  <div style={{ fontSize: '20px', fontWeight: '700', color: '#1a1a1a' }}>{selectedProject?.name}</div>
-                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', fontSize: '13px', color: '#666' }}>
-                    <span>Type: {selectedProject?.projectType}</span>
-                    <span>Status: {selectedProject?.status}</span>
-                    <span>Budget: {formatCurrency(selectedProject?.total)}</span>
-                  </div>
-                </div>
-
-                <form onSubmit={handleSyncBoq} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                  <div
-                    style={{
-                      padding: '18px',
-                      backgroundColor: 'white',
-                      borderRadius: '20px',
-                      border: '1px solid #ece8ff',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '16px',
-                    }}
-                  >
-                    <DrawerField label="BOQ type">
-                      <select
-                        value={syncForm.boqType}
-                        onChange={(event) => handleSyncFormChange('boqType', event.target.value)}
-                        style={inputStyle}
-                      >
-                        <option value="CUSTOMER">CUSTOMER</option>
-                        <option value="SUBCONTRACTOR">SUBCONTRACTOR</option>
-                      </select>
-                    </DrawerField>
-
-                    <DrawerField
-                      label="Google Sheet URL"
-                      helper="Use the workbook URL once, then load and select the tabs you want to sync."
-                    >
-                      <input
-                        type="url"
-                        value={syncForm.sheetUrl}
-                        onChange={(event) => handleSyncFormChange('sheetUrl', event.target.value)}
-                        placeholder="https://docs.google.com/spreadsheets/d/..."
-                        style={inputStyle}
-                        required
-                      />
-                    </DrawerField>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
-                      <div style={{ fontSize: '13px', color: '#666' }}>
-                        Load workbook tabs once, then batch sync only the BOQ sheets you need.
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleLoadTabs}
-                        disabled={isLoadingTabs || !syncForm.sheetUrl.trim()}
-                        style={{
-                          ...buttonStyle,
-                          padding: '12px 16px',
-                          backgroundColor: '#f2efff',
-                          color: '#5f48e0',
-                          opacity: isLoadingTabs || !syncForm.sheetUrl.trim() ? 0.6 : 1,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {isLoadingTabs ? 'Loading tabs...' : 'Load tabs'}
-                      </button>
-                    </div>
-
-                    {availableTabs.length ? (
-                      <div
-                        style={{
-                          padding: '16px',
-                          borderRadius: '16px',
-                          border: '1px solid #ebe8ff',
-                          backgroundColor: '#fcfbff',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '10px',
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                          <div>
-                            <div style={{ fontSize: '13px', fontWeight: '700', color: '#5f48e0' }}>Workbook tabs</div>
-                            <div style={{ fontSize: '12px', color: '#7a7a88' }}>
-                              If API_Sync_Data exists, it is preselected as the canonical import tab. Legacy BOQ tabs remain available for manual fallback.
-                            </div>
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#666' }}>
-                            {selectedSheetNames.length} selected
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                          {availableTabs.map((tab) => {
-                            const isSelected = selectedSheetNames.includes(tab.name);
-                            const selectionLimitReached =
-                              !isSelected && selectedSheetNames.length >= MAX_BATCH_SYNC_TABS;
-                            return (
-                              <label
-                                key={tab.name}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '10px',
-                                  padding: '12px',
-                                  borderRadius: '14px',
-                                  border: `1px solid ${isSelected ? '#cfc7ff' : '#ecebf5'}`,
-                                  backgroundColor: isSelected ? '#f4f1ff' : 'white',
-                                  color: tab.syncable ? '#2b2b34' : '#8c8c98',
-                                  cursor:
-                                    tab.syncable && !selectionLimitReached ? 'pointer' : 'not-allowed',
-                                  opacity: selectionLimitReached && !isSelected ? 0.6 : 1,
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  disabled={!tab.syncable || selectionLimitReached}
-                                  onChange={() => toggleSheetSelection(tab.name)}
-                                />
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                  <span style={{ fontSize: '14px', fontWeight: '600' }}>{tab.name}</span>
-                                  <span style={{ fontSize: '11px' }}>
-                                    {tab.syncable ? 'Syncable tab' : 'Skipped by default'}
-                                  </span>
-                                </div>
-                              </label>
-                            );
-                          })}
-                        </div>
-                        <div style={{ fontSize: '12px', color: '#7a7a88' }}>
-                          Sync is currently limited to {MAX_BATCH_SYNC_TABS} tabs per request so AI parsing stays responsive.
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {syncResult ? (
-                    <div
-                      className="card"
-                      style={{
-                        backgroundColor: '#eef7ff',
-                        color: '#205a9c',
-                        border: '1px solid #d5e6fb',
-                      }}
-                    >
-                      <div style={{ fontWeight: '700', marginBottom: '6px' }}>{syncResult.project_name}</div>
-                      <div>Status: {syncResult.status}</div>
-                      <div>Job ID: {syncResult.job_id}</div>
-                      <div>BOQ type: {syncResult.boq_type}</div>
-                      <div>Completed tabs: {syncResult.total_completed_tabs}</div>
-                      <div>Failed tabs: {syncResult.total_failed_tabs}</div>
-                      <div>Current tab: {syncResult.current_sheet_name || '-'}</div>
-                      <div>Queued at: {syncResult.created_at}</div>
-                      <div>Started at: {syncResult.started_at || '-'}</div>
-                      <div>Finished at: {syncResult.finished_at || '-'}</div>
-                      <div style={{ marginTop: '4px' }}>{syncResult.message}</div>
-                      <div style={{ wordBreak: 'break-word', marginBottom: '10px' }}>Sheet: {syncResult.sheet_url}</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {(syncResult.results || []).map((resultItem) => (
-                          <div
-                            key={resultItem.sheet_name}
-                            style={{
-                              padding: '12px',
-                              borderRadius: '14px',
-                              backgroundColor: resultItem.status === 'COMPLETED' ? '#ffffff' : '#fff7f6',
-                              border: `1px solid ${resultItem.status === 'COMPLETED' ? '#d8e8ff' : '#f5d7d3'}`,
-                            }}
-                          >
-                            <div style={{ fontWeight: '700', marginBottom: '4px' }}>
-                              {resultItem.sheet_name} • {resultItem.status}
-                            </div>
-                            <div style={{ fontSize: '13px' }}>Inserted rows: {resultItem.inserted_items}</div>
-                            <div style={{ fontSize: '13px' }}>Closed previous rows: {resultItem.version_closed_items}</div>
-                            <div style={{ fontSize: '13px', marginTop: '4px' }}>{resultItem.message}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                    <button
-                      type="button"
-                      onClick={closeDrawer}
-                      style={{
-                        ...buttonStyle,
-                        flex: 1,
-                        padding: '14px 16px',
-                        backgroundColor: 'white',
-                        color: '#555',
-                        border: '1px solid #e2e2ea',
-                      }}
-                    >
-                      Done for now
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isSyncing || selectedSheetNames.length === 0}
-                      style={{
-                        ...buttonStyle,
-                        flex: 1,
-                        padding: '14px 16px',
-                        backgroundColor: 'var(--primary)',
-                        color: 'white',
-                        opacity: isSyncing || selectedSheetNames.length === 0 ? 0.7 : 1,
-                      }}
-                    >
-                      {isSyncing ? 'Sync job running...' : 'Sync selected tabs'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
+            </form>
           </div>
         </div>
       ) : null}

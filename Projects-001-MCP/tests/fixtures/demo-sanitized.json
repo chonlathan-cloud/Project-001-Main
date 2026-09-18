@@ -170,7 +170,7 @@
       "summary": "Payment workflow failed validation."
     },
     "processing_status": {
-      "workflow": "boq_sync",
+      "workflow": "daily_report_delivery",
       "job_id": "job-demo-001",
       "status": "COMPLETED",
       "processed_count": 12,

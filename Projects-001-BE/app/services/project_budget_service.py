@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Iterable, Sequence
+from typing import Iterable, Literal, Sequence
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -274,6 +274,45 @@ def _context(
         legacy_chat_budget=_money_string(facts.chat_budget) or "0.00",
         legacy_mcp_customer_budget=_money_string(facts.mcp_customer_budget) or "0.00",
     )
+
+
+BudgetConsumer = Literal["PROJECT_LIST", "DASHBOARD", "FUNDS", "CHAT", "MCP"]
+
+
+def active_budget_amount(
+    context: ProjectBudgetReadContext,
+    *,
+    consumer: BudgetConsumer,
+) -> str | None:
+    """Project one approved active source into a consumer-specific amount.
+
+    Legacy projections intentionally retain the Phase 0 compatibility formulas.
+    Once a project is activated on V2, every current-budget reader selects the
+    same snapshot: sell-side readers use the active baseline net sell and Funds
+    uses its published forecast margin. UNKNOWN_COST remains ``None`` rather
+    than being normalized to zero.
+    """
+
+    snapshot = context.snapshot
+    if snapshot.source_kind == "V2":
+        if consumer == "FUNDS":
+            return snapshot.forecast_margin if snapshot.status == "READY" else None
+        return snapshot.net_sell_ex_vat
+
+    legacy_amounts = {
+        "PROJECT_LIST": context.legacy_project_list_budget,
+        "DASHBOARD": context.legacy_dashboard_budget,
+        "FUNDS": context.legacy_fund_forecast_base,
+        "CHAT": context.legacy_chat_budget,
+        "MCP": context.legacy_mcp_customer_budget,
+    }
+    return legacy_amounts[consumer]
+
+
+def budget_snapshot_payload(context: ProjectBudgetReadContext) -> dict[str, object]:
+    """Return the stable public metadata shared by current-budget consumers."""
+
+    return context.snapshot.model_dump(mode="json")
 
 
 async def load_project_budget_contexts(

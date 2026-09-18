@@ -106,7 +106,6 @@ for key in "${REQUIRED_BUILD_VARS[@]}"; do
   fi
 done
 
-VITE_BOQ_BATCH_SYNC_MAX_TABS="${VITE_BOQ_BATCH_SYNC_MAX_TABS:-3}"
 IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/${FRONTEND_IMAGE_NAME}:latest"
 
 echo "==> Using GCP project: ${GCP_PROJECT_ID}"
@@ -138,7 +137,6 @@ docker buildx build \
   --build-arg "VITE_LINE_LIFF_ID=${VITE_LINE_LIFF_ID}" \
   --build-arg "VITE_LINE_SUBCONTRACTOR_LIFF_ID=${VITE_LINE_SUBCONTRACTOR_LIFF_ID}" \
   --build-arg "VITE_LINE_CUSTOMER_LIFF_ID=${VITE_LINE_CUSTOMER_LIFF_ID}" \
-  --build-arg "VITE_BOQ_BATCH_SYNC_MAX_TABS=${VITE_BOQ_BATCH_SYNC_MAX_TABS}" \
   --push \
   "${FRONTEND_SOURCE_DIR}"
 

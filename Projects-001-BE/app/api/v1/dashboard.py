@@ -27,7 +27,10 @@ from app.schemas.dashboard_schema import (
     DashboardZoneStatusItem,
 )
 from app.schemas.responses import StandardResponse
-from app.services.project_budget_service import load_project_budget_contexts
+from app.services.project_budget_service import (
+    active_budget_amount,
+    load_project_budget_contexts,
+)
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -118,7 +121,7 @@ async def get_dashboard_summary(
             project_key = str(project.id)
             context = budget_contexts.get(project.id)
             project_budget_lookup[project_key] = _money(
-                context.legacy_dashboard_budget
+                active_budget_amount(context, consumer="DASHBOARD")
                 if context is not None
                 else project.contingency_budget
             )
@@ -348,6 +351,11 @@ async def get_dashboard_summary(
                         overdue_amount=project_overdue_amount,
                         pending_amount=pending_amount,
                     ),
+                    budget_snapshot=(
+                        budget_contexts[project.id].snapshot
+                        if project.id in budget_contexts
+                        else None
+                    ),
                 )
             )
         project_health = sorted(
@@ -500,6 +508,11 @@ async def get_dashboard_summary(
             project_health=project_health,
             attention_items=attention_items,
             recent_actions=recent_actions,
+            budget_sources=[
+                budget_contexts[project.id].snapshot
+                for project in construction_projects
+                if project.id in budget_contexts
+            ],
         )
         return StandardResponse(data=data)
 

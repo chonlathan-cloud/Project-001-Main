@@ -2,7 +2,6 @@
 AI Service — Gemini Integration via google-genai on Vertex AI.
 
 Implements:
-  - BOQ Sheet parsing via Gemini  (LLD §3.1, BRD §4.1)
   - Receipt OCR extraction via Gemini
   - Vector embedding generation   (BRD §5.1)
   - Strategic RAG chat             (LLD §3.2)
@@ -215,126 +214,6 @@ RECEIPT_OCR_RESPONSE_SCHEMA = {
         "message": {"type": "STRING", "nullable": True},
     },
 }
-
-
-# ---------------------------------------------------------------------------
-# BOQ Sheet Parsing with Gemini  (LLD §3.1, BRD §4.1)
-# ---------------------------------------------------------------------------
-BOQ_PARSE_PROMPT = """\
-You are an Expert Construction Quantity Surveyor AI.
-I will provide you with raw data from a Google Sheet tab named "{sheet_name}".
-This data represents a Bill of Quantities (BOQ) for a construction project.
-
-## YOUR TASKS:
-1. **Identify the WBS Hierarchy** (Work Breakdown Structure):
-   - Level 1 = Main Category  (e.g. "Electrical and Communication System")
-   - Level 2 = Sub-Category   (e.g. "LIGHTING FIXTURE")
-   - Level 3 = Line Item      (e.g. "Recessed Downlight")
-   - Assign a `parent_index` that references the index of the parent row (null for Level 1).
-
-2. **Split Material vs Labor costs**:
-   - Identify which cost columns are Materials and which are Labor.
-   - If a row has only one price column, classify it based on the item description.
-
-3. **Extract all item details**: item_no, description, qty, unit, material_unit_price, labor_unit_price, total_material, total_labor, grand_total.
-
-## OUTPUT FORMAT:
-Return ONLY a valid JSON array. No markdown, no explanation.
-Each element must have these exact keys:
-```json
-[
-  {{
-    "index": 0,
-    "wbs_level": 1,
-    "parent_index": null,
-    "item_no": "1",
-    "description": "Main Category Name",
-    "qty": null,
-    "unit": null,
-    "material_unit_price": 0,
-    "labor_unit_price": 0,
-    "total_material": 189130.00,
-    "total_labor": 124200.00,
-    "grand_total": 313330.00
-  }}
-]
-```
-
-## RULES:
-- If confidence in a mapping is below 80%, set the field value to null and add a key "low_confidence": true.
-- Preserve the original row order.
-- All monetary values must be numbers (not strings).
-
-## RAW DATA:
-{raw_data}
-"""
-
-
-async def parse_boq_sheet_with_gemini(
-    sheet_name: str,
-    raw_data: list,
-) -> list[dict]:
-    """
-    Send raw Google Sheet rows to Gemini 2.0 Flash for semantic BOQ parsing.
-
-    Args:
-        sheet_name: Name of the sheet tab (e.g. 'AC', 'EE', 'SN').
-        raw_data:   List of rows (each row is a list of cell values).
-
-    Returns:
-        A list of dicts representing parsed BOQ items with WBS hierarchy.
-
-    Raises:
-        ValueError: If Gemini returns invalid / unparseable JSON.
-        Exception:  On GenAI / Vertex AI API errors.
-    """
-    try:
-        client = _get_client()
-        started_at = perf_counter()
-
-        prompt = BOQ_PARSE_PROMPT.format(
-            sheet_name=sheet_name,
-            raw_data=json.dumps(raw_data, ensure_ascii=False, default=str),
-        )
-
-        response = await client.aio.models.generate_content(
-            model=_GEMINI_MODEL,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                responseMimeType="application/json",
-            ),
-        )
-        response_text = (response.text or "").strip()
-
-        # Strip markdown code fences if present
-        if response_text.startswith("```"):
-            response_text = response_text.split("\n", 1)[1]
-        if response_text.endswith("```"):
-            response_text = response_text.rsplit("```", 1)[0]
-        response_text = response_text.strip()
-
-        parsed_items: list[dict] = json.loads(response_text)
-
-        if not isinstance(parsed_items, list):
-            raise ValueError("Gemini did not return a JSON array.")
-
-        logger.info(
-            "Parsed %d BOQ items from sheet '%s' raw_rows=%d prompt_chars=%d elapsed_ms=%.1f",
-            len(parsed_items),
-            sheet_name,
-            len(raw_data),
-            len(prompt),
-            (perf_counter() - started_at) * 1000,
-        )
-        return parsed_items
-
-    except json.JSONDecodeError as exc:
-        logger.error("Gemini returned invalid JSON for sheet '%s': %s", sheet_name, exc)
-        raise ValueError(f"AI returned invalid JSON for sheet '{sheet_name}'.") from exc
-
-    except Exception as exc:
-        logger.exception("GenAI call failed for sheet '%s'", sheet_name)
-        raise
 
 
 async def extract_receipt_data_with_gemini(
@@ -574,7 +453,7 @@ async def generate_embedding(text: str) -> list[float]:
         logger.debug("Generated embedding for: %.50s… (%d dims)", text, len(vector))
         return vector
 
-    except Exception as exc:
+    except Exception:
         logger.exception("Embedding generation failed for text: %.50s…", text)
         raise
 
@@ -638,6 +517,6 @@ Analysing data {scope}.
             ),
         }
 
-    except Exception as exc:
+    except Exception:
         logger.exception("Strategic AI chat failed")
         raise

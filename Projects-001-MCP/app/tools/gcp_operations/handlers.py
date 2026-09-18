@@ -30,7 +30,7 @@ ResourceType = Literal[
 ServiceAlias = Literal["frontend", "backend", "mcp"]
 Severity = Literal["WARNING", "ERROR", "CRITICAL", "ALERT", "EMERGENCY"]
 DataSource = Literal["backend", "cloud_sql", "firestore", "gcs", "oauth"]
-Workflow = Literal["boq_sync", "receipt_ocr", "daily_report_delivery", "flowaccount_sync"]
+Workflow = Literal["receipt_ocr", "daily_report_delivery", "flowaccount_sync"]
 Cursor = Annotated[str | None, Field(max_length=1024)]
 ErrorLimit = Annotated[int, Field(ge=1, le=50)]
 OpaqueId = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._~-]+$")]

@@ -527,18 +527,6 @@ const sanitizeExecutionSummaryItem = (item, index = 0) => ({
   tone: String(item?.tone || 'neutral').trim(),
 });
 
-const sumExecutionSummaryAmounts = (items, keys) => {
-  const keySet = new Set(keys);
-  return (Array.isArray(items) ? items : []).reduce((total, item) => (
-    keySet.has(item.key) ? total + toNumber(item.amount) : total
-  ), 0);
-};
-
-const firstPositiveNumber = (...values) => {
-  const value = values.find((item) => toNumber(item) > 0);
-  return value == null ? 0 : toNumber(value);
-};
-
 const toProjectCardItem = (project) => {
   const id = project.project_id || project.id || '';
   const total = toNumber(project.total_budget ?? project.contingency_budget);
@@ -567,60 +555,10 @@ const toProjectCardItem = (project) => {
     profitPercent: toNumber(project.profit_percent),
     vatPercent: toNumber(project.vat_percent),
     contingencyBudget: toNumber(project.contingency_budget, total),
+    budgetSnapshot: project.budget_snapshot || null,
+    budgetStatus: String(project?.budget_snapshot?.status || '').trim().toUpperCase(),
   };
 };
-
-function enrichProjectCardWithBoq(project, boqResponse) {
-  if (!boqResponse) return project;
-
-  const compareSummary = boqResponse?.compare_summary || {};
-  const executionSummary = Array.isArray(boqResponse?.execution_summary)
-    ? boqResponse.execution_summary.map((item, index) => sanitizeExecutionSummaryItem(item, index))
-    : [];
-  const customerBudget = toNumber(compareSummary?.customer_total_budget);
-  const subcontractorBudget = toNumber(compareSummary?.subcontractor_total_budget);
-  const total = firstPositiveNumber(customerBudget, subcontractorBudget, project.total, project.contingencyBudget);
-  const committedCost = sumExecutionSummaryAmounts(executionSummary, [
-    'approved_transactions',
-    'approved_input_requests',
-    'paid_input_requests',
-  ]);
-  const pendingAmount = sumExecutionSummaryAmounts(executionSummary, [
-    'pending_input_requests',
-    'overdue_installments',
-  ]);
-  const paidAmount = sumExecutionSummaryAmounts(executionSummary, ['paid_input_requests']);
-  const spent = firstPositiveNumber(committedCost, project.spent);
-  const progressPercent = total > 0 ? (spent / total) * 100 : project.progressPercent;
-  const budgetSource = customerBudget > 0
-    ? 'Customer BOQ'
-    : subcontractorBudget > 0
-      ? 'Subcontractor BOQ'
-      : project.budgetSource;
-
-  return {
-    ...project,
-    total,
-    spent,
-    progressPercent,
-    budgetSource,
-    customerBudget,
-    subcontractorBudget,
-    committedCost: spent,
-    pendingAmount,
-    paidAmount,
-  };
-}
-
-async function enrichProjectCard(project) {
-  if (!project.id) return project;
-
-  const boqResponse = await apiRequest(`/api/v1/projects/${project.id}/boq`, {
-    timeoutMs: 30000,
-  }).catch(() => null);
-
-  return enrichProjectCardWithBoq(project, boqResponse);
-}
 
 async function apiRequest(path, options = {}) {
   const {
@@ -904,13 +842,7 @@ export async function getDashboardData() {
 
 export async function getProjectsData() {
   const data = await apiRequest('/api/v1/projects');
-  const projects = Array.isArray(data) ? data : [];
-  const projectCards = projects.map(toProjectCardItem);
-  const enrichedResults = await Promise.allSettled(projectCards.map(enrichProjectCard));
-
-  return enrichedResults.map((result, index) => (
-    result.status === 'fulfilled' ? result.value : projectCards[index]
-  ));
+  return (Array.isArray(data) ? data : []).map(toProjectCardItem);
 }
 
 export async function createProject(payload) {
@@ -929,52 +861,6 @@ export async function updateProject(projectId, payload) {
   });
 
   return toProjectCardItem(project);
-}
-
-export async function syncProjectBoq(payload) {
-  return apiRequest('/api/v1/projects/boq/sync', {
-    method: 'POST',
-    timeoutMs: 195000,
-    body: JSON.stringify({
-      project_id: payload.projectId,
-      boq_type: payload.boqType,
-      sheet_url: payload.sheetUrl,
-      sheet_name: payload.sheetName,
-    }),
-  });
-}
-
-export async function getProjectBoqTabs(payload) {
-  return apiRequest('/api/v1/projects/boq/tabs', {
-    method: 'POST',
-    timeoutMs: 45000,
-    body: JSON.stringify({
-      sheet_url: payload.sheetUrl,
-    }),
-  });
-}
-
-export async function syncProjectBoqBatch(payload) {
-  const selectedSheetNames = Array.isArray(payload.sheetNames)
-    ? payload.sheetNames.filter(Boolean)
-    : [];
-
-  return apiRequest('/api/v1/projects/boq/sync-batch', {
-    method: 'POST',
-    timeoutMs: 30000,
-    body: JSON.stringify({
-      project_id: payload.projectId,
-      boq_type: payload.boqType,
-      sheet_url: payload.sheetUrl,
-      sheet_names: selectedSheetNames,
-    }),
-  });
-}
-
-export async function getProjectBoqSyncJob(jobId) {
-  return apiRequest(`/api/v1/projects/boq/sync-jobs/${jobId}`, {
-    timeoutMs: 30000,
-  });
 }
 
 export function createBoqIdempotencyKey(prefix = 'boq') {
@@ -1280,6 +1166,9 @@ export async function getProjectDetailData(projectId) {
     profitPercent: toNumber(project.profit_percent),
     vatPercent: toNumber(project.vat_percent),
     contingencyBudget: toNumber(project.contingency_budget),
+    totalBudget: toNumber(project.total_budget ?? project.contingency_budget),
+    budgetSnapshot: project.budget_snapshot || boqResponse?.active_budget_snapshot || null,
+    legacyHistoryOnly: Boolean(boqResponse?.legacy_history_only),
     customerTree,
     subcontractorTree,
     compareTree,
@@ -1314,8 +1203,11 @@ const normalizeFundBucketOption = (option, index = 0) => {
     status: String(option?.status || option?.bucket_status || project?.status || '').trim().toUpperCase(),
     currency: String(option?.currency || 'THB').trim().toUpperCase(),
     availableMarginToAllocate: toDecimalString(
-      option?.available_margin_to_allocate ?? option?.available_to_allocate
+      option?.available_margin_to_allocate ?? option?.available_to_allocate,
+      null
     ),
+    budgetSourceKind: String(option?.budget_source_kind || '').trim().toUpperCase(),
+    budgetStatus: String(option?.budget_status || '').trim().toUpperCase(),
     balanceVersion: String(option?.version || option?.balance_version || '').trim(),
     isOperations: systemKey === OPERATIONS_SYSTEM_KEY || String(projectId) === OPERATIONS_PROJECT_ID,
     isActive: option?.is_active !== false && !['ARCHIVED', 'INACTIVE', 'LOCKED'].includes(
@@ -1344,7 +1236,7 @@ const normalizeFundSummary = (summary = {}) => ({
   bucketId: String(summary?.bucket_id || '').trim(),
   currency: String(summary?.currency || 'THB').trim().toUpperCase(),
   forecastBaseType: String(summary?.forecast_base_type || '').trim().toUpperCase(),
-  projectedBoqMargin: toDecimalString(summary?.projected_boq_margin, ''),
+  projectedBoqMargin: toDecimalString(summary?.projected_boq_margin, null),
   openingForecastBalance: toDecimalString(
     summary?.opening_forecast_balance ?? summary?.opening_balance,
     ''
@@ -1353,12 +1245,16 @@ const normalizeFundSummary = (summary = {}) => ({
   forecastAllocatedOut: toDecimalString(summary?.forecast_allocated_out ?? summary?.allocated_out),
   forecastReserve: toDecimalString(summary?.forecast_reserve ?? summary?.protected_reserve),
   rawForecastAvailable: toDecimalString(
-    summary?.raw_forecast_available ?? summary?.raw_available
+    summary?.raw_forecast_available ?? summary?.raw_available,
+    null
   ),
   availableMarginToAllocate: toDecimalString(
-    summary?.available_margin_to_allocate ?? summary?.available_to_allocate
+    summary?.available_margin_to_allocate ?? summary?.available_to_allocate,
+    null
   ),
-  forecastDeficit: toDecimalString(summary?.forecast_deficit ?? summary?.funding_deficit),
+  forecastDeficit: toDecimalString(summary?.forecast_deficit ?? summary?.funding_deficit, null),
+  budgetSnapshot: summary?.budget_snapshot || null,
+  forecastAvailableKnown: summary?.forecast_available_known !== false,
   monthlyForecastOpening: toDecimalString(
     summary?.monthly_forecast_opening ?? summary?.monthly_opening,
     ''

@@ -22,7 +22,11 @@ from sqlalchemy.orm import noload
 from app.models.boq import BOQItem, Project
 from app.models.finance import Installment, Transaction
 from app.models.input_request import InputRequest
-from app.services.project_budget_service import legacy_budget_facts_from_items
+from app.schemas.project_budget_schema import ProjectBudgetReadContext
+from app.services.project_budget_service import (
+    active_budget_amount,
+    load_project_budget_contexts,
+)
 
 PENDING_INSTALLMENT_STATUSES = {"PENDING", "PENDING_ADMIN", "ADVANCE"}
 OPEN_RECEIVABLE_STATUSES = {"PENDING", "PENDING_ADMIN", "ADVANCE", "BILLING", "RE-BILLING"}
@@ -220,6 +224,7 @@ class ChatAnalyticsSnapshot:
     project_by_id: dict[UUID, Project]
     boq_item_by_id: dict[UUID, BOQItem]
     installment_by_id: dict[UUID, Installment]
+    budget_context_by_id: dict[UUID, ProjectBudgetReadContext]
     project_name: str | None
 
 
@@ -514,6 +519,7 @@ async def _load_snapshot(
             project_by_id={},
             boq_item_by_id={},
             installment_by_id={},
+            budget_context_by_id={},
             project_name=None,
         )
 
@@ -550,6 +556,9 @@ async def _load_snapshot(
     if project_id is not None:
         input_query = input_query.filter(InputRequest.project_id == project_id)
     input_requests = (await db.execute(input_query)).scalars().all()
+    budget_context_by_id = await load_project_budget_contexts(
+        db, list(scoped_project_ids)
+    )
 
     project_name = projects[0].name if project_id is not None and projects else None
 
@@ -563,6 +572,7 @@ async def _load_snapshot(
         project_by_id=project_by_id,
         boq_item_by_id=boq_item_by_id,
         installment_by_id=installment_by_id,
+        budget_context_by_id=budget_context_by_id,
         project_name=project_name,
     )
 
@@ -692,19 +702,17 @@ def _build_project_rollups(
         if status == "DRAFT" and created_in_scope:
             project_rollup["draft_request_count"] += 1
 
-    current_items_by_project: dict[UUID, list[BOQItem]] = {
-        project_id: [] for project_id in rollups
-    }
-    for item in snapshot.boq_items:
-        current_items_by_project.setdefault(item.project_id, []).append(item)
-
     for project_id, project_rollup in rollups.items():
-        budget_baseline = float(
-            legacy_budget_facts_from_items(
-                project_id=project_id,
-                contingency_budget=project_rollup["contingency_budget"],
-                items=current_items_by_project.get(project_id, []),
-            ).chat_budget
+        budget_context = snapshot.budget_context_by_id.get(project_id)
+        budget_baseline = _to_float(
+            active_budget_amount(budget_context, consumer="CHAT")
+            if budget_context is not None
+            else project_rollup["contingency_budget"]
+        )
+        project_rollup["budget_snapshot"] = (
+            budget_context.snapshot.model_dump(mode="json")
+            if budget_context is not None
+            else None
         )
         actual_cost = project_rollup["transaction_cost"] + project_rollup["approved_expense_requests"]
         project_rollup["budget_baseline"] = budget_baseline
@@ -731,6 +739,7 @@ def _project_source(project_rollup: dict, *, description: str, score: float | No
         "description": description,
         "project_id": project_rollup["project_id"],
         "score": score,
+        "budget_snapshot": project_rollup.get("budget_snapshot"),
     }
 
 

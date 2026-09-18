@@ -411,9 +411,12 @@ def test_vendor_compare_select_publish_and_cost_semantics(monkeypatch: pytest.Mo
 
         funds_after_publish = client.get(f"/api/v1/projects/{project_id}/funds/summary", headers=OWNER)
         assert funds_after_publish.status_code == 200
-        # Phase 0's consumer-specific compatibility projection remains public
-        # until Phase 5, but the source fingerprint/version must change now.
-        assert funds_after_publish.json()["data"]["projected_boq_margin"] == funds_before_data["projected_boq_margin"]
+        # Phase 5 consumes the published V2 forecast margin and no longer exposes
+        # a legacy compatibility projection for this active V2 project.
+        assert funds_before_data["projected_boq_margin"] is None
+        assert funds_after_publish.json()["data"]["projected_boq_margin"] == str(
+            Decimal(sell_before) - Decimal("5500.00")
+        )
         assert funds_after_publish.json()["data"]["version"] != funds_before_data["version"]
         reloaded = client.get(f"/api/v1/boq/revisions/{revision['revision_id']}", headers=OWNER)
         assert reloaded.json()["data"]["net_sell_ex_vat"] == sell_before

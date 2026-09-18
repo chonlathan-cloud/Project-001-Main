@@ -182,7 +182,7 @@ def _phase5_tool_cases() -> list[tuple[str, dict]]:
         ("get_data_source_health", {}),
         (
             "get_processing_status",
-            {"workflow": "boq_sync", "job_id": "job-demo-001"},
+            {"workflow": "daily_report_delivery", "job_id": "job-demo-001"},
         ),
     ]
 

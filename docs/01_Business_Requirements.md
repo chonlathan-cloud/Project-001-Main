@@ -1,5 +1,7 @@
 ### **Phase 1: Detailed Business Logic & Requirements (Version 2.0)**
 
+> **BOQ requirements supersession (Phase 5, 2026-09-18):** Sections that describe Google Sheets ingestion/BOQ Sync are historical and no longer define runtime behavior. BOQ authoring is native-only; there is no Google Sheets or Excel/CSV import. The supported lifecycle is MAIN/revision/alternative/change order, immutable quotation snapshots, customer/internal/RFQ/selected-vendor exports, vendor cost publication and Price Database provenance. All current-budget readers use the active `ProjectBudgetSnapshot`; legacy BOQ rows remain available only where finance/history/audit references require them. See [`FeedbackV2/phase5/README.md`](FeedbackV2/phase5/README.md).
+
   * **Project Name:** Project\_001 (The Hybrid Brain for Modern Construction Management)
   * **System Scope:** Single-tenant (Internal Company Use, Multiple Projects)
   * **Core Objective:** Budget management (BOQ), Cash Flow control (AR/AP), and strategic data analysis using AI.
@@ -8,7 +10,7 @@
 
 | Actor | Authentication Method | Data Visibility | Key Capabilities |
 | :--- | :--- | :--- | :--- |
-| **Owner** | Company Email (SSO / Google Workspace) | **Global View:** Can see every project, every BOQ, every bill, customer financial status, Dashboard, and Chat AI. | - Sync BOQ, approve/reject/mark paid requests, manage contingency budget.<br>- Monitor Overdue Alert Dashboard.<br>- Ask strategic questions to the AI.<br>- Manage internal users and role assignment. |
+| **Owner** | Company Email (SSO / Google Workspace) | **Global View:** Can see every project, every BOQ, every bill, customer financial status, Dashboard, and Chat AI. | - Author and publish native BOQ/quotation/cost plans, approve/reject/mark paid requests, manage contingency budget.<br>- Monitor Overdue Alert Dashboard.<br>- Ask strategic questions to the AI.<br>- Manage internal users and role assignment. |
 | **Admin / PM** | Company Email (SSO / Google Workspace) | **Operational View:** Can see projects, BOQs, approval queues, insights, profile, and settings list data. Cannot see Dashboard or Chat AI. | - Review project, BOQ, approval, insight, and settings data.<br>- Preview receipts and KYC documents through signed URLs.<br>- Cannot approve/reject/mark paid requests or mutate project/BOQ/settings data. |
 | **Subcontractor** | LINE Login API (via LIFF App) | **Isolated View:** Can see only their own bills, payment status, and their specific work installments. | - Registration (KYC), upload bills.<br>- Request advance payments.<br>- Verify data read by the AI. |
 
@@ -46,7 +48,7 @@ The system is clearly divided into two sides to manage the company's Cash Flow (
 
 ### **3. BOQ & Financial Logic**
 
-  * **3.1 Dual BOQ & Multi-Sheet Ingestion:** One project will have 2 URLs (Customer BOQ and Subcontractor BOQ). Within one URL, the system must support reading Multi-sheets (e.g., AC, SN, EE, Architectural) by automatically looping through each sheet.
+  * **3.1 Native BOQ:** New work is entered once in the native hierarchy. Accepted MAIN/alternative plus accepted ADD/DEDUCT change orders define the active sell scope. Legacy dual-BOQ rows remain history; new Google Sheets/Excel/CSV ingestion is not supported.
   * **3.2 WBS Hierarchy:** The system must understand Parent-Child relationships, such as HVAC Category (Parent) -\> SPLIT TYPE (Child) -\> FCU/CDU (Sub-child). Display and budget calculations must accurately **Roll-up** totals from child to parent.
   * **3.3 Material vs. Labor Split:** The budget for each item is separated into "Material" and "Labor" buckets. When a subcontractor bills, they must specify (or have the AI separate) whether the bill is for materials (e.g., steel purchase) or labor (e.g., worker installment) so the system can deduct from the correct bucket.
   * **3.4 Project-Level Financials:** Overhead (e.g., 12%), Profit, Discount, and 7% VAT on the summary page will not be averaged across line items but will be stored as **"Project Variables"** to calculate the overall project picture.
@@ -57,9 +59,7 @@ The system is clearly divided into two sides to manage the company's Cash Flow (
 
 ### **🔄 4. Data Ingestion & AI Workflows**
 
-  * **4.1 BOQ Sync (Zero GAS):** Pulls data from Google Sheets via API -\> Sends it to **Gemini 2.0 Flash** for **Semantic Mapping** (matching column names).
-      * **Validation:** If AI confidence is \< 80% -\> Reject immediately.
-      * **Versioning:** Always recorded as a new version (**SCD Type 2**); never overwrite old data.
+  * **4.1 Native BOQ lifecycle:** Server-authoritative drafts use stable logical IDs, explicit cost completeness, immutable issue/acceptance snapshots and versioned active baselines. Google Sheets and Excel/CSV import are retired. Historical SCD2 legacy rows are preserved but are not a write path.
   * **4.2 Subcontractor Billing (Human-in-the-loop):** Upload bill image -\> **Gemini 1.5 Flash (OCR)** extracts data as JSON -\> Auto-fills the form on the Web App. Subcontractors must double-check and correct data before clicking Submit.
   * **4.3 Duplicate Detection:** Checks Receipt No. + Date + Amount. If a duplicate is found, it won't block but will raise a **Red Flag** for internal review.
   * **4.4 Owner Direct Edit:** Owners can edit bill figures directly for speed (no need to reject and have the subcontractor redo it). Admins can view and review the queue but cannot mutate request data.

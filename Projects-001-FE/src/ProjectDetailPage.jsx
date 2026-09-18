@@ -607,6 +607,8 @@ function ProjectDetailPage() {
   const hasCustomerBoq = customerTree.length > 0;
   const hasSubcontractorBoq = subcontractorTree.length > 0;
   const compareSummary = data?.compareSummary || {};
+  const activeBudgetSnapshot = data?.budgetSnapshot || null;
+  const legacyHistoryOnly = Boolean(data?.legacyHistoryOnly || activeBudgetSnapshot?.source_kind === 'V2');
   const isOperations = Boolean(data?.isSystemOperations || data?.systemKey === 'OPERATIONS');
   const canMutateFunds = canMutateAdminData(getStoredAuthUser());
   const wbsSummary = Array.isArray(data?.wbsSummary) ? data.wbsSummary : [];
@@ -670,7 +672,7 @@ function ProjectDetailPage() {
             }}
           >
             <Layers3 size={14} />
-            {isOperations ? 'Company Funds · System Bucket' : 'Project Detail for dual BOQ comparison'}
+            {isOperations ? 'Company Funds · System Bucket' : 'Project Detail · Active Budget'}
           </div>
 
           <div>
@@ -680,7 +682,9 @@ function ProjectDetailPage() {
             <p style={{ maxWidth: '760px', fontSize: '15px', lineHeight: 1.7, color: 'var(--text-muted)' }}>
               {isOperations
                 ? 'ค่าใช้จ่ายส่วนกลางของบริษัท · Company-wide operating expenses and internal fund allocations.'
-                : 'หน้านี้ใช้เทียบ Customer BOQ กับ Subcontractor BOQ ในโครงสร้าง WBS เดียวกัน เพื่อให้เห็นงบ, variance และ margin ในแต่ละ node ได้ทันที'}
+                : legacyHistoryOnly
+                  ? 'งบปัจจุบันมาจาก Native BOQ V2 ส่วน Customer/Subcontractor BOQ ด้านล่างเก็บไว้เพื่อประวัติและการตรวจสอบเท่านั้น'
+                  : 'หน้านี้ใช้เทียบ Customer BOQ กับ Subcontractor BOQ ในโครงสร้าง WBS เดียวกัน เพื่อให้เห็นงบ, variance และ margin ในแต่ละ node ได้ทันที'}
             </p>
           </div>
 
@@ -736,6 +740,14 @@ function ProjectDetailPage() {
             </span>
             {!isOperations ? (
               <>
+            <span
+              style={{
+                display: 'inline-flex', alignItems: 'center', padding: '7px 10px', borderRadius: '999px',
+                backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', fontSize: '12px', fontWeight: '700',
+              }}
+            >
+              Active budget {formatCurrency(data.totalBudget)} · {activeBudgetSnapshot?.source_kind || 'LEGACY'} · {activeBudgetSnapshot?.status || 'READY'}
+            </span>
             <span
               style={{
                 display: 'inline-flex',
@@ -862,6 +874,14 @@ function ProjectDetailPage() {
 
       {!isOperations && activeProjectSection === 'compare' ? (
         <>
+          {legacyHistoryOnly ? (
+            <section className="card" style={{ border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)' }}>
+              <strong>Legacy BOQ history</strong>
+              <div style={{ marginTop: '6px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                The values below remain resolvable for finance and audit history. They are not added to or substituted for the active V2 budget.
+              </div>
+            </section>
+          ) : null}
           {!hasCustomerBoq || !hasSubcontractorBoq ? (
             <section
               className="card"
@@ -892,19 +912,19 @@ function ProjectDetailPage() {
           <section className="project-detail-summary-grid">
             <SummaryCard
               icon={Building2}
-              label="Customer BOQ"
+              label={legacyHistoryOnly ? 'Historical Customer BOQ' : 'Customer BOQ'}
               value={formatCurrency(compareSummary.customerTotalBudget)}
-              subtext="มูลค่างบรวมฝั่ง Customer ที่ sync เข้ามาในปัจจุบัน"
+              subtext={legacyHistoryOnly ? 'Legacy reference retained for history and audit' : 'มูลค่างบรวมฝั่ง Customer ปัจจุบัน'}
             />
             <SummaryCard
               icon={Wallet}
-              label="Subcontractor BOQ"
+              label={legacyHistoryOnly ? 'Historical Subcontractor BOQ' : 'Subcontractor BOQ'}
               value={formatCurrency(compareSummary.subcontractorTotalBudget)}
-              subtext="มูลค่างบรวมฝั่ง Subcontractor ที่ sync เข้ามาในปัจจุบัน"
+              subtext={legacyHistoryOnly ? 'Legacy reference retained for history and audit' : 'มูลค่างบรวมฝั่ง Subcontractor ปัจจุบัน'}
             />
             <SummaryCard
               icon={ArrowLeftRight}
-              label="Projected BOQ Margin"
+              label={legacyHistoryOnly ? 'Historical BOQ Variance' : 'Projected BOQ Margin'}
               value={formatCurrency(compareSummary.totalVariance)}
               subtext={
                 compareSummary.marginPercent == null

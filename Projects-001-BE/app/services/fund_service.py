@@ -26,6 +26,7 @@ from app.schemas.fund_schema import (
     FundSummaryResponse,
 )
 from app.services.project_budget_service import (
+    active_budget_amount,
     budget_source_fingerprint,
     load_project_budget_context,
     lock_project_budget_state,
@@ -181,18 +182,13 @@ async def _bucket_context(
     return row[0], row[1]
 
 
-async def _projected_boq_margin(db: AsyncSession, project_id: UUID) -> Decimal:
-    context = await load_project_budget_context(db, project_id)
-    return money(context.legacy_fund_forecast_base if context else ZERO)
-
-
 def _source_fingerprint(
     bucket: FundBucket,
     entries: list[FundLedgerEntry],
     values: AvailableValues,
     *,
     forecast_base_type: str,
-    forecast_base: Decimal,
+    forecast_base: Decimal | None,
     budget_source: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
@@ -202,7 +198,10 @@ def _source_fingerprint(
             str(bucket.balance_start_date or ""),
             str(money(bucket.protected_reserve)),
         ],
-        "forecast_base": [forecast_base_type, str(money(forecast_base))],
+        "forecast_base": [
+            forecast_base_type,
+            None if forecast_base is None else str(money(forecast_base)),
+        ],
         "budget_source": budget_source or {"source_kind": "LEGACY"},
         "values": [
             str(values.raw_forecast_available),
@@ -249,17 +248,26 @@ async def calculate_fund_summary(
     budget_context = (
         None if is_operations else await load_project_budget_context(db, project.id)
     )
-    projected_boq_margin = money(
-        ZERO
+    active_margin = (
+        None
         if is_operations or budget_context is None
-        else budget_context.legacy_fund_forecast_base
+        else active_budget_amount(budget_context, consumer="FUNDS")
+    )
+    forecast_available_known = bool(
+        is_operations or budget_context is None or active_margin is not None
+    )
+    projected_boq_margin = (
+        money(active_margin)
+        if not is_operations and active_margin is not None
+        else ZERO
+        if not is_operations and budget_context is None
+        else None
     )
     opening_forecast_balance = ledger_totals["opening_forecast_balance"]
-    forecast_base = (
-        opening_forecast_balance if is_operations else projected_boq_margin
-    )
+    forecast_base = opening_forecast_balance if is_operations else projected_boq_margin
+    calculation_base = forecast_base if forecast_base is not None else ZERO
     values = calculate_available_values(
-        forecast_base=forecast_base,
+        forecast_base=calculation_base,
         forecast_allocated_in=ledger_totals["forecast_allocated_in"],
         forecast_allocated_out=ledger_totals["forecast_allocated_out"],
         forecast_reserve=bucket.protected_reserve,
@@ -313,9 +321,13 @@ async def calculate_fund_summary(
         forecast_allocated_in=ledger_totals["forecast_allocated_in"],
         forecast_allocated_out=ledger_totals["forecast_allocated_out"],
         forecast_reserve=money(bucket.protected_reserve),
-        raw_forecast_available=values.raw_forecast_available,
-        available_margin_to_allocate=values.available_margin_to_allocate,
-        forecast_deficit=values.forecast_deficit,
+        raw_forecast_available=(
+            values.raw_forecast_available if forecast_available_known else None
+        ),
+        available_margin_to_allocate=(
+            values.available_margin_to_allocate if forecast_available_known else None
+        ),
+        forecast_deficit=values.forecast_deficit if forecast_available_known else None,
         monthly_forecast_opening=monthly_forecast_opening,
         monthly_forecast_closing=monthly_forecast_closing,
         balance_start_date=bucket.balance_start_date,
@@ -324,12 +336,17 @@ async def calculate_fund_summary(
         mutations_enabled=get_settings().fund_allocation_enabled,
         calculated_at=now,
         version=version,
+        budget_snapshot=(budget_context.snapshot if budget_context is not None else None),
+        forecast_available_known=forecast_available_known,
+        correction_available_margin=values.available_margin_to_allocate,
         allocated_in=ledger_totals["forecast_allocated_in"],
         allocated_out=ledger_totals["forecast_allocated_out"],
         protected_reserve=money(bucket.protected_reserve),
-        raw_available=values.raw_forecast_available,
-        available_to_allocate=values.available_margin_to_allocate,
-        funding_deficit=values.forecast_deficit,
+        raw_available=(values.raw_forecast_available if forecast_available_known else None),
+        available_to_allocate=(
+            values.available_margin_to_allocate if forecast_available_known else None
+        ),
+        funding_deficit=values.forecast_deficit if forecast_available_known else None,
         opening_balance=opening_forecast_balance if is_operations else None,
         monthly_opening=monthly_forecast_opening,
         monthly_closing=monthly_forecast_closing,
@@ -383,6 +400,16 @@ async def list_bucket_options(db: AsyncSession) -> list[FundBucketOption]:
                 available_to_allocate=summary.available_margin_to_allocate,
                 version=summary.version,
                 is_active=active,
+                budget_source_kind=(
+                    summary.budget_snapshot.source_kind
+                    if summary.budget_snapshot is not None
+                    else "OPERATIONS"
+                ),
+                budget_status=(
+                    summary.budget_snapshot.status
+                    if summary.budget_snapshot is not None
+                    else "READY"
+                ),
             )
         )
     return options
@@ -442,6 +469,14 @@ def _validate_active_context(
             status_code=409,
             context={"project_id": str(project.id)},
         )
+
+
+def _mutation_balance(summary: FundSummaryResponse) -> Decimal:
+    """Known public availability, or ledger-only capacity for corrections/incoming."""
+
+    if summary.available_margin_to_allocate is not None:
+        return money(summary.available_margin_to_allocate)
+    return money(summary.correction_available_margin)
 
 
 def _reference(prefix: str) -> str:
@@ -574,6 +609,8 @@ async def post_allocation(
                 target_project_id,
                 locked_context=target_context,
             )
+            source_available = _mutation_balance(source_summary)
+            target_available = _mutation_balance(target_summary)
             if source_summary.version != expected_source_balance_version:
                 raise FundDomainError(
                     "STALE_FUND_BALANCE",
@@ -583,7 +620,7 @@ async def post_allocation(
                 )
             if (
                 normalized_amount <= ZERO
-                or normalized_amount > source_summary.available_margin_to_allocate
+                or normalized_amount > source_available
             ):
                 raise FundDomainError(
                     "INSUFFICIENT_AVAILABLE_MARGIN",
@@ -591,7 +628,7 @@ async def post_allocation(
                     status_code=409,
                     context={
                         "available_margin_to_allocate": str(
-                            source_summary.available_margin_to_allocate
+                            source_available
                         ),
                     },
                 )
@@ -609,13 +646,13 @@ async def post_allocation(
                 status="POSTED",
                 idempotency_key=idempotency_key,
                 created_by=actor,
-                source_balance_before=source_summary.available_margin_to_allocate,
+                source_balance_before=source_available,
                 source_balance_after=money(
-                    source_summary.available_margin_to_allocate - normalized_amount
+                    source_available - normalized_amount
                 ),
-                target_balance_before=target_summary.available_margin_to_allocate,
+                target_balance_before=target_available,
                 target_balance_after=money(
-                    target_summary.available_margin_to_allocate + normalized_amount
+                    target_available + normalized_amount
                 ),
                 source_balance_version=source_summary.version,
                 target_balance_version=target_summary.version,
@@ -668,8 +705,8 @@ async def post_allocation(
                 target_project_id,
                 locked_context=target_context,
             )
-            allocation.source_balance_after = after_source.available_margin_to_allocate
-            allocation.target_balance_after = after_target.available_margin_to_allocate
+            allocation.source_balance_after = _mutation_balance(after_source)
+            allocation.target_balance_after = _mutation_balance(after_target)
             allocation.source_balance_version = after_source.version
             allocation.target_balance_version = after_target.version
             await db.flush()
@@ -754,6 +791,8 @@ async def reverse_allocation(
                 target_party.project_id,
                 locked_context=target_context,
             )
+            source_available = _mutation_balance(source_summary)
+            target_available = _mutation_balance(target_summary)
             if (
                 expected_source_balance_version
                 and source_summary.version != expected_source_balance_version
@@ -765,14 +804,14 @@ async def reverse_allocation(
                     context={"current_version": source_summary.version},
                 )
             amount = money(original.amount)
-            if amount > source_summary.available_margin_to_allocate:
+            if amount > source_available:
                 raise FundDomainError(
                     "REVERSAL_WOULD_OVERDRAW_TARGET",
                     "The returning Bucket does not have enough Available Margin.",
                     status_code=409,
                     context={
                         "available_margin_to_allocate": str(
-                            source_summary.available_margin_to_allocate
+                            source_available
                         ),
                     },
                 )
@@ -788,13 +827,13 @@ async def reverse_allocation(
                 reversal_of=original.id,
                 idempotency_key=idempotency_key,
                 created_by=actor,
-                source_balance_before=source_summary.available_margin_to_allocate,
+                source_balance_before=source_available,
                 source_balance_after=money(
-                    source_summary.available_margin_to_allocate - amount
+                    source_available - amount
                 ),
-                target_balance_before=target_summary.available_margin_to_allocate,
+                target_balance_before=target_available,
                 target_balance_after=money(
-                    target_summary.available_margin_to_allocate + amount
+                    target_available + amount
                 ),
                 source_balance_version=source_summary.version,
                 target_balance_version=target_summary.version,
@@ -847,8 +886,8 @@ async def reverse_allocation(
                 target_party.project_id,
                 locked_context=target_context,
             )
-            reversal.source_balance_after = after_source.available_margin_to_allocate
-            reversal.target_balance_after = after_target.available_margin_to_allocate
+            reversal.source_balance_after = _mutation_balance(after_source)
+            reversal.target_balance_after = _mutation_balance(after_target)
             reversal.source_balance_version = after_source.version
             reversal.target_balance_version = after_target.version
             await db.flush()

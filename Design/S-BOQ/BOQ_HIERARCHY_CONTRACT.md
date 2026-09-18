@@ -1,5 +1,7 @@
 # BOQ Hierarchy Contract
 
+> **Historical legacy-sync contract:** retained for fixture interpretation only, not an active import/parser contract after Phase 5. New BOQ data uses the native V2 stable-logical-ID hierarchy; no Google Sheets/Excel/CSV import path exists. See [`../../docs/FeedbackV2/phase5/README.md`](../../docs/FeedbackV2/phase5/README.md).
+
 Phase 1 audit artifact for BOQ sync and BOQ Workbench display.
 
 ## Scope

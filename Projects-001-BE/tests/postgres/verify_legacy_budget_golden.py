@@ -47,8 +47,11 @@ async def main() -> None:
     from app.api.v1.projects import get_project_boq, list_projects
     from app.models.boq import BOQItem, Project
     from app.services.chat_analytics_service import _build_project_rollups, _load_snapshot
-    from app.services.fund_service import _projected_boq_margin
     from app.services.mcp_read_service import _current_customer_budget
+    from app.services.project_budget_service import (
+        active_budget_amount,
+        load_project_budget_context,
+    )
 
     fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     scenarios = fixture["scenarios"]
@@ -127,7 +130,10 @@ async def main() -> None:
                 project_id = project_ids[scenario_id]
                 detail = await get_project_boq(project_id, session, None)
                 summary = detail.data.compare_summary
-                fund_margin = await _projected_boq_margin(session, project_id)
+                budget_context = await load_project_budget_context(session, project_id)
+                fund_margin = active_budget_amount(
+                    budget_context, consumer="FUNDS"
+                ) if budget_context is not None else "0.00"
                 mcp_budget = await _current_customer_budget(session, project_id)
                 chat_snapshot = await _load_snapshot(session, project_id)
                 chat_rollup = _build_project_rollups(chat_snapshot, None)[project_id]

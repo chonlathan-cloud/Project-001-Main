@@ -1,5 +1,5 @@
 import React from 'react';
-import { Building2, Cloud, Database, Headphones, LineChart, ShieldCheck } from 'lucide-react';
+import { Building2, Cloud, Database, Headphones, ShieldCheck } from 'lucide-react';
 
 const supportItems = [
   {
@@ -13,12 +13,6 @@ const supportItems = [
     title: 'Private Storage',
     status: 'Signed URL',
     description: 'KYC, receipt, and profile image assets remain private.',
-  },
-  {
-    icon: LineChart,
-    title: 'BOQ Sync',
-    status: 'Google Sheets',
-    description: 'Project BOQ import jobs are queued and monitored from Projects.',
   },
   {
     icon: ShieldCheck,

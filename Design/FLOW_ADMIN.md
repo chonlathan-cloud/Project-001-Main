@@ -1,9 +1,11 @@
 # Application Flow: Projects-001 Admin Web/Tablet Portal
 
+> **Phase 5 native BOQ supersession:** Google Sheets BOQ sync controls, polling and integration cards described below are retired historical requirements. Owner works in the native BOQ workspace; Admin remains read-only. See [`../docs/FeedbackV2/phase5/README.md`](../docs/FeedbackV2/phase5/README.md).
+
 The admin portal has two internal roles:
 
 - **Owner:** Full access to every admin page and every mutation action.
-- **Admin:** Operational read/review access. Admin users cannot access Dashboard or Chat AI, and cannot approve, reject, mark paid, edit approval requests, create/update projects, sync BOQ, or mutate Settings.
+- **Admin:** Operational read/review access. Admin users cannot access Dashboard or Chat AI, and cannot approve, reject, mark paid, edit approval requests, create/update projects, mutate native BOQ, or mutate Settings.
 
 The application uses a persistent **Left Sidebar Navigation**. The visible navigation depends on the current user's role:
 
@@ -17,12 +19,12 @@ The application uses a persistent **Left Sidebar Navigation**. The visible navig
 - **Bottom Section:** List of "Risky Projects" and "Recent Actions".
 
 ## 📍 2. Projects & BOQ Management
-- **Access:** Owner and Admin can view project list/detail/BOQ. Owner only can create/update projects or sync BOQ.
+- **Access:** Owner and Admin can view project list/detail/BOQ. Owner only can create/update projects or mutate native BOQ.
 - **Project List:** Table of active projects with a `[+ New Project]` button.
 - **Project Detail View:**
   - Shows Comparison Summary (Customer vs Subcontractor BOQ).
-  - **Action:** `[Sync BOQ]` button opens a drawer/modal.
-  - **BOQ Sync Drawer:** Input field for "Google Sheet URL" -> `[Load Tabs]` -> Checkboxes to select tabs -> `[Queue Sync]` -> Shows a polling progress bar.
+  - **Action:** `[Open Native BOQ]` opens the project-native BOQ workspace.
+  - **Native workflow:** draft/save/reorder, quotation lifecycle, vendor cost and export controls; no import drawer or polling job.
 
 ## 📍 3. Approvals (Review Queue)
 - **Access:** Owner and Admin can view the review queue and receipt preview. Owner only can edit request data, approve, reject, mark paid, or clean temporary receipts.
@@ -55,4 +57,4 @@ The application uses a persistent **Left Sidebar Navigation**. The visible navig
 - **Layout:** Vertical Tabbed View (General, Subcontractor KYC, Integrations).
 - **Tab 1: General Settings:** Clean toggle switches for system notifications, currency display options, and dark mode preview.
 - **Tab 2: Subcontractor KYC Rules:** Form fields to set mandatory fields for Subcontractors when signing up via LINE LIFF (e.g., toggle ON/OFF for Commercial Registration requirement).
-- **Tab 3: Integrations & API:** Read-only status indicators for Backend/API, Google Cloud, Firebase, Google Sheets/BOQ sync, LINE/LIFF, private storage, and Vertex AI model configuration. Do not expose secrets or editable credential fields in the first frontend build.
+- **Tab 3: Integrations & API:** Read-only status indicators for Backend/API, Google Cloud, Firebase, LINE/LIFF, private storage, and Vertex AI model configuration. Do not expose secrets or editable credential fields in the first frontend build.

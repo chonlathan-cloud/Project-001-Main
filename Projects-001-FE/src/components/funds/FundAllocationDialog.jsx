@@ -19,6 +19,7 @@ const ERROR_MESSAGES = {
   INVALID_SOURCE_TARGET: 'Choose two different active Forecast Margin Buckets.',
   TARGET_BUCKET_INACTIVE: 'The destination Forecast Margin Bucket is no longer active.',
   OPERATIONS_BUCKET_MISSING: 'Company Operations is not configured. Contact the system administrator.',
+  BOQ_BUDGET_NOT_READY: 'The source BOQ has UNKNOWN cost. Complete and publish its cost plan before allocating outward.',
   FORBIDDEN: 'Owner permission is required to Allocate Margin.',
 };
 
@@ -99,11 +100,17 @@ function FundAllocationDialog({
   const targetOption = activeOptions.find((option) => option.projectId === targetProjectId);
   const sourceName = sourceProjectId === currentProjectId ? currentProject?.name : sourceOption?.projectName;
   const targetName = targetProjectId === currentProjectId ? currentProject?.name : targetOption?.projectName;
-  const available = sourceSummary?.availableMarginToAllocate || sourceOption?.availableMarginToAllocate || '0.00';
-  const targetBefore = targetProjectId === currentProjectId
-    ? currentSummary?.availableMarginToAllocate || '0.00'
-    : targetOption?.availableMarginToAllocate || '0.00';
-  const validAmount = isPositiveMoney(amount) && compareMoney(amount, available) !== 1;
+  const sourceForecastKnown = sourceSummary
+    ? sourceSummary.forecastAvailableKnown !== false
+    : sourceOption?.budgetStatus !== 'UNKNOWN_COST' && sourceOption?.availableMarginToAllocate != null;
+  const available = sourceForecastKnown
+    ? sourceSummary?.availableMarginToAllocate || sourceOption?.availableMarginToAllocate || '0.00'
+    : null;
+  const targetBeforeValue = targetProjectId === currentProjectId
+    ? currentSummary?.availableMarginToAllocate
+    : targetOption?.availableMarginToAllocate;
+  const targetBefore = targetBeforeValue == null ? '0.00' : targetBeforeValue;
+  const validAmount = sourceForecastKnown && isPositiveMoney(amount) && compareMoney(amount, available) !== 1;
   const sourceAfter = validAmount ? subtractMoney(available, amount) : available;
   const targetAfter = validAmount ? addMoney(targetBefore, amount) : targetBefore;
 
@@ -117,6 +124,7 @@ function FundAllocationDialog({
     if (!sourceProjectId || !targetProjectId || sourceProjectId === targetProjectId) {
       return 'Choose two different Forecast Margin Buckets.';
     }
+    if (!sourceForecastKnown) return ERROR_MESSAGES.BOQ_BUDGET_NOT_READY;
     if (!isPositiveMoney(amount)) return 'Enter an amount greater than THB 0.00 with no more than two decimal places.';
     if (compareMoney(amount, available) === 1) return `The maximum available amount is ${formatMoney(available)}.`;
     if (!reason.trim()) return 'Reason is required for the audit trail.';
@@ -191,7 +199,7 @@ function FundAllocationDialog({
 
           <div className="fund-balance-callout">
             <span>Available Margin from source</span>
-            <strong>{isLoadingSource ? 'Refreshing…' : formatMoney(available)}</strong>
+            <strong>{isLoadingSource ? 'Refreshing…' : sourceForecastKnown ? formatMoney(available) : 'Not assessable'}</strong>
             {sourceSummary?.calculatedAt ? <small>Server-calculated {new Date(sourceSummary.calculatedAt).toLocaleString()}</small> : null}
           </div>
 
@@ -267,7 +275,7 @@ function FundAllocationDialog({
               aria-describedby="fund-amount-help"
               required
             />
-            <small id="fund-amount-help">Maximum {formatMoney(available)}. Two decimal places are supported.</small>
+            <small id="fund-amount-help">{sourceForecastKnown ? `Maximum ${formatMoney(available)}. Two decimal places are supported.` : 'Outward allocation is blocked until the source BOQ cost is complete.'}</small>
           </div>
 
           <div className="fund-field">

@@ -1,4 +1,6 @@
-# Flow Detail: New Project Creation & BOQ Sync Loop
+# Superseded: New Project Creation & BOQ Sync Loop
+
+> Retained only as a historical design artifact. Google Sheets BOQ sync, tab selection, polling, parser and jobs were retired in Phase 5. Do not implement this flow. Use the native BOQ workspace documented in [`../docs/FeedbackV2/phase5/README.md`](../docs/FeedbackV2/phase5/README.md).
 
 This subsection details the workflow when an **Owner** clicks `[+ New Project]` and manages the Bill of Quantities (BOQ) synchronization.
 

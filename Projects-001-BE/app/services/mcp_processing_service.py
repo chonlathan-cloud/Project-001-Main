@@ -13,7 +13,7 @@ from sqlalchemy.orm import noload
 
 from app.models.input_request import InputRequest
 from app.schemas.mcp_schema import McpProcessingStatusRequest
-from app.services import boq_sync_job_service, daily_report_service
+from app.services import daily_report_service
 from app.services.mcp_read_service import McpNotFoundOrForbidden, _authorize
 
 INFRASTRUCTURE_PERMISSION = frozenset({"infrastructure_read"})
@@ -55,34 +55,6 @@ async def _input_request(db: AsyncSession, job_id: str) -> InputRequest:
     if item is None:
         raise McpNotFoundOrForbidden
     return item
-
-
-async def _boq_status(request: McpProcessingStatusRequest) -> dict[str, Any]:
-    try:
-        job = await boq_sync_job_service.get_boq_sync_job(request.job_id)
-    except HTTPException as exc:
-        if exc.status_code == status.HTTP_404_NOT_FOUND:
-            raise McpNotFoundOrForbidden from exc
-        raise
-    project_id = str(job.get("project_id") or "")
-    _authorize_project(request, project_id)
-    updated_at = job.get("finished_at") or job.get("started_at") or job.get("created_at")
-    return {
-        "workflow": request.workflow,
-        "job_id": request.job_id,
-        "project_id": project_id,
-        "status": str(job.get("status") or "UNKNOWN").upper(),
-        "progress": {
-            "total": min(max(int(job.get("total_requested_tabs") or 0), 0), 100),
-            "completed": min(max(int(job.get("total_completed_tabs") or 0), 0), 100),
-            "failed": min(max(int(job.get("total_failed_tabs") or 0), 0), 100),
-        },
-        "created_at": job.get("created_at"),
-        "started_at": job.get("started_at"),
-        "finished_at": job.get("finished_at"),
-        "source_references": _source_reference(request.workflow, request.job_id, updated_at),
-        "source_read_at": datetime.now(UTC),
-    }
 
 
 async def _daily_report_status(request: McpProcessingStatusRequest) -> dict[str, Any]:
@@ -182,7 +154,16 @@ async def get_processing_status(
 ) -> dict[str, Any]:
     _authorize(request, required_permissions=INFRASTRUCTURE_PERMISSION)
     if request.workflow == "boq_sync":
-        return await _boq_status(request)
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={
+                "code": "BOQ_SYNC_RETIRED",
+                "message": (
+                    "The boq_sync processing workflow has been retired. "
+                    "Use the native BOQ workspace and version-aware BOQ read tools."
+                ),
+            },
+        )
     if request.workflow == "daily_report_delivery":
         return await _daily_report_status(request)
     if request.workflow == "receipt_ocr":

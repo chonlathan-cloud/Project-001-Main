@@ -204,8 +204,16 @@ def test_project_detail_uses_current_customer_budget() -> None:
             new=AsyncMock(return_value=project),
         ),
         patch(
-            "app.services.mcp_read_service._current_customer_budget",
-            new=AsyncMock(return_value=Decimal("150000.00")),
+            "app.services.mcp_read_service.load_project_budget_context",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    snapshot=SimpleNamespace(model_dump=lambda **_kwargs: {"source_kind": "V2"})
+                )
+            ),
+        ),
+        patch(
+            "app.services.mcp_read_service.active_budget_amount",
+            return_value="150000.00",
         ),
     ):
         result = asyncio.run(

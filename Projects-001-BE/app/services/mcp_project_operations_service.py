@@ -45,7 +45,10 @@ from app.services.mcp_read_service import (
     _project_url,
     _utc_now,
 )
-from app.services.project_budget_service import load_project_budget_contexts
+from app.services.project_budget_service import (
+    active_budget_amount,
+    load_project_budget_contexts,
+)
 
 MAX_SOURCE_SCAN = 250
 MAX_DASHBOARD_PROJECTS = 50
@@ -603,7 +606,11 @@ async def get_dashboard_summary(
     payment_rows = (await db.execute(payment_statement.group_by(InputRequest.project_id))).all()
 
     budget_by = {
-        str(project_id): Decimal(context.legacy_mcp_customer_budget)
+        str(project_id): Decimal(active_budget_amount(context, consumer="MCP") or "0.00")
+        for project_id, context in budget_contexts.items()
+    }
+    budget_snapshot_by = {
+        str(project_id): context.snapshot.model_dump(mode="json")
         for project_id, context in budget_contexts.items()
     }
     paid_by = _decimal_map(list(payment_rows))
@@ -646,6 +653,7 @@ async def get_dashboard_summary(
                 "project_name": project.name,
                 "project_status": project.status,
                 "budget": _money(budget),
+                "budget_snapshot": budget_snapshot_by.get(project_id),
                 "actual": _money(approved_expense),
                 "paid_in_period": _money(paid),
                 "remaining": _money(remaining),
@@ -700,7 +708,7 @@ async def get_dashboard_summary(
             if truncated
             else []
         ),
-        "calculation_method": "current_customer_boq_and_exact_approved_request_totals_v1",
+        "calculation_method": "active_budget_snapshot_and_exact_approved_request_totals_v2",
         "source_references": [
             {
                 "domain": "finance_payments",

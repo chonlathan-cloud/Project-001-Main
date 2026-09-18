@@ -1,4 +1,6 @@
 ### **💻 Phase 4: Low-Level Design (LLD)**
+
+> **BOQ V2 / Phase 5 supersession:** the Google Sheets parser/job, frontend sync drawer/polling and sync-only config are retired. Native BOQ V2 is the only authoring path and there is no Excel/CSV import. Current projections use `project_budget_service.py`; historical finance retains legacy identifiers. See [`FeedbackV2/phase5/README.md`](FeedbackV2/phase5/README.md).
 **Project:** Project_001 (The Hybrid Brain for Modern Construction Management)
 **Tech Stack:** Python (FastAPI), SQLAlchemy, Pydantic, pgvector, Vertex AI
 **📂 1. Project Directory Structure (โครงสร้างโปรเจกต์)**
@@ -15,7 +17,7 @@ project_001_backend/
 │ └── finance.py # Installment, Transaction
 ├── schemas/
 │ ├── responses.py # StandardResponse[T]
-│ ├── boq_schema.py # ProjectList, BOQTree, SyncBOQ
+│ ├── boq_schema.py # ProjectList, legacy BOQ history, active-budget metadata
 │ └── bill_schema.py # Extract, Submit, Advance, Approve
 ├── services/
 │ ├── finance_service.py # Net Payable, Split Installment
