@@ -137,6 +137,27 @@ Rollback revision:
 Operator:
 ```
 
+## BOQ V2 demo rollout — 2026-09-21
+
+Demo enablement completed and production beta remained untouched. The
+authoritative evidence and reusable beta parity sequence are recorded in
+[`docs/FeedbackV2/phase6/evidence/demo-v2-rollout-2026-09-21.md`](../../docs/FeedbackV2/phase6/evidence/demo-v2-rollout-2026-09-21.md).
+
+- Code commit: `a404f29189d413d6aba232a19b09622e574c0fc3`
+- Demo backend revision: `projects-001-be-00133-mwt`
+- Demo frontend revision: `projects-001-fe-00062-l9k`
+- Demo database revision: `20260917_0003`
+- Demo V2 flags: backend and frontend enabled
+- Production-beta backend/frontend/MCP revisions at the completion boundary:
+  `projects-001-be-beta-00020-8lc`, `projects-001-fe-beta-00019-9k7`, and
+  `projects-001-mcp-beta-00003-p44`
+- Production-beta status: **pending separate approval and preflight; no action
+  executed**
+
+Do not reuse the demo frontend image in beta: its API and authentication build
+configuration are environment-specific. Rebuild the same committed source with
+beta configuration and record the new digest.
+
 ## Non-Negotiables
 
 - Never run demo seed scripts against production beta.
@@ -145,4 +166,3 @@ Operator:
 - Never attach production beta Cloud Run services to excluded SaaS resources.
 - Never deploy a beta frontend that points to the demo backend.
 - Never deploy a beta backend that accepts the wrong Identity Platform tenant.
-

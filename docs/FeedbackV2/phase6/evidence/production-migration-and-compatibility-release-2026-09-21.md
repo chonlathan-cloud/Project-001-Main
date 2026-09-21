@@ -1,5 +1,13 @@
 # Phase 6 production migration and compatibility release — 2026-09-21
 
+> **Environment correction:** after this action, the Business Owner confirmed
+> that `projects-001-*` and `project-001` are demo resources, while production
+> beta is the separate `projects-001-*-beta` / `project-001-beta` environment.
+> Therefore this evidence is a demo compatibility-release record despite its
+> original title. No production-beta resource was changed. The subsequent flag
+> enablement and reusable beta parity plan are in
+> [demo-v2-rollout-2026-09-21.md](demo-v2-rollout-2026-09-21.md).
+
 Result: **PASS for additive schema migration and feature-disabled compatibility
 deployment. HOLD for production UAT, feature enablement, source activation, and
 cutover.**
