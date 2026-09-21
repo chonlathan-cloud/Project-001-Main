@@ -388,6 +388,16 @@ class Phase8SecurityTests(unittest.TestCase):
             )
         )
         self.assertTrue(
+            rules["public_customer_reports"].path_pattern.fullmatch(
+                "/api/v1/daily-reports/public/report-summaries"
+            )
+        )
+        self.assertTrue(
+            rules["public_customer_reports"].path_pattern.fullmatch(
+                "/api/v1/daily-reports/public/reports/report-1/media-urls"
+            )
+        )
+        self.assertTrue(
             rules["mcp_internal_reads"].path_pattern.fullmatch(
                 "/api/v1/internal/mcp/boq/versions:compare"
             )

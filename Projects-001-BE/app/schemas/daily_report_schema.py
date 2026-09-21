@@ -221,6 +221,17 @@ class PublicDailyReportItem(BaseModel):
     published_at: datetime | None = None
 
 
+class DailyReportSummaryItem(BaseModel):
+    id: str
+    project_id: str
+    project_name: str | None = None
+    report_date: str
+    status: str = "PUBLISHED"
+    title: str
+    published_version: int
+    published_at: datetime | None = None
+
+
 class DailyReportDraftUpdate(BaseModel):
     title: str | None = None
     summary: str | None = None

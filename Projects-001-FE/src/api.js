@@ -2345,7 +2345,7 @@ export async function retryDailyReportDelivery(reportId) {
 }
 
 export async function getCustomerDailyReports() {
-  const data = await apiRequest('/api/v1/daily-reports/customer/reports');
+  const data = await apiRequest('/api/v1/daily-reports/customer/report-summaries');
   return Array.isArray(data) ? data : [];
 }
 
@@ -2372,7 +2372,7 @@ const customerShareHeaders = (shareToken) => ({
 });
 
 export async function getSharedCustomerDailyReports(shareToken) {
-  const data = await apiRequest('/api/v1/daily-reports/public/reports', {
+  const data = await apiRequest('/api/v1/daily-reports/public/report-summaries', {
     headers: customerShareHeaders(shareToken),
     skipAuth: true,
   });
@@ -2391,6 +2391,17 @@ export async function getSharedDailyReportMediaUrl(shareToken, mediaId) {
     headers: customerShareHeaders(shareToken),
     skipAuth: true,
   });
+}
+
+export async function getSharedDailyReportMediaUrls(shareToken, reportId) {
+  const data = await apiRequest(
+    `/api/v1/daily-reports/public/reports/${reportId}/media-urls`,
+    {
+      headers: customerShareHeaders(shareToken),
+      skipAuth: true,
+    },
+  );
+  return Array.isArray(data) ? data : [];
 }
 
 export async function fetchData(type, param = null) {

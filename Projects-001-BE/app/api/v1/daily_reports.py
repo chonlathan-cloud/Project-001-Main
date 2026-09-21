@@ -53,6 +53,7 @@ from app.schemas.daily_report_schema import (
     DailyReportSubmissionItem,
     DailyReportSubmissionUpdate,
     DailyReportStaffNotificationItem,
+    DailyReportSummaryItem,
     DailyReportVersionItem,
     PublicDailyReportItem,
 )
@@ -1343,10 +1344,25 @@ async def upsert_daily_report_membership(
 
 
 @router.get(
+    "/public/report-summaries",
+    response_model=StandardResponse[list[DailyReportSummaryItem]],
+)
+def list_public_customer_report_summaries(
+    share_token: str = Header(default="", alias="X-Customer-Report-Share"),
+):
+    project_id = daily_report_service.resolve_customer_share_project(share_token)
+    return StandardResponse(
+        data=daily_report_service.list_customer_report_summaries(
+            project_ids={project_id}
+        )
+    )
+
+
+@router.get(
     "/public/reports",
     response_model=StandardResponse[list[PublicDailyReportItem]],
 )
-async def list_public_customer_reports(
+def list_public_customer_reports(
     share_token: str = Header(default="", alias="X-Customer-Report-Share"),
 ):
     project_id = daily_report_service.resolve_customer_share_project(share_token)
@@ -1359,7 +1375,7 @@ async def list_public_customer_reports(
     "/public/reports/{report_id}",
     response_model=StandardResponse[PublicDailyReportItem],
 )
-async def get_public_customer_report(
+def get_public_customer_report(
     report_id: str,
     share_token: str = Header(default="", alias="X-Customer-Report-Share"),
 ):
@@ -1373,6 +1389,29 @@ async def get_public_customer_report(
 
 
 @router.get(
+    "/public/reports/{report_id}/media-urls",
+    response_model=StandardResponse[list[DailyReportMediaAccessResponse]],
+)
+async def get_public_customer_report_media_urls(
+    report_id: str,
+    share_token: str = Header(default="", alias="X-Customer-Report-Share"),
+):
+    project_id = await asyncio.to_thread(
+        daily_report_service.resolve_customer_share_project,
+        share_token,
+    )
+    media_items = await asyncio.to_thread(
+        daily_report_service.list_public_customer_report_media,
+        project_id=project_id,
+        report_id=report_id,
+    )
+    access_items = await asyncio.gather(
+        *(_signed_daily_report_media_access(media) for media in media_items)
+    )
+    return StandardResponse(data=list(access_items))
+
+
+@router.get(
     "/public/media/{media_id}/signed-url",
     response_model=StandardResponse[DailyReportMediaAccessResponse],
 )
@@ -1380,14 +1419,17 @@ async def get_public_customer_report_media_url(
     media_id: str,
     share_token: str = Header(default="", alias="X-Customer-Report-Share"),
 ):
-    project_id = daily_report_service.resolve_customer_share_project(share_token)
-    media = daily_report_service.get_media(media_id)
-    visible = (
-        media.get("project_id") == project_id
-        and daily_report_service.is_media_published(
-            media_id=media_id,
-            project_id=project_id,
-        )
+    project_id, media = await asyncio.gather(
+        asyncio.to_thread(
+            daily_report_service.resolve_customer_share_project,
+            share_token,
+        ),
+        asyncio.to_thread(daily_report_service.get_media, media_id),
+    )
+    visible = media.get("project_id") == project_id and await asyncio.to_thread(
+        daily_report_service.is_media_published,
+        media_id=media_id,
+        project_id=project_id,
     )
     if not visible:
         raise HTTPException(
@@ -1397,8 +1439,28 @@ async def get_public_customer_report_media_url(
     return StandardResponse(data=await _signed_daily_report_media_access(media))
 
 
+@router.get(
+    "/customer/report-summaries",
+    response_model=StandardResponse[list[DailyReportSummaryItem]],
+)
+def list_customer_report_summaries(
+    user: AuthenticatedUser = Depends(require_customer_user),
+):
+    project_ids = set(
+        daily_report_service.list_membership_project_ids(
+            principal_type="customer",
+            principal_id=user.customer_id or "",
+        )
+    )
+    return StandardResponse(
+        data=daily_report_service.list_customer_report_summaries(
+            project_ids=project_ids
+        )
+    )
+
+
 @router.get("/customer/reports", response_model=StandardResponse[list[DailyReportItem]])
-async def list_customer_reports(user: AuthenticatedUser = Depends(require_customer_user)):
+def list_customer_reports(user: AuthenticatedUser = Depends(require_customer_user)):
     project_ids = set(
         daily_report_service.list_membership_project_ids(
             principal_type="customer",
@@ -1411,7 +1473,7 @@ async def list_customer_reports(user: AuthenticatedUser = Depends(require_custom
 
 
 @router.get("/customer/reports/{report_id}", response_model=StandardResponse[DailyReportItem])
-async def get_customer_report(
+def get_customer_report(
     report_id: str,
     user: AuthenticatedUser = Depends(require_customer_user),
 ):

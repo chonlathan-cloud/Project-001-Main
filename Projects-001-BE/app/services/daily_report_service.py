@@ -126,6 +126,59 @@ def _stream_collection(collection: str) -> list[dict[str, Any]]:
     return [_public(snapshot) for snapshot in _client().collection(collection).stream()]
 
 
+def _get_docs(collection: str, item_ids: list[str]) -> list[dict[str, Any]]:
+    """Fetch known document IDs in one Firestore RPC while preserving ID order."""
+
+    normalized_ids = list(
+        dict.fromkeys(_clean_text(item_id) for item_id in item_ids if _clean_text(item_id))
+    )
+    if not normalized_ids:
+        return []
+
+    client = _client()
+    collection_ref = client.collection(collection)
+    document_refs = [collection_ref.document(item_id) for item_id in normalized_ids]
+    if hasattr(client, "get_all"):
+        snapshots = list(client.get_all(document_refs))
+    else:  # Lightweight test doubles and local adapters may not implement get_all.
+        snapshots = [document_ref.get() for document_ref in document_refs]
+    items_by_id = {
+        snapshot.id: _public(snapshot)
+        for snapshot in snapshots
+        if snapshot.exists
+    }
+    return [items_by_id[item_id] for item_id in normalized_ids if item_id in items_by_id]
+
+
+def _query_collection_equals(
+    collection: str,
+    field_name: str,
+    values: set[str],
+) -> list[dict[str, Any]]:
+    """Run bounded equality queries instead of scanning a whole collection."""
+
+    normalized_values = sorted(
+        {_clean_text(value) for value in values if _clean_text(value)}
+    )
+    if not normalized_values:
+        return []
+
+    collection_ref = _client().collection(collection)
+    if not hasattr(collection_ref, "where"):
+        value_set = set(normalized_values)
+        return [
+            item
+            for item in _stream_collection(collection)
+            if _clean_text(item.get(field_name)) in value_set
+        ]
+
+    items_by_id: dict[str, dict[str, Any]] = {}
+    for value in normalized_values:
+        for snapshot in collection_ref.where(field_name, "==", value).stream():
+            items_by_id[snapshot.id] = _public(snapshot)
+    return list(items_by_id.values())
+
+
 def _sort_datetime(value: object) -> datetime:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
@@ -987,7 +1040,22 @@ def list_media(
 ) -> list[dict[str, Any]]:
     submission_id_set = set(submission_ids or [])
     media_id_set = set(media_ids or [])
-    items = _stream_collection(MEDIA_COLLECTION)
+    if media_id_set:
+        items = _get_docs(MEDIA_COLLECTION, list(media_id_set))
+    elif report_id:
+        items = _query_collection_equals(
+            MEDIA_COLLECTION,
+            "report_id",
+            {report_id},
+        )
+    elif submission_id_set:
+        items = _query_collection_equals(
+            MEDIA_COLLECTION,
+            "submission_id",
+            submission_id_set,
+        )
+    else:
+        items = _stream_collection(MEDIA_COLLECTION)
     return [
         item
         for item in items
@@ -1446,7 +1514,11 @@ def list_reports(
     statuses: set[str] | None = None,
     published_only: bool = False,
 ) -> list[dict[str, Any]]:
-    items = _stream_collection(REPORTS_COLLECTION)
+    items = (
+        _query_collection_equals(REPORTS_COLLECTION, "project_id", project_ids)
+        if project_ids
+        else _stream_collection(REPORTS_COLLECTION)
+    )
     normalized_statuses = {_clean_text(item).upper() for item in statuses or set()}
     filtered = [
         item
@@ -1557,8 +1629,26 @@ def request_changes(
 
 def _publication_snapshot(report: dict[str, Any]) -> dict[str, Any]:
     excluded_ids = set(report.get("excluded_media_ids") or [])
-    published_media_ids = [
-        item["id"]
+    published_media = [
+        {
+            key: item.get(key)
+            for key in (
+                "id",
+                "project_id",
+                "submission_id",
+                "report_id",
+                "owner_id",
+                "source_type",
+                "uploader_name",
+                "media_type",
+                "file_name",
+                "content_type",
+                "size_bytes",
+                "status",
+                "storage_key",
+                "created_at",
+            )
+        }
         for item in _available_report_media(report)
         if item.get("status") == "READY" and item["id"] not in excluded_ids
     ]
@@ -1576,7 +1666,9 @@ def _publication_snapshot(report: dict[str, Any]) -> dict[str, Any]:
         "tomorrow_plan": report.get("tomorrow_plan"),
         "customer_note": report.get("customer_note"),
         "source_submission_ids": list(report.get("source_submission_ids") or []),
-        "published_media_ids": published_media_ids,
+        "published_media_ids": [item["id"] for item in published_media],
+        "published_media": published_media,
+        "customer_text_normalized": True,
     }
 
 
@@ -1810,29 +1902,33 @@ def get_customer_report(report_id: str) -> dict[str, Any]:
     version_id = f"{report_id}-v{published_version}"
     version = _get_doc(VERSIONS_COLLECTION, version_id, "Daily report version")
     snapshot = dict(version.get("snapshot") or {})
-    source_names: set[str] = set()
-    for submission_id in snapshot.get("source_submission_ids") or []:
-        try:
-            source_submission = get_submission(submission_id)
-        except HTTPException:
-            continue
-        for field in ("subcontractor_name", "subcontractor_company_name"):
-            if source_name := _optional_text(source_submission.get(field)):
-                source_names.add(source_name)
-    snapshot["summary"] = _strip_known_source_labels(snapshot.get("summary"), source_names)
-    snapshot["tomorrow_plan"] = _strip_known_source_labels(
-        snapshot.get("tomorrow_plan"),
-        source_names,
-    )
+    if not snapshot.get("customer_text_normalized"):
+        source_names: set[str] = set()
+        source_submissions = _get_docs(
+            SUBMISSIONS_COLLECTION,
+            list(snapshot.get("source_submission_ids") or []),
+        )
+        for source_submission in source_submissions:
+            for field in ("subcontractor_name", "subcontractor_company_name"):
+                if source_name := _optional_text(source_submission.get(field)):
+                    source_names.add(source_name)
+        snapshot["summary"] = _strip_known_source_labels(snapshot.get("summary"), source_names)
+        snapshot["tomorrow_plan"] = _strip_known_source_labels(
+            snapshot.get("tomorrow_plan"),
+            source_names,
+        )
     published_media_ids = list(snapshot.get("published_media_ids") or [])
-    published_media_by_id = (
-        {
-            item["id"]: item
-            for item in list_media(media_ids=published_media_ids)
-        }
-        if published_media_ids
-        else {}
-    )
+    embedded_media = snapshot.pop("published_media", None)
+    snapshot.pop("customer_text_normalized", None)
+    published_media_by_id = {
+        item["id"]: item
+        for item in (
+            embedded_media
+            if isinstance(embedded_media, list)
+            else list_media(media_ids=published_media_ids)
+        )
+        if item.get("id")
+    }
     media = [
         {
             "id": item["id"],
@@ -1870,8 +1966,92 @@ def is_media_published(*, media_id: str, project_id: str) -> bool:
     return any(
         item.get("project_id") == project_id
         and media_id in list((item.get("snapshot") or {}).get("published_media_ids") or [])
-        for item in _stream_collection(VERSIONS_COLLECTION)
+        for item in _query_collection_equals(
+            VERSIONS_COLLECTION,
+            "project_id",
+            {project_id},
+        )
     )
+
+
+def list_customer_report_summaries(*, project_ids: set[str]) -> list[dict[str, Any]]:
+    reports = [
+        report
+        for report in list_reports(project_ids=project_ids)
+        if int(report.get("published_version") or 0) > 0
+    ]
+    version_ids = [
+        f"{report['id']}-v{int(report['published_version'])}"
+        for report in reports
+    ]
+    versions_by_id = {
+        item["id"]: item
+        for item in _get_docs(VERSIONS_COLLECTION, version_ids)
+    }
+    summaries: list[dict[str, Any]] = []
+    for report in reports:
+        published_version = int(report.get("published_version") or 0)
+        version = versions_by_id.get(f"{report['id']}-v{published_version}")
+        if not version:
+            continue
+        snapshot = dict(version.get("snapshot") or {})
+        summaries.append(
+            {
+                "id": report["id"],
+                "project_id": snapshot.get("project_id") or report.get("project_id"),
+                "project_name": snapshot.get("project_name"),
+                "report_date": snapshot.get("report_date") or report.get("report_date"),
+                "status": "PUBLISHED",
+                "title": snapshot.get("title") or "Daily progress report",
+                "published_version": published_version,
+                "published_at": version.get("published_at"),
+            }
+        )
+    return sorted(
+        summaries,
+        key=lambda item: (
+            _clean_text(item.get("report_date")),
+            _sort_datetime(item.get("published_at")),
+        ),
+        reverse=True,
+    )
+
+
+def list_public_customer_report_media(
+    *,
+    project_id: str,
+    report_id: str,
+) -> list[dict[str, Any]]:
+    report = get_report(report_id, include_sources=False)
+    if report.get("project_id") != project_id:
+        raise _not_found("Published daily report", report_id)
+    published_version = int(report.get("published_version") or 0)
+    if published_version < 1:
+        raise _not_found("Published daily report", report_id)
+    version = _get_doc(
+        VERSIONS_COLLECTION,
+        f"{report_id}-v{published_version}",
+        "Daily report version",
+    )
+    snapshot = dict(version.get("snapshot") or {})
+    published_media_ids = list(snapshot.get("published_media_ids") or [])
+    embedded_media = snapshot.get("published_media")
+    media_items = (
+        embedded_media
+        if isinstance(embedded_media, list)
+        else list_media(media_ids=published_media_ids)
+    )
+    media_by_id = {
+        item["id"]: item
+        for item in media_items
+        if item.get("id") and item.get("project_id") == project_id
+    }
+    return [
+        media_by_id[media_id]
+        for media_id in published_media_ids
+        if media_id in media_by_id
+        and media_by_id[media_id].get("status") in {"READY", "REMOVED"}
+    ]
 
 
 def list_customer_reports(*, project_ids: set[str]) -> list[dict[str, Any]]:

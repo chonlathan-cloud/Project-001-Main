@@ -66,6 +66,25 @@ class FakeCollection:
             for item_id, payload in self._store.items()
         ]
 
+    def where(self, field_name: str, operator: str, value):
+        if operator != "==":
+            raise NotImplementedError(operator)
+        return FakeQuery(self._store, field_name, value)
+
+
+class FakeQuery:
+    def __init__(self, store: dict[str, dict], field_name: str, value):
+        self._store = store
+        self._field_name = field_name
+        self._value = value
+
+    def stream(self):
+        return [
+            FakeSnapshot(item_id, payload)
+            for item_id, payload in self._store.items()
+            if payload.get(self._field_name) == self._value
+        ]
+
 
 class FakeFirestore:
     def __init__(self):
@@ -74,6 +93,9 @@ class FakeFirestore:
 
     def collection(self, name: str):
         return FakeCollection(self.data.setdefault(name, {}), self._id_counter)
+
+    def get_all(self, document_refs):
+        return [document_ref.get() for document_ref in document_refs]
 
 
 class DailyReportServiceTests(unittest.TestCase):
@@ -292,6 +314,8 @@ class DailyReportServiceTests(unittest.TestCase):
         stored_version["snapshot"]["summary"] = (
             "ABC Construction: Installed ceiling framing in the east wing."
         )
+        stored_version["snapshot"].pop("customer_text_normalized", None)
+        stored_version["snapshot"].pop("published_media", None)
 
         customer_report = daily_report_service.get_customer_report(report["id"])
 
@@ -414,8 +438,74 @@ class DailyReportServiceTests(unittest.TestCase):
             public_report["reporting_company_name"],
             "RAYADEE Construction Co., Ltd.",
         )
+        self.assertNotIn("published_media", public_report)
+        self.assertNotIn("customer_text_normalized", public_report)
         with self.assertRaises(HTTPException):
             daily_report_service.get_public_customer_report(
+                project_id="project-2",
+                report_id=report["id"],
+            )
+
+    def test_customer_report_summaries_use_published_snapshot_without_full_scan(self):
+        self._submitted_source()
+        report = daily_report_service.list_reports(project_ids={"project-1"})[0]
+        daily_report_service.publish_report(
+            report_id=report["id"],
+            publication_note=None,
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+        daily_report_service.start_correction(
+            report_id=report["id"],
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+        daily_report_service.update_report_draft(
+            report_id=report["id"],
+            updates={"title": "Unpublished correction title"},
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+
+        with patch.object(
+            daily_report_service,
+            "_stream_collection",
+            side_effect=AssertionError("summary reads must stay query-scoped"),
+        ):
+            summaries = daily_report_service.list_customer_report_summaries(
+                project_ids={"project-1"}
+            )
+
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0]["id"], report["id"])
+        self.assertEqual(summaries[0]["status"], "PUBLISHED")
+        self.assertNotEqual(summaries[0]["title"], "Unpublished correction title")
+
+    def test_public_report_media_batch_is_version_and_project_scoped(self):
+        self._submitted_source()
+        report = daily_report_service.list_reports(project_ids={"project-1"})[0]
+        daily_report_service.publish_report(
+            report_id=report["id"],
+            publication_note=None,
+            actor_id="admin@example.com",
+            actor_role="admin",
+        )
+
+        version = daily_report_service.list_versions(report["id"])[0]
+        self.assertTrue(version["snapshot"]["customer_text_normalized"])
+        self.assertEqual(len(version["snapshot"]["published_media"]), 1)
+
+        media_items = daily_report_service.list_public_customer_report_media(
+            project_id="project-1",
+            report_id=report["id"],
+        )
+        self.assertEqual(
+            [item["id"] for item in media_items],
+            version["snapshot"]["published_media_ids"],
+        )
+        self.assertTrue(media_items[0]["storage_key"])
+        with self.assertRaises(HTTPException):
+            daily_report_service.list_public_customer_report_media(
                 project_id="project-2",
                 report_id=report["id"],
             )

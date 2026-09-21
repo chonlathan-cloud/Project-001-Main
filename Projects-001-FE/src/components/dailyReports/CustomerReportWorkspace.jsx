@@ -25,7 +25,7 @@ import {
   getDailyReportMediaUrl,
   getSharedCustomerDailyReport,
   getSharedCustomerDailyReports,
-  getSharedDailyReportMediaUrl,
+  getSharedDailyReportMediaUrls,
 } from '../../api';
 import { clearAuthSession, getStoredAuthUser } from '../../auth';
 import { logoutLineClient } from '../../liffClient';
@@ -48,6 +48,7 @@ export default function CustomerReportWorkspace({
   const [searchParams, setSearchParams] = useSearchParams();
   const authUser = useMemo(() => getStoredAuthUser(), []);
   const didAutoSelectRef = useRef(false);
+  const selectedIdRef = useRef(selectedReportId);
   const photoButtonRefs = useRef(new Map());
   const [reports, setReports] = useState([]);
   const [report, setReport] = useState(null);
@@ -55,11 +56,14 @@ export default function CustomerReportWorkspace({
   const [loadedPhotoIds, setLoadedPhotoIds] = useState(() => new Set());
   const [activePhotoIndex, setActivePhotoIndex] = useState(null);
   const [question, setQuestion] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [listLoading, setListLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(Boolean(selectedReportId));
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState(null);
   const [accessError, setAccessError] = useState('');
   const selectedId = publicAccess ? selectedReportId : (searchParams.get('report') || '');
+  selectedIdRef.current = selectedId;
+  const loading = selectedId ? detailLoading : listLoading;
   const publishedPhotoMedia = useMemo(
     () => getPublishedPhotoMedia(report?.media),
     [report],
@@ -98,11 +102,11 @@ export default function CustomerReportWorkspace({
     if (publicAccess && !shareToken) {
       setReports([]);
       setReport(null);
-      setLoading(false);
+      setListLoading(false);
       setAccessError('ลิงก์รายงานนี้ไม่สมบูรณ์ กรุณาเปิดลิงก์ล่าสุดจากกลุ่ม LINE ของโครงการ');
       return () => { active = false; };
     }
-    setLoading(true);
+    setListLoading(true);
     const request = publicAccess
       ? getSharedCustomerDailyReports(shareToken)
       : getCustomerDailyReports();
@@ -110,7 +114,7 @@ export default function CustomerReportWorkspace({
       .then((items) => {
         if (!active) return;
         setReports(items);
-        if (!selectedId && items[0]?.id && !didAutoSelectRef.current) {
+        if (!selectedIdRef.current && items[0]?.id && !didAutoSelectRef.current) {
           didAutoSelectRef.current = true;
           if (publicAccess) onSelectedReportChange?.(items[0].id);
           else setSearchParams({ report: items[0].id }, { replace: true });
@@ -126,10 +130,10 @@ export default function CustomerReportWorkspace({
         }
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setListLoading(false);
       });
     return () => { active = false; };
-  }, [onSelectedReportChange, publicAccess, selectedId, setSearchParams, shareToken]);
+  }, [onSelectedReportChange, publicAccess, setSearchParams, shareToken]);
 
   useEffect(() => {
     setActivePhotoIndex(null);
@@ -137,10 +141,11 @@ export default function CustomerReportWorkspace({
     setLoadedPhotoIds(new Set());
     if (!selectedId) {
       setReport(null);
+      setDetailLoading(false);
       return;
     }
     let active = true;
-    setLoading(true);
+    setDetailLoading(true);
     const request = publicAccess
       ? getSharedCustomerDailyReport(shareToken, selectedId)
       : getCustomerDailyReport(selectedId);
@@ -148,19 +153,28 @@ export default function CustomerReportWorkspace({
       .then(async (item) => {
         if (!active) return;
         setReport(item);
+        setDetailLoading(false);
         const photoMedia = getPublishedPhotoMedia(item.media);
-        const urlEntries = await Promise.all(
-          photoMedia.map(async (media) => {
-            try {
-              const access = publicAccess
-                ? await getSharedDailyReportMediaUrl(shareToken, media.id)
-                : await getDailyReportMediaUrl(media.id);
-              return [media.id, access];
-            } catch {
-              return [media.id, ''];
-            }
-          }),
-        );
+        let urlEntries = [];
+        if (publicAccess) {
+          try {
+            const accessItems = await getSharedDailyReportMediaUrls(shareToken, selectedId);
+            urlEntries = accessItems.map((access) => [access.media_id, access]);
+          } catch {
+            urlEntries = [];
+          }
+        } else {
+          urlEntries = await Promise.all(
+            photoMedia.map(async (media) => {
+              try {
+                const access = await getDailyReportMediaUrl(media.id);
+                return [media.id, access];
+              } catch {
+                return [media.id, ''];
+              }
+            }),
+          );
+        }
         if (active) setMediaUrls(Object.fromEntries(urlEntries));
       })
       .catch((error) => {
@@ -168,7 +182,7 @@ export default function CustomerReportWorkspace({
         if (active) setNotice({ tone: 'danger', message: 'ไม่สามารถเปิดรายงานฉบับนี้ได้ กรุณาลองใหม่อีกครั้ง' });
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setDetailLoading(false);
       });
     return () => { active = false; };
   }, [publicAccess, selectedId, shareToken]);

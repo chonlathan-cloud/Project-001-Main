@@ -185,7 +185,10 @@ def daily_report_rate_limit_rules(settings) -> list[RateLimitRule]:
         RateLimitRule.create(
             name="public_customer_reports",
             method="GET",
-            path_pattern=r"/api/v1/daily-reports/public/(?:reports(?:/[^/]+)?|media/[^/]+/signed-url)",
+            path_pattern=(
+                r"/api/v1/daily-reports/public/(?:report-summaries|"
+                r"reports(?:/[^/]+(?:/media-urls)?)?|media/[^/]+/signed-url)"
+            ),
             requests_per_minute=settings.rate_limit_public_report_per_minute,
         ),
         RateLimitRule.create(
