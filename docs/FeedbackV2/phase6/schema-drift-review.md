@@ -64,6 +64,13 @@ specific target, do not suppress autogenerate globally. Use a separate
 production-stamp verifier that compares the exact approved drift inventory and
 fails on additions, removals, or changed definitions.
 
+`Projects-001-BE/scripts/phase6_schema_gate.py` implements that read-only gate.
+It requires `PHASE6_DATABASE_URL`, never loads the backend `.env`, reads the
+schema twice to detect a concurrent change, and validates the exact profile,
+database, PostgreSQL major, pgvector version, Alembic state and source-table
+state. The checked-in profile remains `PROPOSED`; the command must fail until
+the approval fields are completed through an explicitly reviewed commit.
+
 ## Review decision
 
 - Technical reviewer: _missing_

@@ -1,0 +1,21 @@
+{
+  "profile_version": 1,
+  "approval_status": "PROPOSED",
+  "target_database": "project-001",
+  "postgresql_major": 18,
+  "vector_version": "0.8.1",
+  "fingerprint_sha256": "cb7206a7ef0a8d3c2a1cd0b864b1ef93a06c4f2ef5a5a36d6ac5743aef6c1b41",
+  "table_count": 15,
+  "boq_v2_table_count": 0,
+  "alembic_revisions": [],
+  "budget_source_table_exists": false,
+  "budget_source_rows": null,
+  "approval": {
+    "approver": null,
+    "approved_at": null,
+    "evidence_reference": null
+  },
+  "observed_date": "2026-09-21",
+  "drift_review": "docs/FeedbackV2/phase6/schema-drift-review.md",
+  "notes": "Observed read-only starting state. PROPOSED is intentionally rejected by the Phase 6 schema gate."
+}

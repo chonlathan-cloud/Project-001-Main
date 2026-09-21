@@ -75,6 +75,15 @@ region, revisions, image digests, migration range, and operators.
    active, and bounded logs show no pending calls. Freeze new V2 mutations too.
 3. Re-run the schema preflight. Abort on any difference from the approved clone
    rehearsal.
+   The fail-closed gate is:
+
+   ```bash
+   PHASE6_DATABASE_URL='[authorized target URL]' \
+     python scripts/phase6_schema_gate.py --allow-nonlocal-readonly
+   ```
+
+   `--allow-nonlocal-readonly` grants read-only inspection only. It does not
+   grant stamp or migration authority.
 4. Stamp only the approved production baseline, then apply `0001` through
    `0003`. Record each revision and timing.
 5. Deploy the exact immutable compatible backend, frontend, and MCP digests.

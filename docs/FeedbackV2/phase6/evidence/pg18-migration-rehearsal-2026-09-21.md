@@ -148,3 +148,10 @@ schema gate still fails, the dump contained no production data with which to
 verify finance/history invariants, and backup/restore readiness remains
 insufficient. A fresh data-bearing restored clone and an explicitly approved
 legacy-drift allowlist or reconciliation decision are still mandatory.
+
+The subsequent fail-closed Phase 6 schema gate suite passed `5` cases against
+the disposable PostgreSQL 18 target. Coverage includes exact approved-profile
+matching, rejection of proposed/incomplete approvals, fingerprint/table/race
+mismatches, malformed profile rejection, and live read-only observation of
+revision/source state. Invoking the CLI without `PHASE6_DATABASE_URL` was also
+verified to stop without loading the backend `.env`.
