@@ -14,8 +14,9 @@ authorize production mutation.
 - MCP image digest: _not approved_
 - Target GCP project/region: `project001-489710` / `asia-southeast1`
 - Target Cloud SQL instance: `project-001`
-- Intended application project ID/name: _not designated; the supplied
-  `project001-489710` is the GCP project ID_
+- Intended application project name: `Renovation The Mall` (Owner supplied;
+  no exact/partial match exists among the eight projects currently in target
+  database `project-001`, so the application UUID remains unresolved)
 - Production operator: Codex using the current authenticated gcloud principal;
   the Cloud SQL operation ledger is authoritative for principal identity
 - Business Owner: `Chonlathan Wisetwongsa` (self-identified by the requesting
@@ -28,8 +29,8 @@ authorize production mutation.
 | Enable backup/PITR policy | `project001-489710` / `project-001`; preserve `14:00 UTC` window; 30 retained automated backups; PITR within approved 7–14 day range | Chonlathan Wisetwongsa | `2026-09-21T09:59:08Z` | Effective transaction-log retention is 7 days, the Cloud SQL Enterprise maximum; operation `4e075804-e5f5-4452-b7bd-2e8e00000031` | EXECUTED |
 | Create fresh on-demand backup | Same instance; standard on-demand backup; do not manually delete before `2026-12-20T09:59:08Z` (90 days) | Chonlathan Wisetwongsa | `2026-09-21T09:59:08Z` | Backup `1789985068799`; operation `a4139256-040d-4193-9bcd-2cc200000031` | EXECUTED |
 | Create isolated restore/clone drill target | Restore the fresh backup to a new temporary instance in `asia-southeast1`; no application wiring; verify read-only; delete only the temporary instance after evidence while retaining the backup | Chonlathan Wisetwongsa | `2026-09-21T09:59:08Z` | [Recovery-readiness evidence](evidence/recovery-readiness-2026-09-21.md); restore passed and temporary instance was deleted | VERIFIED / CLEANED UP |
-| Apply approved baseline stamp and additive migrations | — | — | — | — | NOT APPROVED |
-| Deploy immutable compatibility images | — | — | — | — | NOT APPROVED |
+| Apply approved baseline stamp and additive migrations | Rehearse first on an isolated restore of backup `1789985068799`; only after every rehearsal/preflight invariant passes, stamp `20260915_0000` on `project001-489710` / `project-001` and upgrade additively through `20260917_0003`; preserve all legacy objects/data; no downgrade, V2 source row, or cutover | Chonlathan Wisetwongsa | `2026-09-21T10:45:21Z` | User approval in Codex thread `01a09eff-59ee-7990-8181-de02ba545998`; execution remains fail-closed | APPROVED / NOT EXECUTED |
+| Deploy immutable compatibility images | Build from a clean reviewed release SHA, record immutable digests, and deploy to `projects-001-be`, `projects-001-fe`, and `projects-001-mcp` in `asia-southeast1`; preserve existing runtime configuration and keep `BOQ_V2_ENABLED=false`; no UAT write, project source activation, or cutover | Chonlathan Wisetwongsa | `2026-09-21T10:45:21Z` | User approval in Codex thread `01a09eff-59ee-7990-8181-de02ba545998`; exact release SHA/digests must be resolved before deployment | APPROVED / NOT EXECUTED |
 | Change central BOQ V2 feature configuration | — | — | — | — | NOT APPROVED |
 | Create/use designated production UAT data | — | — | — | — | NOT APPROVED |
 | Activate exact V2 baseline/source preview | — | — | — | — | NOT APPROVED |
@@ -69,6 +70,7 @@ connection strings, tokens, or confidential raw pricing payloads.
 
 The Business Owner explicitly withheld deployment, baseline stamp, migration,
 V2 feature enablement, application data creation, project cutover, and source
-activation until the restore drill passed. The restore drill has now passed,
-but that prerequisite does not grant any later authority. Those rows remain
-`NOT APPROVED` until separately approved with exact scope.
+activation until the restore drill passed. The restore drill passed, and the
+Owner subsequently granted the migration and compatibility-deployment
+authorities recorded above. Feature enablement, application data creation,
+project cutover, source activation, and rollback remain `NOT APPROVED`.
