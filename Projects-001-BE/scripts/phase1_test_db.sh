@@ -4,9 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-COMPOSE_FILE="${BACKEND_DIR}/tests/postgres/docker-compose.phase1.yml"
-COMPOSE_PROJECT="projects001_phase1"
-TEST_URL="postgresql+asyncpg://phase1:phase1@127.0.0.1:55433/projects001_phase1_test"
+COMPOSE_FILE="${BOQ_TEST_DB_COMPOSE_FILE:-${BACKEND_DIR}/tests/postgres/docker-compose.phase1.yml}"
+COMPOSE_PROJECT="${BOQ_TEST_DB_COMPOSE_PROJECT:-projects001_phase1}"
+TEST_URL="${BOQ_TEST_DATABASE_URL:-postgresql+asyncpg://phase1:phase1@127.0.0.1:55433/projects001_phase1_test}"
 PYTHON_BIN="${BACKEND_DIR}/venv/bin/python"
 
 compose() {

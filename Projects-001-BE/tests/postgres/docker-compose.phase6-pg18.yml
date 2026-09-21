@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg18@sha256:508c5290cda481d4f5f846446a26e9c1b804766828a394a5861de1b348a18b4c
+    restart: "no"
+    environment:
+      POSTGRES_DB: projects001_phase6_test
+      POSTGRES_USER: phase6
+      POSTGRES_PASSWORD: phase6
+    ports:
+      - "127.0.0.1:55435:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phase6 -d projects001_phase6_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
