@@ -16,8 +16,8 @@ activation. Record each approval separately in `approval-record.md`.
 3. Diagnose the current Dashboard HTTP 500 without production writes. Repair and
    re-run retained-flow regression if the confirmed cause is code rather than
    only missing migration order.
-4. Classify every production schema difference. Explicitly preserve the legacy
-   hierarchy columns/index and finance/accounting data. Produce an allowlisted,
+4. Review `schema-drift-review.md`. Explicitly preserve the legacy hierarchy
+   columns/index and finance/accounting data. Approve an exact allowlisted,
    non-destructive stamp/reconciliation decision; do not normalize drift by
    dropping data or rerunning historical manual SQL.
 5. Validate the path on PostgreSQL 18 with `vector` 0.8.1, not only the Phase 5

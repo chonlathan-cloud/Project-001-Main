@@ -31,6 +31,7 @@ feature enablement, or cutover was performed.
 
 - [Production preflight evidence](evidence/production-preflight-2026-09-21.md)
 - [PostgreSQL 18 migration rehearsal](evidence/pg18-migration-rehearsal-2026-09-21.md)
+- [Production schema drift review](schema-drift-review.md)
 - [Cutover plan](cutover-plan.md)
 - [Rollback plan](rollback-plan.md)
 - [Approval record template](approval-record.md)
