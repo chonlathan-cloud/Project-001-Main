@@ -1,6 +1,6 @@
 {
   "profile_version": 1,
-  "approval_status": "PROPOSED",
+  "approval_status": "APPROVED",
   "target_database": "project-001",
   "postgresql_major": 18,
   "vector_version": "0.8.1",
@@ -11,11 +11,11 @@
   "budget_source_table_exists": false,
   "budget_source_rows": null,
   "approval": {
-    "approver": null,
-    "approved_at": null,
-    "evidence_reference": null
+    "approver": "Chonlathan Wisetwongsa (self-identified Business Owner)",
+    "approved_at": "2026-09-21T09:59:08Z",
+    "evidence_reference": "Codex thread 01a09eff-59ee-7990-8181-de02ba545998 user approval"
   },
   "observed_date": "2026-09-21",
   "drift_review": "docs/FeedbackV2/phase6/schema-drift-review.md",
-  "notes": "Observed read-only starting state. PROPOSED is intentionally rejected by the Phase 6 schema gate."
+  "notes": "Approved only as the exact pre-migration schema drift profile. This does not authorize a stamp, migration, deployment, feature enablement, application-project cutover, or source activation."
 }

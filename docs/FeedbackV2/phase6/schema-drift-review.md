@@ -1,6 +1,7 @@
 # Production schema drift review
 
-Status: **proposal; not approved for production stamp or migration**
+Status: **preserve + exact allowlist approach approved; production stamp and
+migration remain not approved**
 
 Direct production fingerprint observed on 2026-09-21:
 `cb7206a7ef0a8d3c2a1cd0b864b1ef93a06c4f2ef5a5a36d6ac5743aef6c1b41`.
@@ -73,9 +74,15 @@ the approval fields are completed through an explicitly reviewed commit.
 
 ## Review decision
 
-- Technical reviewer: _missing_
-- Decision: _not approved_
-- Approved fingerprint/inventory artifact: _missing_
+- Technical reviewer: `Chonlathan Wisetwongsa` (Business Owner)
+- Decision: preserve the classified legacy drift and require exact allowlist;
+  approved `2026-09-21T09:59:08Z`
+- Approved fingerprint/inventory artifact:
+  `evidence/production-schema-profile-2026-09-21.json`
 - Data-bearing restored-clone evidence: _missing_
-- Approval timestamp: _missing_
+- Approval timestamp: `2026-09-21T09:59:08Z`
 - Deviations/exceptions: _none approved_
+
+This decision approves the read-only schema profile and reconciliation
+approach only. It does not approve the baseline stamp, migrations, deployment,
+feature enablement, application-project cutover, or source activation.
