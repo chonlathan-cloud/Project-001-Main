@@ -105,3 +105,46 @@ production stamp or migration, restore the fresh production backup to an
 isolated target, classify the recorded drift, prove critical row/history
 invariants, stamp only the approved baseline, and repeat the upgrade and smoke
 sequence there. No production action occurred during this rehearsal.
+
+## Production schema-only rehearsal
+
+A second read-only check copied only production DDL through Cloud SQL Auth
+Proxy. The temporary dump contained no table data, credentials, ownership, or
+grants and was deleted after the local rehearsal. The proxy and local container
+were then stopped and their listener ports verified closed.
+
+The schema-only dump restored successfully into the isolated PostgreSQL 18.2 /
+pgvector 0.8.1 harness:
+
+- before migration: 15 public tables, zero V2 tables, local-restored fingerprint
+  `3bb7046570a6b1c75ebb019f64f5e34ebac09f4254571bda70444157261c5468`;
+- local-only stamp: `20260915_0000`;
+- additive upgrade: `0001` → `0002` → `0003`, successful;
+- after migration: 38 public tables, 22 V2 tables, revision
+  `20260917_0003`, fingerprint
+  `7055f339cbf6db5e5d025ff12a8f66748e48fe773028d26afe599457d1a6f8d1`;
+  and
+- the Phase 1 V2 schema verifier passed with zero source and Phase 4 business
+  rows.
+
+The restored fingerprints are not substitutes for the direct production
+fingerprint: `pg_dump`/restore and the PostgreSQL 18.2 versus 18.3 patch level
+can normalize metadata. The direct read-only production fingerprint remains the
+cutover preflight identity.
+
+Crucially, `alembic check` exited `255` after the otherwise successful additive
+upgrade. It reproduced the known drift categories:
+
+- six production-only legacy `boq_items` hierarchy columns and their ordering
+  index;
+- fund allocation, bucket, ledger, and audit constraint/index/type shapes;
+- nullable/default/type differences on accounting and FlowAccount fields in
+  `input_requests`; and
+- the `projects.system_key` unique index/constraint representation.
+
+This proves that `0001` through `0003` do not collide with the current
+production schema shape. It does **not** approve the baseline stamp: the strict
+schema gate still fails, the dump contained no production data with which to
+verify finance/history invariants, and backup/restore readiness remains
+insufficient. A fresh data-bearing restored clone and an explicitly approved
+legacy-drift allowlist or reconciliation decision are still mandatory.
