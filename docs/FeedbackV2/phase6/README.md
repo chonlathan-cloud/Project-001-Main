@@ -1,7 +1,8 @@
 # Phase 6 — Controlled Production Handoff
 
-Status: **IN PROGRESS — recovery and rehearsal gates passed; feature enablement
-and cutover remain on hold**
+Status: **HOLD AFTER COMPATIBILITY RELEASE — migration and feature-disabled
+deployment passed; production UAT, feature enablement, and cutover are not
+authorized**
 
 Phase 6 is the operational release and same-project cutover described in
 `ModifyV2-plan.md`. It is not complete merely because the Phase 0–5 code is
@@ -22,32 +23,32 @@ production profile was stamped at `20260915_0000`, upgraded additively through
 V2 tables, activated no source, and returned Dashboard/Project/Funds/Input
 reads successfully with V2 disabled. The rehearsal instance was deleted.
 
+Production was subsequently stamped and upgraded through `20260917_0003`.
+Exact-digest compatibility images are serving 100% on all three services with
+`BOQ_V2_ENABLED` still false. Schema/data invariants, public health,
+fail-closed behavior, configuration preservation, and bounded error-log gates
+passed.
+
 The remaining stop conditions are:
 
-1. the production database remains unstamped and has no `boq_v2_*` tables,
-   while the deployed backend queries the
-   V2 source table from retained Dashboard reads;
-2. three Dashboard summary requests returned HTTP 500 on the current backend
-   revision;
-3. immutable candidate images tied to release SHA
-   `23ae47a9f050bccf3804b89e86bd8b30665c57de` are built and recorded but have
-   not yet been deployed; the current MCP revision predates the Phase 5
-   implementation;
-4. the Owner-supplied application name `Renovation The Mall` has no exact or
+1. the Owner-supplied application name `Renovation The Mall` has no exact or
    partial match among the eight projects in target database `project-001`, so
-   its UUID remains unresolved; and
-5. no cutover preview has been approved by the identified Business Owner.
+   its UUID remains unresolved;
+2. authenticated Owner business-flow UAT and the external OCR/FlowAccount
+   boundaries have not been executed against the compatibility release; and
+3. no cutover preview has been approved by the identified Business Owner.
 
-No compatibility deployment, schema migration, IAM change, application write,
-feature enablement, or cutover was performed. The only production mutations were the explicitly
-approved backup/PITR configuration, fresh backup, isolated restore drill, and
-temporary drill cleanup.
+No IAM change, application-data write, feature enablement, source activation,
+or cutover was performed. The production mutations were limited to the
+explicitly approved backup/PITR work, additive schema migration, and
+exact-digest compatibility image deployment.
 
 ## Review package
 
 - [Production preflight evidence](evidence/production-preflight-2026-09-21.md)
 - [Recovery-readiness evidence](evidence/recovery-readiness-2026-09-21.md)
 - [Data-bearing migration rehearsal](evidence/data-bearing-migration-rehearsal-2026-09-21.md)
+- [Production migration and compatibility release](evidence/production-migration-and-compatibility-release-2026-09-21.md)
 - [PostgreSQL 18 migration rehearsal](evidence/pg18-migration-rehearsal-2026-09-21.md)
 - [Production schema drift review](schema-drift-review.md)
 - [Proposed fail-closed schema profile](evidence/production-schema-profile-2026-09-21.json)
