@@ -9,6 +9,7 @@ authorize production mutation.
 
 - Git SHA for recovery tooling: `6cf1ada`
 - Recovery authority record: `62e5661`
+- Clean candidate release source: `30d3039`
 - Backend image digest: _not approved_
 - Frontend image digest: _not approved_
 - MCP image digest: _not approved_
@@ -65,6 +66,10 @@ connection strings, tokens, or confidential raw pricing payloads.
 | `2026-09-21T10:07:33Z` | Restore backup to isolated temporary instance | DONE; schema and all 15 table contents verified | Operation `a91fe354-bb8a-4d6b-88cc-e37a00000031`; [recovery evidence](evidence/recovery-readiness-2026-09-21.md) |
 | `2026-09-21T10:17:02Z` | Disable deletion protection on temporary drill instance only | DONE | Operation `3e203ba6-8d6a-43d3-9d5b-897900000031` |
 | `2026-09-21T10:17:19Z` | Delete temporary drill instance only | DONE; source instance and backup retained | Operation `dada1c2f-0db9-4b38-86d7-00d500000031`; [recovery evidence](evidence/recovery-readiness-2026-09-21.md) |
+| `2026-09-21T10:46:05Z` | Restore backup to isolated data-bearing migration-rehearsal instance | DONE | Operation `d79ef0c4-6c85-4796-adf9-06c400000031`; [migration rehearsal](evidence/data-bearing-migration-rehearsal-2026-09-21.md) |
+| `2026-09-21T10:54:08Z` | Stamp `20260915_0000` and upgrade temporary rehearsal instance through `20260917_0003` | DONE; 22 empty V2 tables, no source activation, legacy hash unchanged | [Migration rehearsal](evidence/data-bearing-migration-rehearsal-2026-09-21.md) |
+| `2026-09-21T10:59:53Z` | Disable deletion protection on temporary migration-rehearsal instance only | DONE | Operation `986412db-2a7a-4cf2-91fb-25aa00000031` |
+| `2026-09-21T11:00:08Z` | Delete temporary migration-rehearsal instance only | DONE; source instance and backup retained | Operation `37b9dd01-7937-4c45-abbd-44c100000031`; [migration rehearsal](evidence/data-bearing-migration-rehearsal-2026-09-21.md) |
 
 ## Approval boundary recorded 2026-09-21
 

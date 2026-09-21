@@ -16,20 +16,27 @@ automated backups and seven-day PITR are enabled, fresh on-demand backup
 tables by row count and content hash. The temporary restore instance was then
 deleted while the source and backup were retained.
 
+The subsequent data-bearing restored-clone rehearsal also passed: the exact
+production profile was stamped at `20260915_0000`, upgraded additively through
+`20260917_0003`, retained all legacy content hashes, created exactly 22 empty
+V2 tables, activated no source, and returned Dashboard/Project/Funds/Input
+reads successfully with V2 disabled. The rehearsal instance was deleted.
+
 The remaining stop conditions are:
 
-1. the production database is unstamped and differs from the frozen legacy
-   schema used to validate the Alembic path;
-2. production has no `boq_v2_*` tables, while the deployed backend queries the
+1. the production database remains unstamped and has no `boq_v2_*` tables,
+   while the deployed backend queries the
    V2 source table from retained Dashboard reads;
-3. three Dashboard summary requests returned HTTP 500 on the current backend
+2. three Dashboard summary requests returned HTTP 500 on the current backend
    revision;
-4. the deployed images cannot be mapped to a Git SHA through available build
+3. immutable candidate images tied to the reviewed clean SHA have not yet been
+   built or recorded; the existing deployed images cannot be mapped to a Git SHA
+   through available build
    provenance, and the MCP revision predates the Phase 5 implementation;
-5. the repository working tree contains unrelated uncommitted Daily Reports
-   and frontend changes, so it is not a safe deployment source; and
-6. no intended application project UUID/name has been designated, and no
-   cutover preview has been approved by the identified Business Owner.
+4. the Owner-supplied application name `Renovation The Mall` has no exact or
+   partial match among the eight projects in target database `project-001`, so
+   its UUID remains unresolved; and
+5. no cutover preview has been approved by the identified Business Owner.
 
 No deployment, migration, IAM change, application write, feature enablement,
 or cutover was performed. The only production mutations were the explicitly
@@ -40,6 +47,7 @@ temporary drill cleanup.
 
 - [Production preflight evidence](evidence/production-preflight-2026-09-21.md)
 - [Recovery-readiness evidence](evidence/recovery-readiness-2026-09-21.md)
+- [Data-bearing migration rehearsal](evidence/data-bearing-migration-rehearsal-2026-09-21.md)
 - [PostgreSQL 18 migration rehearsal](evidence/pg18-migration-rehearsal-2026-09-21.md)
 - [Production schema drift review](schema-drift-review.md)
 - [Proposed fail-closed schema profile](evidence/production-schema-profile-2026-09-21.json)
