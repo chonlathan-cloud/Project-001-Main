@@ -1,7 +1,7 @@
 # Phase 6 — Controlled Production Handoff
 
-Status: **HOLD — recovery gate passed; migration, deployment, and cutover are
-not authorized**
+Status: **IN PROGRESS — recovery and rehearsal gates passed; feature enablement
+and cutover remain on hold**
 
 Phase 6 is the operational release and same-project cutover described in
 `ModifyV2-plan.md`. It is not complete merely because the Phase 0–5 code is
@@ -29,17 +29,17 @@ The remaining stop conditions are:
    V2 source table from retained Dashboard reads;
 2. three Dashboard summary requests returned HTTP 500 on the current backend
    revision;
-3. immutable candidate images tied to the reviewed clean SHA have not yet been
-   built or recorded; the existing deployed images cannot be mapped to a Git SHA
-   through available build
-   provenance, and the MCP revision predates the Phase 5 implementation;
+3. immutable candidate images tied to release SHA
+   `23ae47a9f050bccf3804b89e86bd8b30665c57de` are built and recorded but have
+   not yet been deployed; the current MCP revision predates the Phase 5
+   implementation;
 4. the Owner-supplied application name `Renovation The Mall` has no exact or
    partial match among the eight projects in target database `project-001`, so
    its UUID remains unresolved; and
 5. no cutover preview has been approved by the identified Business Owner.
 
-No deployment, migration, IAM change, application write, feature enablement,
-or cutover was performed. The only production mutations were the explicitly
+No compatibility deployment, schema migration, IAM change, application write,
+feature enablement, or cutover was performed. The only production mutations were the explicitly
 approved backup/PITR configuration, fresh backup, isolated restore drill, and
 temporary drill cleanup.
 

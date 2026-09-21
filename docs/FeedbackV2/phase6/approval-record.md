@@ -9,10 +9,11 @@ authorize production mutation.
 
 - Git SHA for recovery tooling: `6cf1ada`
 - Recovery authority record: `62e5661`
-- Clean candidate release source: `30d3039`
-- Backend image digest: _not approved_
-- Frontend image digest: _not approved_
-- MCP image digest: _not approved_
+- Clean candidate release source: `23ae47a9f050bccf3804b89e86bd8b30665c57de`
+- Application-code tip within candidate: `30d3039`
+- Backend image digest: `sha256:3bad885791cf7a5d4f6db9148c7123f3b54045c84550a6a1ba3c1a56f54088ae`
+- Frontend image digest: `sha256:174d35b1bdf0dab4d169adae5fe500c9e13b088e1688967602c174d464d74635`
+- MCP image digest: `sha256:b4d616f3b293c8d277e05b21a1bd352246a72d3037cd96bcf54e049a34f8b585`
 - Target GCP project/region: `project001-489710` / `asia-southeast1`
 - Target Cloud SQL instance: `project-001`
 - Intended application project name: `Renovation The Mall` (Owner supplied;
@@ -31,7 +32,7 @@ authorize production mutation.
 | Create fresh on-demand backup | Same instance; standard on-demand backup; do not manually delete before `2026-12-20T09:59:08Z` (90 days) | Chonlathan Wisetwongsa | `2026-09-21T09:59:08Z` | Backup `1789985068799`; operation `a4139256-040d-4193-9bcd-2cc200000031` | EXECUTED |
 | Create isolated restore/clone drill target | Restore the fresh backup to a new temporary instance in `asia-southeast1`; no application wiring; verify read-only; delete only the temporary instance after evidence while retaining the backup | Chonlathan Wisetwongsa | `2026-09-21T09:59:08Z` | [Recovery-readiness evidence](evidence/recovery-readiness-2026-09-21.md); restore passed and temporary instance was deleted | VERIFIED / CLEANED UP |
 | Apply approved baseline stamp and additive migrations | Rehearse first on an isolated restore of backup `1789985068799`; only after every rehearsal/preflight invariant passes, stamp `20260915_0000` on `project001-489710` / `project-001` and upgrade additively through `20260917_0003`; preserve all legacy objects/data; no downgrade, V2 source row, or cutover | Chonlathan Wisetwongsa | `2026-09-21T10:45:21Z` | User approval in Codex thread `01a09eff-59ee-7990-8181-de02ba545998`; execution remains fail-closed | APPROVED / NOT EXECUTED |
-| Deploy immutable compatibility images | Build from a clean reviewed release SHA, record immutable digests, and deploy to `projects-001-be`, `projects-001-fe`, and `projects-001-mcp` in `asia-southeast1`; preserve existing runtime configuration and keep `BOQ_V2_ENABLED=false`; no UAT write, project source activation, or cutover | Chonlathan Wisetwongsa | `2026-09-21T10:45:21Z` | User approval in Codex thread `01a09eff-59ee-7990-8181-de02ba545998`; exact release SHA/digests must be resolved before deployment | APPROVED / NOT EXECUTED |
+| Deploy immutable compatibility images | Build from clean reviewed release SHA `23ae47a9f050bccf3804b89e86bd8b30665c57de`, record immutable digests, and deploy to `projects-001-be`, `projects-001-fe`, and `projects-001-mcp` in `asia-southeast1`; preserve existing runtime configuration and keep `BOQ_V2_ENABLED=false`; no UAT write, project source activation, or cutover | Chonlathan Wisetwongsa | `2026-09-21T10:45:21Z` | User approval in Codex thread `01a09eff-59ee-7990-8181-de02ba545998`; authoritative Artifact Registry digests are recorded in Release identity | APPROVED / IMAGES BUILT, NOT DEPLOYED |
 | Change central BOQ V2 feature configuration | — | — | — | — | NOT APPROVED |
 | Create/use designated production UAT data | — | — | — | — | NOT APPROVED |
 | Activate exact V2 baseline/source preview | — | — | — | — | NOT APPROVED |
