@@ -45,6 +45,12 @@ from app.services.boq_calculation_service import (
     money,
     signed_change_order_amount,
 )
+from app.services.boq_composition_service import (
+    clone_composition,
+    create_default_composition,
+    snapshot_composition_manifest,
+)
+from app.services.boq_quotation_media_service import validate_revision_media
 from app.services.boq_document_service import (
     _audit,
     _begin_command,
@@ -220,11 +226,22 @@ async def _build_snapshot_payloads(
     revision_id: UUID,
     lifecycle_status: str,
 ) -> tuple[dict[str, object], dict[str, object], BOQV2RevisionResponse]:
+    revision, _, _ = await _revision_context(db, revision_id)
     response = await load_boq_revision(db, revision_id)
     cost_plan = await _current_cost_plan(db, revision_id)
     quotation = response.quotation.model_dump(mode="json")
+    customer_composition = await snapshot_composition_manifest(
+        db,
+        revision=revision,
+        include_storage=False,
+    )
+    internal_composition = await snapshot_composition_manifest(
+        db,
+        revision=revision,
+        include_storage=True,
+    )
     common = {
-        "schema_version": "boq-v2-document-snapshot-v1",
+        "schema_version": "boq-v2-document-snapshot-v2",
         "project": {
             "id": str(response.project_id),
             "name": response.project_name,
@@ -291,10 +308,12 @@ async def _build_snapshot_payloads(
     }
     customer_payload = {
         **common,
+        "composition": customer_composition,
         "scope": [_customer_scope_node(node) for node in response.nodes],
     }
     internal_payload = {
         **common,
+        "composition": internal_composition,
         "scope": [_internal_scope_node(node) for node in response.nodes],
         "cost": {
             "plan_id": str(cost_plan.id) if cost_plan else None,
@@ -328,6 +347,7 @@ async def _create_snapshot(
     ).scalar_one_or_none()
     if existing is not None:
         return existing
+    await validate_revision_media(db, revision_id=revision.id)
     customer_payload, internal_payload, _ = await _build_snapshot_payloads(
         db,
         revision_id=revision.id,
@@ -721,6 +741,13 @@ async def _clone_revision(
                 explicit_zero_reason=component.explicit_zero_reason,
             )
         )
+    await db.flush()
+    await clone_composition(
+        db,
+        source_revision=source_revision,
+        target_revision=revision,
+        include_media=source_revision.project_id == target_project.id,
+    )
     return revision
 
 
@@ -1011,6 +1038,7 @@ async def create_change_order(
     await db.flush()
     db.add(revision)
     await db.flush()
+    await create_default_composition(db, revision=revision)
     await _replace_current_working_plan(db, project_id)
     plan = BOQV2CostPlan(
         id=uuid4(),

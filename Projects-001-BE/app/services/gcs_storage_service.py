@@ -318,6 +318,34 @@ async def upload_boq_export_artifact(
     )
 
 
+async def upload_boq_quotation_media(
+    *,
+    project_id: str,
+    revision_id: str,
+    media_id: str,
+    file_bytes: bytes,
+) -> str:
+    """Upload a normalized quotation image under a private durable prefix."""
+
+    identifiers = [project_id, revision_id, media_id]
+    if any(not re.fullmatch(r"[A-Za-z0-9-]+", value) for value in identifiers):
+        raise ValueError("Invalid quotation media storage identity")
+    prefix = str(
+        _settings.boq_quotation_media_gcs_prefix or "boq_quotation_media"
+    ).strip("/")
+    if not prefix or ".." in prefix:
+        raise ValueError("Invalid quotation media GCS prefix")
+    object_name = f"{prefix}/{project_id}/{revision_id}/{media_id}.jpg"
+    return await asyncio.to_thread(
+        _upload_bytes_to_bucket_sync,
+        bucket_name=get_default_bucket_name(),
+        object_name=object_name,
+        file_bytes=file_bytes,
+        content_type="image/jpeg",
+        cache_control="private, no-store, max-age=0",
+    )
+
+
 async def upload_kyc_image_to_storage(
     *,
     file_bytes: bytes,

@@ -19,6 +19,27 @@ class BOQV2ExpectedVersionRequest(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class BOQV2MediaImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=1)
+    origin_type: Literal["DAILY_REPORT", "INSPECTION"]
+    origin_id: str = Field(min_length=1, max_length=255)
+
+
+class BOQV2MediaCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    origin_type: Literal["DAILY_REPORT", "INSPECTION"]
+    origin_id: str
+    file_name: str | None = None
+    content_type: str | None = None
+    size_bytes: int | None = None
+    created_at: str | None = None
+    preview_url: str
+    preview_expires_in_minutes: int
+
+
 class BOQV2CreateAlternativeRequest(BOQV2ExpectedVersionRequest):
     alternative_group_id: UUID | None = None
 

@@ -145,6 +145,12 @@ class Settings(BaseSettings):
     boq_export_gcs_prefix: str = Field(
         default="boq_exports", alias="BOQ_EXPORT_GCS_PREFIX"
     )
+    boq_quotation_media_gcs_prefix: str = Field(
+        default="boq_quotation_media", alias="BOQ_QUOTATION_MEDIA_GCS_PREFIX"
+    )
+    boq_quotation_media_max_bytes: int = Field(
+        default=10 * 1024 * 1024, alias="BOQ_QUOTATION_MEDIA_MAX_BYTES"
+    )
     boq_pdf_font_path: str | None = Field(default=None, alias="BOQ_PDF_FONT_PATH")
     payment_confirmation_max_bytes: int = Field(
         default=10 * 1024 * 1024,

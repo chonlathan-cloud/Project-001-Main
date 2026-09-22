@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from datetime import date
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +27,8 @@ from app.schemas.boq_v2_schema import (
     BOQV2CreateDocumentRequest,
     BOQV2RevisionResponse,
     BOQV2SaveDraftRequest,
+    BOQV2QuotationListResponse,
+    BOQV2QuotationMediaResponse,
     BOQV2WorkspaceResponse,
 )
 from app.schemas.boq_quotation_schema import (
@@ -25,6 +38,8 @@ from app.schemas.boq_quotation_schema import (
     BOQV2ExpectedVersionRequest,
     BOQV2ExportArtifactResponse,
     BOQV2ExportRequest,
+    BOQV2MediaCandidate,
+    BOQV2MediaImportRequest,
     BOQV2QuotationPreviewResponse,
     BOQV2RecordAcceptanceRequest,
     BOQV2TransitionRequest,
@@ -35,7 +50,15 @@ from app.services.boq_document_service import (
     create_boq_document,
     load_boq_revision,
     load_boq_workspace,
+    list_quotations,
     save_boq_draft,
+)
+from app.services.boq_quotation_media_service import (
+    delete_media,
+    import_media,
+    list_media_candidates,
+    media_access,
+    upload_media,
 )
 from app.services.boq_domain_service import BOQDomainError
 from app.services.boq_export_service import (
@@ -83,6 +106,21 @@ def _actor(user: AuthenticatedUser) -> str:
     return str(user.email or user.subject).strip()
 
 
+async def _read_quotation_upload(file: UploadFile) -> bytes:
+    limit = get_settings().boq_quotation_media_max_bytes
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(1024 * 1024):
+        total += len(chunk)
+        if total > limit:
+            raise BOQDomainError(
+                "QUOTATION_MEDIA_TOO_LARGE",
+                f"Quotation image exceeds the {limit // (1024 * 1024)}MB limit",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _domain_http_exception(
     error: BOQDomainError,
     *,
@@ -116,8 +154,16 @@ def _domain_http_exception(
         "OFFER_WARNING_CONFIRMATION_REQUIRED",
         "STALE_CATALOG_VERSION",
         "CATALOG_CODE_EXISTS",
+        "QUOTATION_MEDIA_IN_USE",
+        "QUOTATION_MEDIA_MISSING",
+        "QUOTATION_MEDIA_HASH_MISMATCH",
+        "QUOTATION_DOCUMENT_INVALID",
     }:
         http_status = status.HTTP_409_CONFLICT
+    elif error.code == "QUOTATION_MEDIA_TOO_LARGE":
+        http_status = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    elif error.code == "QUOTATION_MEDIA_TYPE_INVALID":
+        http_status = status.HTTP_415_UNSUPPORTED_MEDIA_TYPE
     elif error.code in {"EXPORT_STORAGE_FAILED", "EXPORT_RENDER_FAILED"}:
         http_status = status.HTTP_503_SERVICE_UNAVAILABLE
     else:
@@ -126,6 +172,49 @@ def _domain_http_exception(
     if current_version is not None:
         detail["current_version"] = current_version
     return HTTPException(status_code=http_status, detail=detail)
+
+
+@router.get(
+    "/boq/quotations",
+    response_model=StandardResponse[BOQV2QuotationListResponse],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def get_native_boq_quotations(
+    search: str | None = Query(default=None, max_length=200),
+    status_filter: Literal[
+        "DRAFT", "ISSUED", "ACCEPTED", "WITHDRAWN", "REJECTED", "SUPERSEDED"
+    ]
+    | None = Query(default=None, alias="status"),
+    document_kind: Literal["MAIN", "ALTERNATIVE", "CHANGE_ORDER"] | None = Query(
+        default=None
+    ),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    if date_from and date_to and date_to < date_from:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "INVALID_DATE_RANGE",
+                "message": "date_to cannot precede date_from",
+            },
+        )
+    return StandardResponse(
+        data=await list_quotations(
+            db,
+            search=search,
+            status=status_filter,
+            document_kind=document_kind,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            offset=offset,
+        )
+    )
 
 
 @router.get(
@@ -161,6 +250,133 @@ async def get_boq_revision(
 ):
     try:
         return StandardResponse(data=await load_boq_revision(db, revision_id))
+    except BOQDomainError as error:
+        raise _domain_http_exception(error) from error
+
+
+@router.get(
+    "/boq/revisions/{revision_id}/media-candidates",
+    response_model=StandardResponse[list[BOQV2MediaCandidate]],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def get_native_boq_media_candidates(
+    revision_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    try:
+        revision = await load_boq_revision(db, revision_id)
+        return StandardResponse(
+            data=await list_media_candidates(project_id=revision.project_id)
+        )
+    except BOQDomainError as error:
+        raise _domain_http_exception(error) from error
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/media",
+    response_model=StandardResponse[BOQV2QuotationMediaResponse],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def upload_native_boq_media(
+    revision_id: UUID,
+    expected_version: int = Form(..., ge=1),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    try:
+        file_bytes = await _read_quotation_upload(file)
+        data = await upload_media(
+            db,
+            revision_id=revision_id,
+            expected_version=expected_version,
+            actor=_actor(user),
+            file_bytes=file_bytes,
+            file_name=file.filename,
+            content_type=file.content_type,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+
+
+@router.post(
+    "/boq/revisions/{revision_id}/media/import",
+    response_model=StandardResponse[BOQV2QuotationMediaResponse],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def import_native_boq_media(
+    revision_id: UUID,
+    request: BOQV2MediaImportRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUser = Depends(require_owner_user),
+):
+    try:
+        data = await import_media(
+            db,
+            revision_id=revision_id,
+            expected_version=request.expected_version,
+            actor=_actor(user),
+            origin_type=request.origin_type,
+            origin_id=request.origin_id,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+
+
+@router.delete(
+    "/boq/revisions/{revision_id}/media/{media_id}",
+    response_model=StandardResponse[dict],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def delete_native_boq_media(
+    revision_id: UUID,
+    media_id: UUID,
+    request: BOQV2ExpectedVersionRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_owner_user),
+):
+    try:
+        data = await delete_media(
+            db,
+            revision_id=revision_id,
+            media_id=media_id,
+            expected_version=request.expected_version,
+        )
+        await db.commit()
+        return StandardResponse(data=data)
+    except BOQDomainError as error:
+        await db.rollback()
+        raise _domain_http_exception(error) from error
+
+
+@router.get(
+    "/boq/revisions/{revision_id}/media/{media_id}/signed-url",
+    response_model=StandardResponse[BOQV2QuotationMediaResponse],
+    dependencies=[Depends(require_boq_v2_rollout)],
+)
+async def get_native_boq_media_signed_url(
+    revision_id: UUID,
+    media_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: AuthenticatedUser = Depends(require_admin_user),
+):
+    try:
+        return StandardResponse(
+            data=await media_access(
+                db,
+                revision_id=revision_id,
+                media_id=media_id,
+            )
+        )
     except BOQDomainError as error:
         raise _domain_http_exception(error) from error
 

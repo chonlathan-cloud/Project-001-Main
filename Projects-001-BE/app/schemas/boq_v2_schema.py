@@ -11,6 +11,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 Quantity = Annotated[Decimal, Field(ge=0, max_digits=20, decimal_places=4)]
+SECTION_TYPES = (
+    "SUMMARY",
+    "DETAILED_BOQ",
+    "VISUAL",
+    "PAYMENT_TERMS",
+    "TERMS",
+    "ACCEPTANCE",
+)
 
 
 class BOQV2PaymentScheduleDraft(BaseModel):
@@ -27,6 +35,62 @@ class BOQV2PaymentScheduleDraft(BaseModel):
         if (self.percentage is None) == (self.fixed_amount is None):
             raise ValueError(
                 "payment schedule row requires exactly one percentage or fixed amount"
+            )
+        return self
+
+
+class BOQV2QuotationSectionDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    section_type: Literal[
+        "SUMMARY",
+        "DETAILED_BOQ",
+        "VISUAL",
+        "PAYMENT_TERMS",
+        "TERMS",
+        "ACCEPTANCE",
+    ]
+    enabled: bool = True
+    position: int = Field(ge=0, le=5)
+    title_th: str | None = Field(default=None, max_length=500)
+    title_en: str | None = Field(default=None, max_length=500)
+
+
+class BOQV2QuotationVisualEntryDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: UUID
+    position: int = Field(ge=0, le=3)
+    scope_logical_id: UUID | None = None
+    caption_th: str | None = Field(default=None, max_length=2000)
+    caption_en: str | None = Field(default=None, max_length=2000)
+
+
+class BOQV2QuotationVisualPageDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    position: int = Field(ge=0, le=99)
+    layout: Literal["SINGLE", "TWO_UP", "FOUR_UP"] = "TWO_UP"
+    title_th: str | None = Field(default=None, max_length=500)
+    title_en: str | None = Field(default=None, max_length=500)
+    description_th: str | None = Field(default=None, max_length=4000)
+    description_en: str | None = Field(default=None, max_length=4000)
+    entries: list[BOQV2QuotationVisualEntryDraft] = Field(
+        min_length=1, max_length=4
+    )
+
+    @model_validator(mode="after")
+    def validate_entries(self) -> "BOQV2QuotationVisualPageDraft":
+        entry_positions = [item.position for item in self.entries]
+        media_ids = [item.media_id for item in self.entries]
+        if len(entry_positions) != len(set(entry_positions)):
+            raise ValueError("visual entry positions must be unique within a page")
+        if len(media_ids) != len(set(media_ids)):
+            raise ValueError("visual media must be unique within a page")
+        capacity = {"SINGLE": 1, "TWO_UP": 2, "FOUR_UP": 4}[self.layout]
+        if len(self.entries) > capacity:
+            raise ValueError(
+                f"{self.layout} supports at most {capacity} visual entries"
             )
         return self
 
@@ -49,12 +113,19 @@ class BOQV2QuotationDraft(BaseModel):
         default_factory=list, max_length=20
     )
     commercial_terms: list[str] = Field(default_factory=list, max_length=50)
-    document_pages: list[
-        Literal["BOQ", "PAYMENT_TERMS", "COMMERCIAL_TERMS"]
-    ] = Field(
+    document_pages: list[Literal["BOQ", "PAYMENT_TERMS", "COMMERCIAL_TERMS"]] = Field(
         default_factory=lambda: ["BOQ", "PAYMENT_TERMS", "COMMERCIAL_TERMS"],
         min_length=1,
         max_length=3,
+    )
+    document_schema_version: Literal["boq-v2-document-snapshot-v2"] = (
+        "boq-v2-document-snapshot-v2"
+    )
+    document_sections: list[BOQV2QuotationSectionDraft] = Field(
+        default_factory=list, max_length=6
+    )
+    visual_pages: list[BOQV2QuotationVisualPageDraft] = Field(
+        default_factory=list, max_length=100
     )
 
     @model_validator(mode="after")
@@ -87,6 +158,38 @@ class BOQV2QuotationDraft(BaseModel):
             raise ValueError("document pages must be unique")
         if "BOQ" not in self.document_pages:
             raise ValueError("document pages must include BOQ")
+        if self.document_sections:
+            section_types = [item.section_type for item in self.document_sections]
+            section_positions = [item.position for item in self.document_sections]
+            if len(section_types) != len(set(section_types)):
+                raise ValueError("document section types must be unique")
+            if len(section_positions) != len(set(section_positions)):
+                raise ValueError("document section positions must be unique")
+            if set(section_types) != set(SECTION_TYPES):
+                raise ValueError("document sections must contain all six section types")
+            ordered = sorted(self.document_sections, key=lambda item: item.position)
+            if ordered[0].section_type != "SUMMARY" or not ordered[0].enabled:
+                raise ValueError("SUMMARY must be enabled and first")
+            boq_section = next(
+                item
+                for item in self.document_sections
+                if item.section_type == "DETAILED_BOQ"
+            )
+            if not boq_section.enabled:
+                raise ValueError("DETAILED_BOQ must be enabled")
+            enabled = [item for item in ordered if item.enabled]
+            if any(item.section_type == "ACCEPTANCE" for item in enabled):
+                if enabled[-1].section_type != "ACCEPTANCE":
+                    raise ValueError("ACCEPTANCE must be the final enabled section")
+        page_positions = [item.position for item in self.visual_pages]
+        if len(page_positions) != len(set(page_positions)):
+            raise ValueError("visual page positions must be unique")
+        if self.visual_pages and self.document_sections:
+            visual = next(
+                item for item in self.document_sections if item.section_type == "VISUAL"
+            )
+            if not visual.enabled:
+                raise ValueError("VISUAL must be enabled when visual pages are present")
         for term in self.commercial_terms:
             if not str(term).strip() or len(term) > 2000:
                 raise ValueError("commercial terms must be non-empty and <= 2000 chars")
@@ -247,6 +350,37 @@ class BOQV2PaymentScheduleResponse(BaseModel):
     amount: str
 
 
+class BOQV2QuotationSectionResponse(BOQV2QuotationSectionDraft):
+    id: UUID | None = None
+
+
+class BOQV2QuotationVisualEntryResponse(BOQV2QuotationVisualEntryDraft):
+    id: UUID
+
+
+class BOQV2QuotationVisualPageResponse(BOQV2QuotationVisualPageDraft):
+    id: UUID
+    entries: list[BOQV2QuotationVisualEntryResponse] = Field(default_factory=list)
+
+
+class BOQV2QuotationMediaResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    origin_type: Literal["UPLOAD", "DAILY_REPORT", "INSPECTION"]
+    origin_id: str | None = None
+    original_filename: str | None = None
+    content_type: str
+    size_bytes: int
+    width: int
+    height: int
+    sha256: str
+    preview_url: str | None = None
+    preview_expires_in_minutes: int | None = None
+    revision_version: int | None = None
+    created_at: str
+
+
 class BOQV2QuotationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -269,6 +403,10 @@ class BOQV2QuotationResponse(BaseModel):
     payment_schedule: list[BOQV2PaymentScheduleResponse] = Field(default_factory=list)
     commercial_terms: list[str] = Field(default_factory=list)
     document_pages: list[str] = Field(default_factory=list)
+    document_schema_version: str = "boq-v2-document-snapshot-v2"
+    document_sections: list[BOQV2QuotationSectionResponse] = Field(default_factory=list)
+    visual_pages: list[BOQV2QuotationVisualPageResponse] = Field(default_factory=list)
+    media_assets: list[BOQV2QuotationMediaResponse] = Field(default_factory=list)
 
 
 class BOQV2RevisionResponse(BaseModel):
@@ -322,6 +460,36 @@ class BOQV2RevisionSummary(BaseModel):
     net_sell_ex_vat: str
     completeness_state: str
     updated_at: str
+
+
+class BOQV2QuotationListItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: UUID
+    document_number: str
+    document_kind: Literal["MAIN", "ALTERNATIVE", "CHANGE_ORDER"]
+    direction: Literal["ADD", "DEDUCT"] | None = None
+    project_id: UUID
+    project_name: str
+    revision_id: UUID
+    revision_number: int
+    status: str
+    version: int
+    customer_name: str | None = None
+    quotation_title: str | None = None
+    quotation_date: date | None = None
+    valid_until: date | None = None
+    grand_total: str
+    updated_at: str
+
+
+class BOQV2QuotationListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[BOQV2QuotationListItem] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
 
 
 class BOQV2ReuseSource(BaseModel):

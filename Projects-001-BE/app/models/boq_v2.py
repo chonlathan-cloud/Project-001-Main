@@ -205,6 +205,142 @@ class BOQV2Revision(Base):
     )
 
 
+class BOQV2QuotationSection(Base):
+    __tablename__ = "boq_v2_quotation_sections"
+    __table_args__ = (
+        CheckConstraint(
+            "section_type IN ('SUMMARY', 'DETAILED_BOQ', 'VISUAL', "
+            "'PAYMENT_TERMS', 'TERMS', 'ACCEPTANCE')",
+            name="ck_boq_v2_quote_section_type",
+        ),
+        CheckConstraint("position >= 0", name="ck_boq_v2_quote_section_position"),
+        UniqueConstraint(
+            "revision_id", "section_type", name="uq_boq_v2_quote_section_type"
+        ),
+        UniqueConstraint(
+            "revision_id", "position", name="uq_boq_v2_quote_section_position"
+        ),
+        Index("ix_boq_v2_quote_section_project", "project_id", "revision_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_v2_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    section_type = Column(String(24), nullable=False)
+    enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    position = Column(Integer, nullable=False)
+    title_th = Column(String(500), nullable=True)
+    title_en = Column(String(500), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2QuotationMedia(Base):
+    __tablename__ = "boq_v2_quotation_media"
+    __table_args__ = (
+        CheckConstraint(
+            "origin_type IN ('UPLOAD', 'DAILY_REPORT', 'INSPECTION')",
+            name="ck_boq_v2_quote_media_origin",
+        ),
+        CheckConstraint("size_bytes > 0", name="ck_boq_v2_quote_media_size"),
+        CheckConstraint(
+            "width > 0 AND height > 0", name="ck_boq_v2_quote_media_dimensions"
+        ),
+        Index("ix_boq_v2_quote_media_project", "project_id", "created_at"),
+        Index("ix_boq_v2_quote_media_revision", "revision_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_v2_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    origin_type = Column(String(20), nullable=False)
+    origin_id = Column(String(255), nullable=True)
+    storage_key = Column(String, nullable=False)
+    original_filename = Column(String(500), nullable=True)
+    content_type = Column(String(120), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    width = Column(Integer, nullable=False)
+    height = Column(Integer, nullable=False)
+    sha256 = Column(String(64), nullable=False)
+    created_by = Column(String, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2QuotationVisualPage(Base):
+    __tablename__ = "boq_v2_quotation_visual_pages"
+    __table_args__ = (
+        CheckConstraint(
+            "layout IN ('SINGLE', 'TWO_UP', 'FOUR_UP')",
+            name="ck_boq_v2_quote_visual_layout",
+        ),
+        CheckConstraint("position >= 0", name="ck_boq_v2_quote_visual_position"),
+        UniqueConstraint(
+            "revision_id", "position", name="uq_boq_v2_quote_visual_position"
+        ),
+        Index("ix_boq_v2_quote_visual_project", "project_id", "revision_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_v2_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position = Column(Integer, nullable=False)
+    layout = Column(String(16), nullable=False, server_default=text("'TWO_UP'"))
+    title_th = Column(String(500), nullable=True)
+    title_en = Column(String(500), nullable=True)
+    description_th = Column(Text, nullable=True)
+    description_en = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BOQV2QuotationVisualEntry(Base):
+    __tablename__ = "boq_v2_quotation_visual_entries"
+    __table_args__ = (
+        CheckConstraint("position >= 0", name="ck_boq_v2_quote_entry_position"),
+        UniqueConstraint("page_id", "position", name="uq_boq_v2_quote_entry_position"),
+        UniqueConstraint("page_id", "media_id", name="uq_boq_v2_quote_entry_media"),
+        Index("ix_boq_v2_quote_entry_media", "media_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    page_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_v2_quotation_visual_pages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    media_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_v2_quotation_media.id"),
+        nullable=False,
+    )
+    scope_logical_id = Column(UUID(as_uuid=True), nullable=True)
+    position = Column(Integer, nullable=False)
+    caption_th = Column(Text, nullable=True)
+    caption_en = Column(Text, nullable=True)
+
+
 class BOQV2ScopeNode(Base):
     __tablename__ = "boq_v2_scope_nodes"
     __table_args__ = (

@@ -32,6 +32,8 @@ from app.schemas.boq_v2_schema import (
     BOQV2CreateDocumentRequest,
     BOQV2PaymentScheduleResponse,
     BOQV2QuotationDraft,
+    BOQV2QuotationListItem,
+    BOQV2QuotationListResponse,
     BOQV2QuotationResponse,
     BOQV2ReuseSource,
     BOQV2RevisionResponse,
@@ -52,6 +54,11 @@ from app.services.boq_calculation_service import (
     allocate_payment_percentages,
     vat_amount,
     validate_quantity_or_rate,
+)
+from app.services.boq_composition_service import (
+    create_default_composition,
+    load_composition,
+    replace_composition,
 )
 from app.services.boq_domain_service import (
     BOQDomainError,
@@ -511,6 +518,11 @@ async def load_boq_revision(
         ),
         key=str,
     )
+    document_sections, visual_pages, media_assets = await load_composition(
+        db,
+        revision_id=revision.id,
+        legacy_document_pages=list(revision.document_pages or []),
+    )
 
     response_nodes: list[BOQV2ScopeNodeResponse] = []
     for node, depth, display_path in ordered:
@@ -618,6 +630,9 @@ async def load_boq_revision(
             payment_schedule=_payment_schedule_response(revision),
             commercial_terms=list(revision.commercial_terms or []),
             document_pages=list(revision.document_pages or []),
+            document_sections=document_sections,
+            visual_pages=visual_pages,
+            media_assets=media_assets,
         ),
         issued_at=_optional_timestamp(revision.issued_at),
         issued_by=revision.issued_by,
@@ -754,6 +769,99 @@ async def load_boq_workspace(
     )
 
 
+async def list_quotations(
+    db: AsyncSession,
+    *,
+    search: str | None,
+    status: str | None,
+    document_kind: str | None,
+    date_from: object | None,
+    date_to: object | None,
+    limit: int,
+    offset: int,
+) -> BOQV2QuotationListResponse:
+    latest = (
+        select(
+            BOQV2Revision.document_id.label("document_id"),
+            func.max(BOQV2Revision.revision_number).label("revision_number"),
+        )
+        .group_by(BOQV2Revision.document_id)
+        .subquery()
+    )
+    statement = (
+        select(BOQV2Document, BOQV2Revision, Project)
+        .join(BOQV2Revision, BOQV2Revision.document_id == BOQV2Document.id)
+        .join(
+            latest,
+            (latest.c.document_id == BOQV2Revision.document_id)
+            & (latest.c.revision_number == BOQV2Revision.revision_number),
+        )
+        .join(Project, Project.id == BOQV2Document.project_id)
+    )
+    if cleaned := str(search or "").strip():
+        pattern = f"%{cleaned}%"
+        statement = statement.where(
+            or_(
+                BOQV2Document.document_number.ilike(pattern),
+                Project.name.ilike(pattern),
+                BOQV2Revision.customer_name.ilike(pattern),
+                BOQV2Revision.quotation_title.ilike(pattern),
+            )
+        )
+    if status:
+        statement = statement.where(BOQV2Revision.status == status)
+    if document_kind:
+        statement = statement.where(BOQV2Document.document_kind == document_kind)
+    if date_from is not None:
+        statement = statement.where(BOQV2Revision.quotation_date >= date_from)
+    if date_to is not None:
+        statement = statement.where(BOQV2Revision.quotation_date <= date_to)
+
+    total = int(
+        (
+            await db.execute(
+                select(func.count()).select_from(statement.order_by(None).subquery())
+            )
+        ).scalar_one()
+    )
+    rows = (
+        await db.execute(
+            statement.order_by(
+                BOQV2Revision.updated_at.desc(),
+                BOQV2Document.document_number.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    return BOQV2QuotationListResponse(
+        items=[
+            BOQV2QuotationListItem(
+                document_id=document.id,
+                document_number=document.document_number,
+                document_kind=document.document_kind,
+                direction=document.direction,
+                project_id=project.id,
+                project_name=project.name,
+                revision_id=revision.id,
+                revision_number=revision.revision_number,
+                status=revision.status,
+                version=revision.version,
+                customer_name=revision.customer_name,
+                quotation_title=revision.quotation_title,
+                quotation_date=revision.quotation_date,
+                valid_until=revision.valid_until,
+                grand_total=_money_string(revision.grand_total),
+                updated_at=_timestamp(revision.updated_at),
+            )
+            for document, revision, project in rows
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
 async def create_boq_document(
     db: AsyncSession,
     *,
@@ -832,6 +940,7 @@ async def create_boq_document(
     await db.flush()
     db.add(revision)
     await db.flush()
+    await create_default_composition(db, revision=revision)
     db.add(plan)
     _complete_command(command, revision_id=revision.id, version=revision.version)
     _audit(
@@ -1272,6 +1381,13 @@ async def save_boq_draft(
         subtotal=result.net_sell_ex_vat,
         forecast_cost=result.forecast_cost,
     )
+    if request.quotation is not None:
+        await replace_composition(
+            db,
+            revision=revision,
+            quotation=request.quotation,
+            valid_scope_logical_ids=set(saved_by_logical),
+        )
     revision.known_estimated_cost = result.known_estimated_cost
     revision.forecast_cost = result.forecast_cost
     revision.required_cost_count = result.required_count
@@ -1435,6 +1551,7 @@ async def copy_boq_revision(
     await db.flush()
     db.add(revision)
     await db.flush()
+    await create_default_composition(db, revision=revision)
     db.add(plan)
     await db.flush()
 

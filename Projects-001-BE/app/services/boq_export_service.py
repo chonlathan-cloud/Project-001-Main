@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.cell import Cell
+from openpyxl.drawing.image import Image as WorkbookImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from reportlab.lib import colors
@@ -23,6 +24,8 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
+    Image as ReportLabImage,
+    PageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -53,6 +56,7 @@ from app.services.boq_document_service import (
 )
 from app.services.boq_domain_service import BOQDomainError
 from app.services.gcs_storage_service import (
+    download_storage_key_bytes,
     generate_signed_url_for_storage_key,
     upload_boq_export_artifact,
 )
@@ -306,7 +310,206 @@ def _write_workbook(payload: dict[str, Any], *, internal: bool) -> bytes:
         sheet.cell(row_index, 1).alignment = Alignment(wrap_text=True, vertical="top")
         row_index += 1
 
-    sheet.auto_filter.ref = f"A11:{get_column_letter(max_column)}{max(11, total_start - 2)}"
+    sheet.auto_filter.ref = (
+        f"A11:{get_column_letter(max_column)}{max(11, total_start - 2)}"
+    )
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _composition(payload: dict[str, Any]) -> dict[str, Any]:
+    value = payload.get("composition")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _enabled_section_types(payload: dict[str, Any]) -> list[str]:
+    sections = _composition(payload).get("sections") or []
+    enabled = [
+        str(item.get("section_type"))
+        for item in sorted(
+            (item for item in sections if isinstance(item, dict)),
+            key=lambda item: int(item.get("position") or 0),
+        )
+        if item.get("enabled")
+    ]
+    return enabled or ["SUMMARY", "DETAILED_BOQ", "PAYMENT_TERMS", "TERMS"]
+
+
+def _write_composed_workbook(
+    payload: dict[str, Any],
+    *,
+    media_bytes: dict[str, bytes],
+) -> bytes:
+    base = _write_workbook(payload, internal=False)
+    workbook = load_workbook(BytesIO(base))
+    detailed = workbook.active
+    detailed.title = "Detailed BOQ"
+    enabled = _enabled_section_types(payload)
+    composition = _composition(payload)
+    section_by_type = {
+        str(item.get("section_type")): item
+        for item in composition.get("sections") or []
+        if isinstance(item, dict)
+    }
+
+    def section_title(section_type: str, fallback: str) -> str:
+        item = section_by_type.get(section_type) or {}
+        values = (
+            str(item.get("title_th") or "").strip(),
+            str(item.get("title_en") or "").strip(),
+        )
+        return " / ".join(value for value in values if value) or fallback
+
+    document = dict(payload.get("document") or {})
+    revision = dict(payload.get("revision") or {})
+    project = dict(payload.get("project") or {})
+    quotation = dict(payload.get("quotation") or {})
+    calculation = dict(payload.get("calculation") or {})
+
+    summary = workbook.create_sheet("Summary", 0)
+    summary.sheet_view.showGridLines = False
+    summary.column_dimensions["A"].width = 28
+    summary.column_dimensions["B"].width = 52
+    rows = [
+        (
+            section_title("SUMMARY", "สรุปใบเสนอราคา / Quotation Summary"),
+            quotation.get("title"),
+        ),
+        ("เลขที่ / No.", document.get("number")),
+        ("ฉบับแก้ไข / Revision", revision.get("number")),
+        ("โครงการ / Project", project.get("name")),
+        ("ลูกค้า / Customer", quotation.get("customer_name")),
+        ("วันที่ / Date", quotation.get("quotation_date")),
+        ("ใช้ได้ถึง / Valid until", quotation.get("valid_until")),
+        ("รวมก่อน VAT / Net ex VAT", _number(calculation.get("net_sell_ex_vat"))),
+        ("VAT", _number(calculation.get("vat_amount"))),
+        ("ยอดรวมสุทธิ / Grand total", _number(calculation.get("grand_total"))),
+    ]
+    for row_index, (label, value) in enumerate(rows, start=1):
+        _set_text(summary.cell(row_index, 1), label)
+        summary.cell(row_index, 1).font = Font(bold=True, color="15324A")
+        if isinstance(value, (int, float)):
+            summary.cell(row_index, 2, value)
+            summary.cell(row_index, 2).number_format = '#,##0.00 "THB"'
+        else:
+            _set_text(summary.cell(row_index, 2), value)
+        summary.cell(row_index, 2).alignment = Alignment(wrap_text=True, vertical="top")
+    summary.page_setup.paperSize = summary.PAPERSIZE_A4
+    summary.sheet_properties.pageSetUpPr.fitToPage = True
+    summary.page_setup.fitToWidth = 1
+    detailed.merge_cells("A10:I10")
+    _set_text(
+        detailed["A10"],
+        section_title("DETAILED_BOQ", "รายละเอียด BOQ / Detailed BOQ"),
+    )
+    detailed["A10"].font = Font(bold=True, color="15324A")
+
+    if "VISUAL" in enabled:
+        visual = workbook.create_sheet("Visuals")
+        visual.sheet_view.showGridLines = False
+        visual.column_dimensions["A"].width = 4
+        visual.column_dimensions["B"].width = 48
+        visual.column_dimensions["C"].width = 48
+        row_index = 1
+        visual.cell(
+            row_index,
+            1,
+            section_title("VISUAL", "รูปภาพและรายละเอียดงาน / Visual & Work Detail"),
+        )
+        visual.cell(row_index, 1).font = Font(size=16, bold=True, color="15324A")
+        visual.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
+        row_index += 2
+        for page in composition.get("visual_pages") or []:
+            if not isinstance(page, dict):
+                continue
+            visual.cell(row_index, 1, page.get("title_th") or "รูปประกอบ")
+            visual.cell(row_index, 1).font = Font(bold=True, color="15324A")
+            visual.merge_cells(
+                start_row=row_index, start_column=1, end_row=row_index, end_column=3
+            )
+            row_index += 1
+            for entry_index, entry in enumerate(page.get("entries") or []):
+                if not isinstance(entry, dict):
+                    continue
+                media_id = str(entry.get("media_id"))
+                image_bytes = media_bytes.get(media_id)
+                if image_bytes:
+                    image = WorkbookImage(BytesIO(image_bytes))
+                    image.width = min(image.width, 360)
+                    image.height = min(image.height, 260)
+                    column = 2 + (entry_index % 2)
+                    visual.add_image(image, f"{get_column_letter(column)}{row_index}")
+                caption = " / ".join(
+                    value
+                    for value in (
+                        str(entry.get("caption_th") or "").strip(),
+                        str(entry.get("caption_en") or "").strip(),
+                    )
+                    if value
+                )
+                visual.cell(row_index + 14, 2 + (entry_index % 2), caption)
+                visual.cell(
+                    row_index + 14, 2 + (entry_index % 2)
+                ).alignment = Alignment(wrap_text=True)
+                if entry_index % 2 == 1:
+                    row_index += 16
+            if len(page.get("entries") or []) % 2:
+                row_index += 16
+            row_index += 2
+
+    if "PAYMENT_TERMS" in enabled:
+        payment = workbook.create_sheet("Payment Terms")
+        payment.append(
+            [
+                section_title("PAYMENT_TERMS", "เงื่อนไขการชำระเงิน / Payment Terms"),
+                "จำนวนเงิน / Amount",
+            ]
+        )
+        for cell in payment[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = HEADER_FILL
+        for item in quotation.get("payment_schedule") or []:
+            if isinstance(item, dict):
+                payment.append([item.get("label"), _number(item.get("amount"))])
+                payment.cell(payment.max_row, 2).number_format = '#,##0.00 "THB"'
+        payment.column_dimensions["A"].width = 60
+        payment.column_dimensions["B"].width = 24
+
+    if "TERMS" in enabled or "ACCEPTANCE" in enabled:
+        terms = workbook.create_sheet("Terms & Acceptance")
+        row_index = 1
+        if "TERMS" in enabled:
+            terms.cell(
+                row_index,
+                1,
+                section_title("TERMS", "ข้อกำหนดและเงื่อนไข / Terms & Conditions"),
+            )
+            terms.cell(row_index, 1).font = Font(bold=True, color="15324A")
+            row_index += 1
+            for index, term in enumerate(
+                quotation.get("commercial_terms") or [], start=1
+            ):
+                terms.cell(row_index, 1, f"{index}. {term}")
+                row_index += 1
+        if "ACCEPTANCE" in enabled:
+            row_index += 2
+            terms.cell(
+                row_index,
+                1,
+                section_title("ACCEPTANCE", "การยอมรับใบเสนอราคา / Acceptance"),
+            )
+            terms.cell(row_index, 1).font = Font(bold=True, color="15324A")
+            terms.cell(row_index + 2, 1, "ผู้อนุมัติ / Authorized by: ____________________")
+            terms.cell(row_index + 4, 1, "วันที่ / Date: ____________________")
+            terms.cell(
+                row_index + 6,
+                1,
+                "Internal recorded agreement — not a digital signature",
+            )
+        terms.column_dimensions["A"].width = 100
+
+    workbook.active = workbook.sheetnames.index("Detailed BOQ")
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -743,7 +946,7 @@ def _write_vendor_pdf(payload: dict[str, Any], *, include_prices: bool) -> bytes
     return output.getvalue()
 
 
-def _write_pdf(payload: dict[str, Any]) -> bytes:
+def _write_legacy_pdf(payload: dict[str, Any]) -> bytes:
     font_name = _register_pdf_font()
     output = BytesIO()
     document = dict(payload.get("document") or {})
@@ -786,7 +989,12 @@ def _write_pdf(payload: dict[str, Any]) -> bytes:
     right = ParagraphStyle("BOQRight", parent=normal, alignment=TA_RIGHT)
 
     def paragraph(value: object | None, style: ParagraphStyle = normal) -> Paragraph:
-        text = _safe_text(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        text = (
+            _safe_text(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
         return Paragraph(text or " ", style)
 
     story: list[Any] = [
@@ -929,7 +1137,480 @@ def _write_pdf(payload: dict[str, Any]) -> bytes:
         canvas.setFont(font_name, 7)
         canvas.setFillColor(colors.HexColor("#5F6F7A"))
         canvas.drawString(14 * mm, 8 * mm, f"{doc_number} · R{revision_number}")
-        canvas.drawRightString(A4[0] - 14 * mm, 8 * mm, f"Page {canvas.getPageNumber()}")
+        canvas.drawRightString(
+            A4[0] - 14 * mm, 8 * mm, f"Page {canvas.getPageNumber()}"
+        )
+        canvas.restoreState()
+
+    pdf.build(story, onFirstPage=footer, onLaterPages=footer)
+    return output.getvalue()
+
+
+def _write_composed_pdf(
+    payload: dict[str, Any],
+    *,
+    media_bytes: dict[str, bytes],
+) -> bytes:
+    font_name = _register_pdf_font()
+    output = BytesIO()
+    document = dict(payload.get("document") or {})
+    revision = dict(payload.get("revision") or {})
+    project = dict(payload.get("project") or {})
+    quotation = dict(payload.get("quotation") or {})
+    calculation = dict(payload.get("calculation") or {})
+    composition = _composition(payload)
+    enabled = _enabled_section_types(payload)
+    section_by_type = {
+        str(item.get("section_type")): item
+        for item in composition.get("sections") or []
+        if isinstance(item, dict)
+    }
+    media_manifest = {
+        str(item.get("id")): item
+        for item in composition.get("media_assets") or []
+        if isinstance(item, dict)
+    }
+    doc_number = _safe_text(document.get("number"))
+    revision_number = revision.get("number") or 1
+    pdf = SimpleDocTemplate(
+        output,
+        pagesize=A4,
+        leftMargin=14 * mm,
+        rightMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=17 * mm,
+        title=f"Quotation {doc_number} R{revision_number}",
+        author="RAYADEE",
+    )
+    base = getSampleStyleSheet()["Normal"]
+    normal = ParagraphStyle(
+        "ComposerNormal",
+        parent=base,
+        fontName=font_name,
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor("#2F2E2C"),
+        wordWrap="CJK",
+        shaping=True,
+    )
+    small = ParagraphStyle("ComposerSmall", parent=normal, fontSize=7.5, leading=10)
+    title_style = ParagraphStyle(
+        "ComposerTitle",
+        parent=normal,
+        fontSize=21,
+        leading=27,
+        textColor=colors.HexColor("#2F2E2C"),
+    )
+    heading = ParagraphStyle(
+        "ComposerHeading",
+        parent=normal,
+        fontSize=14,
+        leading=19,
+        textColor=colors.HexColor("#4F6F64"),
+    )
+    right = ParagraphStyle("ComposerRight", parent=normal, alignment=TA_RIGHT)
+
+    def paragraph(value: object | None, style: ParagraphStyle = normal) -> Paragraph:
+        text = (
+            _safe_text(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        return Paragraph(text or " ", style)
+
+    def section_title(section_type: str) -> str:
+        item = section_by_type.get(section_type) or {}
+        th = str(item.get("title_th") or "").strip()
+        en = str(item.get("title_en") or "").strip()
+        return (
+            " / ".join(value for value in (th, en) if value)
+            or section_type.replace("_", " ").title()
+        )
+
+    def totals_table() -> Table:
+        rows = [
+            ("รวมก่อนส่วนลด / Subtotal", calculation.get("subtotal")),
+            ("ส่วนลด / Discount", calculation.get("discount_amount")),
+            ("รวมก่อน VAT / Net ex VAT", calculation.get("net_sell_ex_vat")),
+            (
+                f"VAT {calculation.get('vat_rate') or '0'}%",
+                calculation.get("vat_amount"),
+            ),
+            ("ยอดรวมสุทธิ / Grand total", calculation.get("grand_total")),
+        ]
+        table = Table(
+            [
+                [
+                    paragraph(label, right),
+                    paragraph(f"{_decimal(value):,.2f} THB", right),
+                ]
+                for label, value in rows
+            ],
+            colWidths=[112 * mm, 57 * mm],
+            hAlign="RIGHT",
+        )
+        table.setStyle(
+            TableStyle(
+                [
+                    ("FONTNAME", (0, 0), (-1, -1), font_name),
+                    ("LINEABOVE", (0, -1), (-1, -1), 0.7, colors.HexColor("#4F6F64")),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#EAF2EE")),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        return table
+
+    story: list[Any] = []
+    started = False
+
+    def begin_section(section_type: str) -> None:
+        nonlocal started
+        if started:
+            story.append(PageBreak())
+        started = True
+        story.extend(
+            [paragraph(section_title(section_type), heading), Spacer(1, 5 * mm)]
+        )
+
+    for section_type in enabled:
+        if section_type == "SUMMARY":
+            begin_section(section_type)
+            story.extend(
+                [
+                    paragraph(
+                        quotation.get("title") or "ใบเสนอราคา / Quotation", title_style
+                    ),
+                    Spacer(1, 6 * mm),
+                ]
+            )
+            identity = [
+                [
+                    paragraph("เลขที่ / No."),
+                    paragraph(doc_number),
+                    paragraph("ฉบับ / Revision"),
+                    paragraph(revision_number),
+                ],
+                [
+                    paragraph("โครงการ / Project"),
+                    paragraph(project.get("name")),
+                    paragraph("วันที่ / Date"),
+                    paragraph(quotation.get("quotation_date")),
+                ],
+                [
+                    paragraph("ลูกค้า / Customer"),
+                    paragraph(quotation.get("customer_name")),
+                    paragraph("ใช้ได้ถึง / Valid until"),
+                    paragraph(quotation.get("valid_until")),
+                ],
+                [
+                    paragraph("ที่อยู่ / Address"),
+                    paragraph(quotation.get("customer_address")),
+                    paragraph("เลขผู้เสียภาษี / Tax ID"),
+                    paragraph(quotation.get("customer_tax_id")),
+                ],
+                [
+                    paragraph("ผู้ติดต่อ / Contact"),
+                    paragraph(quotation.get("customer_contact")),
+                    paragraph("สกุลเงิน / Currency"),
+                    paragraph(quotation.get("currency") or "THB"),
+                ],
+            ]
+            table = Table(identity, colWidths=[29 * mm, 65 * mm, 32 * mm, 43 * mm])
+            table.setStyle(
+                TableStyle(
+                    [
+                        ("FONTNAME", (0, 0), (-1, -1), font_name),
+                        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F3F0EC")),
+                        ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#F3F0EC")),
+                        (
+                            "LINEBELOW",
+                            (0, 0),
+                            (-1, -1),
+                            0.25,
+                            colors.HexColor("#D8D2CA"),
+                        ),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                        ("TOPPADDING", (0, 0), (-1, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ]
+                )
+            )
+            story.extend([table, Spacer(1, 10 * mm), totals_table()])
+
+        elif section_type == "DETAILED_BOQ":
+            begin_section(section_type)
+            table_data: list[list[Any]] = [
+                [
+                    paragraph("#", small),
+                    paragraph("รายละเอียด / Scope", small),
+                    paragraph("จำนวน / Qty", small),
+                    paragraph("หน่วย / Unit", small),
+                    paragraph("วัสดุ / Material", small),
+                    paragraph("แรง / Labor", small),
+                    paragraph("รวม / Total", small),
+                ]
+            ]
+            row_kinds: list[str] = []
+            item_number = 0
+            for node in _included_scope(payload):
+                if node.get("node_kind") != "ITEM":
+                    table_data.append(
+                        [
+                            paragraph(node.get("description") or node.get("node_kind")),
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                        ]
+                    )
+                    row_kinds.append("section")
+                    continue
+                item_number += 1
+                description = _safe_text(node.get("description"))
+                if node.get("specification"):
+                    description = f"{description}<br/><font size='7'>{_safe_text(node.get('specification'))}</font>"
+                table_data.append(
+                    [
+                        paragraph(item_number, small),
+                        paragraph(description, small),
+                        paragraph(f"{_decimal(node.get('quantity')):,.2f}", small),
+                        paragraph(node.get("unit"), small),
+                        paragraph(
+                            f"{_decimal(node.get('sell_material_unit_rate')):,.2f}",
+                            small,
+                        ),
+                        paragraph(
+                            f"{_decimal(node.get('sell_labor_unit_rate')):,.2f}", small
+                        ),
+                        paragraph(f"{_decimal(node.get('sell_total')):,.2f}", small),
+                    ]
+                )
+                row_kinds.append("item")
+            scope_table = Table(
+                table_data,
+                colWidths=[
+                    10 * mm,
+                    70 * mm,
+                    17 * mm,
+                    16 * mm,
+                    20 * mm,
+                    18 * mm,
+                    22 * mm,
+                ],
+                repeatRows=1,
+                splitByRow=1,
+            )
+            commands: list[tuple[Any, ...]] = [
+                ("FONTNAME", (0, 0), (-1, -1), font_name),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F6F64")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#D8D2CA")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (2, 1), (2, -1), "RIGHT"),
+                ("ALIGN", (4, 1), (-1, -1), "RIGHT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+            for offset, kind in enumerate(row_kinds, start=1):
+                if kind == "section":
+                    commands.extend(
+                        [
+                            ("SPAN", (0, offset), (-1, offset)),
+                            (
+                                "BACKGROUND",
+                                (0, offset),
+                                (-1, offset),
+                                colors.HexColor("#EDF2F0"),
+                            ),
+                        ]
+                    )
+            scope_table.setStyle(TableStyle(commands))
+            story.extend([scope_table, Spacer(1, 6 * mm), totals_table()])
+
+        elif section_type == "VISUAL":
+            pages = [
+                page
+                for page in composition.get("visual_pages") or []
+                if isinstance(page, dict)
+            ]
+            if not pages:
+                continue
+            begin_section(section_type)
+            for page_index, page in enumerate(pages):
+                if page_index:
+                    story.append(PageBreak())
+                page_title = " / ".join(
+                    value
+                    for value in (
+                        str(page.get("title_th") or "").strip(),
+                        str(page.get("title_en") or "").strip(),
+                    )
+                    if value
+                )
+                if page_title:
+                    story.extend([paragraph(page_title, heading), Spacer(1, 2 * mm)])
+                descriptions = " / ".join(
+                    value
+                    for value in (
+                        str(page.get("description_th") or "").strip(),
+                        str(page.get("description_en") or "").strip(),
+                    )
+                    if value
+                )
+                if descriptions:
+                    story.extend([paragraph(descriptions), Spacer(1, 4 * mm)])
+                layout = str(page.get("layout") or "TWO_UP")
+                columns = 1 if layout == "SINGLE" else 2
+                cell_width = 169 * mm if columns == 1 else 82 * mm
+                max_height = (
+                    112 * mm
+                    if columns == 1
+                    else (72 * mm if layout == "TWO_UP" else 55 * mm)
+                )
+                cells: list[Any] = []
+                for entry in page.get("entries") or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    media_id = str(entry.get("media_id"))
+                    image_bytes = media_bytes.get(media_id)
+                    manifest = media_manifest.get(media_id) or {}
+                    if not image_bytes:
+                        raise BOQDomainError(
+                            "EXPORT_MEDIA_MISSING",
+                            "Frozen quotation visual media is unavailable",
+                        )
+                    visual = ReportLabImage(BytesIO(image_bytes))
+                    width = float(manifest.get("width") or visual.imageWidth or 1)
+                    height = float(manifest.get("height") or visual.imageHeight or 1)
+                    scale = min(cell_width / width, max_height / height)
+                    visual.drawWidth = width * scale
+                    visual.drawHeight = height * scale
+                    caption = " / ".join(
+                        value
+                        for value in (
+                            str(entry.get("caption_th") or "").strip(),
+                            str(entry.get("caption_en") or "").strip(),
+                        )
+                        if value
+                    )
+                    cell = Table(
+                        [[visual], [paragraph(caption or " ", small)]],
+                        colWidths=[cell_width],
+                    )
+                    cell.setStyle(
+                        TableStyle(
+                            [
+                                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                            ]
+                        )
+                    )
+                    cells.append(cell)
+                rows = [
+                    cells[index : index + columns]
+                    for index in range(0, len(cells), columns)
+                ]
+                if rows:
+                    if len(rows[-1]) < columns:
+                        rows[-1].extend([""] * (columns - len(rows[-1])))
+                    gallery = Table(
+                        rows, colWidths=[cell_width] * columns, hAlign="LEFT"
+                    )
+                    gallery.setStyle(
+                        TableStyle(
+                            [
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                            ]
+                        )
+                    )
+                    story.append(gallery)
+
+        elif section_type == "PAYMENT_TERMS":
+            begin_section(section_type)
+            schedule_rows = [
+                [paragraph("งวด / Milestone"), paragraph("จำนวนเงิน / Amount", right)]
+            ]
+            for item in quotation.get("payment_schedule") or []:
+                if isinstance(item, dict):
+                    schedule_rows.append(
+                        [
+                            paragraph(item.get("label")),
+                            paragraph(
+                                f"{_decimal(item.get('amount')):,.2f} THB", right
+                            ),
+                        ]
+                    )
+            table = Table(schedule_rows, colWidths=[115 * mm, 54 * mm])
+            table.setStyle(
+                TableStyle(
+                    [
+                        ("FONTNAME", (0, 0), (-1, -1), font_name),
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F6F64")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        (
+                            "LINEBELOW",
+                            (0, 0),
+                            (-1, -1),
+                            0.25,
+                            colors.HexColor("#D8D2CA"),
+                        ),
+                        ("TOPPADDING", (0, 0), (-1, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ]
+                )
+            )
+            story.append(table)
+
+        elif section_type == "TERMS":
+            begin_section(section_type)
+            for index, term in enumerate(
+                quotation.get("commercial_terms") or [], start=1
+            ):
+                story.extend([paragraph(f"{index}. {term}"), Spacer(1, 2 * mm)])
+
+        elif section_type == "ACCEPTANCE":
+            begin_section(section_type)
+            story.extend(
+                [
+                    paragraph(
+                        "ข้าพเจ้ายอมรับรายละเอียด ราคา และเงื่อนไขตามใบเสนอราคาฉบับนี้ / I accept the scope, price, and terms of this quotation."
+                    ),
+                    Spacer(1, 22 * mm),
+                    paragraph(
+                        "ลงชื่อผู้มีอำนาจ / Authorized signature: ______________________________"
+                    ),
+                    Spacer(1, 12 * mm),
+                    paragraph("ชื่อ / Name: ______________________________"),
+                    Spacer(1, 12 * mm),
+                    paragraph("วันที่ / Date: ______________________________"),
+                    Spacer(1, 18 * mm),
+                    paragraph(
+                        "บันทึกการยอมรับภายใน ไม่ใช่ลายมือชื่อดิจิทัล / Internal recorded agreement — not a digital signature",
+                        small,
+                    ),
+                ]
+            )
+
+    def footer(canvas: Any, _document: Any) -> None:
+        canvas.saveState()
+        canvas.setFont(font_name, 7)
+        canvas.setFillColor(colors.HexColor("#5F6F7A"))
+        canvas.drawString(14 * mm, 8 * mm, f"{doc_number} · R{revision_number}")
+        canvas.drawRightString(
+            A4[0] - 14 * mm, 8 * mm, f"Page {canvas.getPageNumber()}"
+        )
         canvas.restoreState()
 
     pdf.build(story, onFirstPage=footer, onLaterPages=footer)
@@ -942,10 +1623,13 @@ def render_export_bytes(
     audience: str,
     file_format: str,
     audience_payload: dict[str, Any] | None = None,
+    media_bytes: dict[str, bytes] | None = None,
 ) -> bytes:
     if audience in {"RFQ", "VENDOR"}:
         if not isinstance(audience_payload, dict):
-            raise BOQDomainError("EXPORT_SCOPE_INVALID", "Frozen vendor export scope is unavailable")
+            raise BOQDomainError(
+                "EXPORT_SCOPE_INVALID", "Frozen vendor export scope is unavailable"
+            )
         if file_format == "XLSX":
             return _write_vendor_workbook(
                 audience_payload, include_prices=audience == "VENDOR"
@@ -956,9 +1640,16 @@ def render_export_bytes(
             )
     payload = _payload(snapshot, audience)
     if file_format == "XLSX":
+        if (
+            audience == "CUSTOMER"
+            and payload.get("schema_version") == "boq-v2-document-snapshot-v2"
+        ):
+            return _write_composed_workbook(payload, media_bytes=media_bytes or {})
         return _write_workbook(payload, internal=audience == "INTERNAL")
     if file_format == "PDF" and audience == "CUSTOMER":
-        return _write_pdf(payload)
+        if payload.get("schema_version") == "boq-v2-document-snapshot-v2":
+            return _write_composed_pdf(payload, media_bytes=media_bytes or {})
+        return _write_legacy_pdf(payload)
     raise BOQDomainError(
         "EXPORT_FORMAT_NOT_SUPPORTED",
         "Unsupported export audience/format combination",
@@ -1162,11 +1853,39 @@ async def render_and_upload_export(
             "EXPORT_SNAPSHOT_MISSING", "Immutable export snapshot is unavailable"
         )
     try:
+        media_bytes: dict[str, bytes] = {}
+        if (
+            artifact.audience == "CUSTOMER"
+            and dict(snapshot.customer_payload or {}).get("schema_version")
+            == "boq-v2-document-snapshot-v2"
+        ):
+            composition = dict(
+                dict(snapshot.internal_payload or {}).get("composition") or {}
+            )
+            for item in composition.get("media_assets") or []:
+                if not isinstance(item, dict):
+                    continue
+                media_id = str(item.get("id") or "")
+                storage_key = str(item.get("storage_key") or "")
+                expected_hash = str(item.get("sha256") or "")
+                if not media_id or not storage_key or not expected_hash:
+                    raise BOQDomainError(
+                        "EXPORT_MEDIA_MISSING",
+                        "Frozen quotation visual media metadata is incomplete",
+                    )
+                rendered_bytes = await download_storage_key_bytes(storage_key)
+                if hashlib.sha256(rendered_bytes).hexdigest() != expected_hash:
+                    raise BOQDomainError(
+                        "EXPORT_MEDIA_HASH_MISMATCH",
+                        "Frozen quotation visual media failed its integrity check",
+                    )
+                media_bytes[media_id] = rendered_bytes
         file_bytes = render_export_bytes(
             snapshot,
             audience=artifact.audience,
             file_format=artifact.file_format,
             audience_payload=artifact.audience_payload,
+            media_bytes=media_bytes,
         )
         storage_key = await upload_boq_export_artifact(
             project_id=str(artifact.project_id),
