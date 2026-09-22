@@ -1194,6 +1194,14 @@ def _write_composed_pdf(
         shaping=True,
     )
     small = ParagraphStyle("ComposerSmall", parent=normal, fontSize=7.5, leading=10)
+    item_specification = ParagraphStyle(
+        "ComposerItemSpecification",
+        parent=small,
+        fontSize=7,
+        leading=9,
+        textColor=colors.HexColor("#696661"),
+        spaceBefore=1.5,
+    )
     title_style = ParagraphStyle(
         "ComposerTitle",
         parent=normal,
@@ -1374,12 +1382,15 @@ def _write_composed_pdf(
                     continue
                 item_number += 1
                 description = _safe_text(node.get("description"))
+                description_flowables = [paragraph(description, small)]
                 if node.get("specification"):
-                    description = f"{description}<br/><font size='7'>{_safe_text(node.get('specification'))}</font>"
+                    description_flowables.append(
+                        paragraph(node.get("specification"), item_specification)
+                    )
                 table_data.append(
                     [
                         paragraph(item_number, small),
-                        paragraph(description, small),
+                        description_flowables,
                         paragraph(f"{_decimal(node.get('quantity')):,.2f}", small),
                         paragraph(node.get("unit"), small),
                         paragraph(

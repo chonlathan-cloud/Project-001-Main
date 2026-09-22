@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 from datetime import date
 from io import BytesIO
@@ -584,6 +585,12 @@ def test_export_artifact_authorization_ownership_and_private_download(
         assert artifact["snapshot_id"] == issued_a["issued_snapshot_id"]
         assert artifact["calculation_version"] == "boq-v2-calc-v1"
         assert artifact["sha256"] and artifact["size_bytes"] > 0
+        original_artifact_sha256 = artifact["sha256"]
+        original_artifact_bytes = uploaded["file_bytes"]
+        assert (
+            hashlib.sha256(original_artifact_bytes).hexdigest()
+            == original_artifact_sha256
+        )
         assert "download_url" not in uploaded
         assert uploaded["project_id"] == project_a
 
@@ -627,6 +634,7 @@ def test_export_artifact_authorization_ownership_and_private_download(
         )
         assert repeated.status_code == 201, repeated.text
         assert repeated.json()["data"]["artifact_id"] == artifact["artifact_id"]
+        assert repeated.json()["data"]["sha256"] == original_artifact_sha256
         assert upload_calls.count(artifact["artifact_id"]) == 1
         assert len(upload_calls) == 2
 

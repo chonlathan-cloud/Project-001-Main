@@ -206,6 +206,9 @@ def test_v2_customer_exports_include_sections_visuals_and_nonblank_pdf(
     ).stdout
     assert "QT-2026-000777" in extracted
     assert "Detailed BOQ" in extracted
+    assert "SPC 5 mm" in extracted
+    assert "<br/>" not in extracted
+    assert "<font" not in extracted
     assert "Installation area" in extracted
     assert "Internal recorded agreement" in extracted
     render_prefix = tmp_path / "phase7-page"
