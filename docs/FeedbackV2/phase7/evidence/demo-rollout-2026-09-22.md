@@ -123,3 +123,33 @@ Resume the remaining click-through after dismissing the open Chrome extension
 UI: Center search -> open `Renovation The Mall` -> compose visuals -> preview ->
 issue -> export PDF/XLSX -> verify pinned exact snapshot at 1440, 1024, 768, and
 390 px.
+
+## Device-upload frontend follow-up
+
+This additive frontend-only follow-up was deployed to Demo after the main
+Phase 7 rollout. It did not run a migration or deploy the backend.
+
+- Commit: `aa6da55d412aeb34aa54acb92c437e31e6d40b16`
+- Image tag: `aa6da55-phase7-device-upload-demo`
+- Image manifest-list digest:
+  `sha256:47bc5538baca06f32fd4a8a998381354a2b2633f8d32b246b479c40ec18d4044`
+- Cloud Run revision: `projects-001-fe-00064-8xt`, 100% traffic
+- Predecessor and replacement revision `.spec` hashes, canonicalized without
+  the container image: both
+  `424db53aa69cd7c303edcfa4ef071cc46e77a95d105b5542023c7e54e93395e1`
+- Demo frontend `/` and `/quotations`: HTTP 200
+- Demo backend `/health`: HTTP 200 with `{"status":"ok"}`
+- New frontend revision ERROR-or-5xx logs since creation: zero
+- Beta frontend remained `projects-001-fe-beta-00019-9k7` at 100% traffic.
+
+Validation for the follow-up was `18 passed`, ESLint passed, production build
+passed with the existing chunk-size warning, and `git diff --check` passed.
+The existing dependency audit result (four moderate and six high findings) was
+not changed by this implementation.
+
+The authenticated Demo composer was verified read-only after deploy. The
+Visual editor shows the bilingual local-device upload action, multiple-file
+and drag/drop guidance, separate Daily Report/Inspection import, supported
+formats, 10 MB per-image limit, and Draft-only rule. No file was uploaded and
+no Demo record was changed during this verification. The extension-controlled
+viewport screenshot path remains blocked by another Chrome extension UI.
