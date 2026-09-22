@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   addMediaToVisualPages,
   chunkScopeRows,
+  composeUploadedMedia,
   defaultDocumentSections,
   legacyPagesFromSections,
   moveDocumentSection,
@@ -50,6 +51,33 @@ test('visual media fills the current layout then creates a new page', () => {
   assert.equal(second[0].entries.length, 2);
   assert.equal(third.length, 2);
   assert.deepEqual(third.map((page) => page.position), [0, 1]);
+});
+
+test('device uploads enable Visual and flow into new pages automatically', () => {
+  const composed = composeUploadedMedia(
+    [],
+    defaultDocumentSections(),
+    ['media-1', 'media-2', 'media-3', 'media-4', 'media-5'],
+  );
+  assert.equal(
+    composed.document_sections.find((section) => section.section_type === 'VISUAL').enabled,
+    true,
+  );
+  assert.deepEqual(composed.visual_pages.map((page) => page.entries.length), [2, 2, 1]);
+  assert.deepEqual(
+    composed.visual_pages.flatMap((page) => page.entries.map((entry) => entry.media_id)),
+    ['media-1', 'media-2', 'media-3', 'media-4', 'media-5'],
+  );
+});
+
+test('empty upload selection preserves Visual state without creating pages', () => {
+  const sections = defaultDocumentSections();
+  const composed = composeUploadedMedia([], sections, []);
+  assert.equal(composed.visual_pages.length, 0);
+  assert.equal(
+    composed.document_sections.find((section) => section.section_type === 'VISUAL').enabled,
+    false,
+  );
 });
 
 test('removing the final visual entry also removes its invalid empty page', () => {

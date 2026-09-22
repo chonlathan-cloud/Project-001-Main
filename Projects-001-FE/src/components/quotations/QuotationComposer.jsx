@@ -38,6 +38,7 @@ import { buildSavePayload, normalizeQuotationDraft, parseRevisionDraft } from '.
 import QuotationDocumentPreview from './QuotationDocumentPreview';
 import {
   addMediaToVisualPages,
+  composeUploadedMedia,
   draftDocumentFromRevision,
   moveDocumentSection,
   moveVisualPage,
@@ -108,8 +109,22 @@ function MediaLibrary({ assets, mediaUrls, usedIds, mutable, busy, onAdd, onDele
   );
 }
 
-function VisualEditor({ quotation, nodes, mediaUrls, mutable, busy, onChange, onUpload, onOpenCandidates, onDeleteMedia }) {
+function VisualEditor({
+  quotation,
+  nodes,
+  mediaUrls,
+  mutable,
+  busy,
+  uploadProgress,
+  failedUploadCount,
+  onChange,
+  onUpload,
+  onRetryUploads,
+  onOpenCandidates,
+  onDeleteMedia,
+}) {
   const fileInputRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
   const pages = quotation.visual_pages || [];
   const assets = quotation.media_assets || [];
   const usedIds = new Set(pages.flatMap((page) => page.entries.map((entry) => String(entry.media_id))));
@@ -117,14 +132,76 @@ function VisualEditor({ quotation, nodes, mediaUrls, mutable, busy, onChange, on
     visual_pages: addMediaToVisualPages(pages, mediaId),
     document_sections: toggleDocumentSection(quotation.document_sections, 'VISUAL', true),
   });
+  const chooseFiles = () => fileInputRef.current?.click();
+  const submitFiles = (files) => {
+    const selected = [...(files || [])];
+    if (selected.length) onUpload(selected);
+  };
+  const handleFileChange = (event) => {
+    submitFiles(event.target.files);
+    event.target.value = '';
+  };
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setDragging(false);
+    if (!mutable || busy) return;
+    submitFiles(event.dataTransfer.files);
+  };
   return (
     <div className="quotation-visual-editor">
-      <div className="quotation-visual-actions">
-        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => onUpload([...event.target.files])} />
-        <button type="button" className="boq-button boq-button-primary" onClick={() => fileInputRef.current?.click()} disabled={!mutable || busy}><Upload size={15} /> {busy ? 'Uploading…' : 'Upload photos'}</button>
-        <button type="button" className="boq-button boq-button-secondary" onClick={onOpenCandidates} disabled={!mutable || busy}><ImagePlus size={15} /> Choose project photos</button>
-        <span>JPEG, PNG, WebP, HEIC/HEIF · max 10 MB</span>
+      <div className="quotation-media-source-grid">
+        <div
+          className={`quotation-media-source quotation-media-source-device${dragging ? ' is-dragging' : ''}`}
+          onDragEnter={(event) => { event.preventDefault(); if (mutable && !busy) setDragging(true); }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false);
+          }}
+          onDrop={handleDrop}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".jpg,.jpeg,.png,.webp,.heic,.heif,image/jpeg,image/png,image/webp,image/heic,image/heif"
+            multiple
+            hidden
+            onChange={handleFileChange}
+          />
+          <span className="quotation-media-source-icon"><Upload size={20} /></span>
+          <div>
+            <strong>อัปโหลดรูปจากเครื่อง</strong>
+            <span>Upload from this device</span>
+            <p>ลากรูปมาวาง หรือเลือกหลายไฟล์ ระบบจะเพิ่มลงหน้า Visual ให้อัตโนมัติ</p>
+          </div>
+          <button type="button" className="boq-button boq-button-primary" onClick={chooseFiles} disabled={!mutable || busy}>
+            <Upload size={15} /> {uploadProgress ? 'กำลังอัปโหลด…' : 'เลือกไฟล์ / Choose files'}
+          </button>
+        </div>
+        <div className="quotation-media-source quotation-media-source-project">
+          <span className="quotation-media-source-icon"><ImagePlus size={20} /></span>
+          <div>
+            <strong>เลือกรูปที่มีอยู่ในโครงการ</strong>
+            <span>Daily Report & Inspection</span>
+            <p>ใช้เมื่อโครงการมีรูปอยู่แล้ว ระบบจะคัดลอกมาเก็บกับใบเสนอราคา</p>
+          </div>
+          <button type="button" className="boq-button boq-button-secondary" onClick={onOpenCandidates} disabled={!mutable || busy}>
+            <ImagePlus size={15} /> เลือกรูปจากโครงการ
+          </button>
+        </div>
       </div>
+      <p className="quotation-upload-rules">รองรับ JPEG, PNG, WebP, HEIC/HEIF · ไม่เกิน 10 MB ต่อรูป · Draft เท่านั้น</p>
+      {uploadProgress ? (
+        <div className="quotation-upload-progress" role="status" aria-live="polite">
+          <div><strong>กำลังอัปโหลด {uploadProgress.completed}/{uploadProgress.total}</strong><span>{uploadProgress.currentName}</span></div>
+          <progress max={uploadProgress.total} value={uploadProgress.completed} />
+        </div>
+      ) : null}
+      {failedUploadCount ? (
+        <div className="quotation-upload-retry" role="alert">
+          <span>{failedUploadCount} รูปอัปโหลดไม่สำเร็จ</span>
+          <button type="button" onClick={onRetryUploads} disabled={!mutable || busy}>ลองใหม่เฉพาะไฟล์ที่ล้มเหลว</button>
+        </div>
+      ) : null}
       <MediaLibrary assets={assets} mediaUrls={mediaUrls} usedIds={usedIds} mutable={mutable} busy={busy} onAdd={addAsset} onDelete={onDeleteMedia} />
       <div className="quotation-visual-pages-editor">
         {pages.map((page, pageIndex) => (
@@ -217,6 +294,8 @@ export default function QuotationComposer() {
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState(null);
   const [candidates, setCandidates] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(null);
+  const [failedUploads, setFailedUploads] = useState([]);
   const isOwner = canAccessOwnerArea(getStoredAuthUser());
   const mutable = Boolean(isOwner && revision?.status === 'DRAFT' && !snapshotId);
 
@@ -332,23 +411,58 @@ export default function QuotationComposer() {
   };
 
   const upload = async (files) => {
-    if (!files.length || !mutable) return;
-    if (dirty) { setError(new Error('Save document edits before uploading media.')); return; }
+    const queue = [...(files || [])];
+    if (!queue.length || !mutable) return;
+    const baseRevision = dirty ? await save() : revision;
+    if (!baseRevision) return;
     setBusy(true);
     setError(null);
-    let version = revision.version;
+    setFailedUploads([]);
+    setUploadProgress({ completed: 0, total: queue.length, currentName: queue[0].name });
+    const baseQuotation = normalizeQuotationDraft(baseRevision.quotation);
+    const baseNodes = parseRevisionDraft(baseRevision);
+    let version = baseRevision.version;
     const failures = [];
-    for (const file of files) {
-      try {
-        const media = await uploadNativeBoqMedia(revision.revision_id, version, file);
-        version = media.revision_version;
-      } catch (requestError) {
-        failures.push(`${file.name}: ${domainMessage(requestError)}`);
+    const uploadedMediaIds = [];
+    let compositionFailure = null;
+    try {
+      for (const [index, file] of queue.entries()) {
+        setUploadProgress({ completed: index, total: queue.length, currentName: file.name });
+        try {
+          const media = await uploadNativeBoqMedia(baseRevision.revision_id, version, file);
+          version = media.revision_version;
+          uploadedMediaIds.push(media.id);
+        } catch (requestError) {
+          failures.push({ file, message: `${file.name}: ${domainMessage(requestError)}` });
+        }
+        setUploadProgress({ completed: index + 1, total: queue.length, currentName: file.name });
       }
+      if (uploadedMediaIds.length) {
+        const composition = composeUploadedMedia(
+          baseQuotation.visual_pages,
+          baseQuotation.document_sections,
+          uploadedMediaIds,
+        );
+        try {
+          await saveNativeBoqDraft(
+            baseRevision.revision_id,
+            buildSavePayload(version, baseNodes, { ...baseQuotation, ...composition }),
+          );
+          setActiveSection('VISUAL');
+        } catch (requestError) {
+          compositionFailure = new Error(
+            `Uploaded photos are safe in the media library, but could not be added to Visual pages: ${domainMessage(requestError)}`,
+          );
+        }
+      }
+      await load();
+      setFailedUploads(failures);
+      if (compositionFailure) setError(compositionFailure);
+      else if (failures.length) setError(new Error(`Some uploads failed: ${failures.map((item) => item.message).join(' · ')}`));
+    } finally {
+      setUploadProgress(null);
+      setBusy(false);
     }
-    await load();
-    if (failures.length) setError(new Error(`Some uploads failed: ${failures.join(' · ')}`));
-    setBusy(false);
   };
 
   const openCandidates = async () => {
@@ -421,7 +535,7 @@ export default function QuotationComposer() {
           <header><div><span className="boq-eyebrow">SECTION {activeDefinition.position + 1}</span><h2 id="quotation-editor-title">{activeDefinition.title_th}<small>{activeDefinition.title_en}</small></h2></div>{!activeDefinition.enabled ? <span className="quotation-section-disabled">Excluded from output</span> : null}</header>
           {activeSection === 'SUMMARY' ? <SectionFields quotation={quotation} mutable={mutable} onChange={change} /> : null}
           {activeSection === 'DETAILED_BOQ' ? <div className="quotation-linked-boq"><strong>Source of truth: Native BOQ</strong><p>Scope, quantities and customer prices are edited in the BOQ workspace and rendered here without duplicating state.</p><Link className="boq-button boq-button-secondary" to={`/project/detail/${revision.project_id}/boq?revision=${revision.revision_id}`}>Open source BOQ</Link></div> : null}
-          {activeSection === 'VISUAL' ? <VisualEditor quotation={quotation} nodes={nodes} mediaUrls={mediaUrls} mutable={mutable} busy={busy} onChange={change} onUpload={upload} onOpenCandidates={openCandidates} onDeleteMedia={deleteMedia} /> : null}
+          {activeSection === 'VISUAL' ? <VisualEditor quotation={quotation} nodes={nodes} mediaUrls={mediaUrls} mutable={mutable} busy={busy} uploadProgress={uploadProgress} failedUploadCount={failedUploads.length} onChange={change} onUpload={upload} onRetryUploads={() => upload(failedUploads.map((item) => item.file))} onOpenCandidates={openCandidates} onDeleteMedia={deleteMedia} /> : null}
           {activeSection === 'PAYMENT_TERMS' ? <PaymentEditor quotation={quotation} mutable={mutable} onChange={change} /> : null}
           {activeSection === 'TERMS' ? <label className="quotation-terms-editor"><span>หนึ่งเงื่อนไขต่อบรรทัด / One term per line</span><textarea rows="14" value={(quotation.commercial_terms || []).join('\n')} onChange={(event) => change({ commercial_terms: event.target.value.split('\n').filter((line) => line.trim()) })} disabled={!mutable} /></label> : null}
           {activeSection === 'ACCEPTANCE' ? <div className="quotation-acceptance-editor"><strong>Printable acceptance placeholders</strong><p>ส่วนนี้แสดงช่องลายเซ็นบนเอกสารเท่านั้น การยอมรับในระบบยังใช้ lifecycle “Record acceptance” และไม่ใช่ digital signature.</p></div> : null}

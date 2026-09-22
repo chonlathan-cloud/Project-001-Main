@@ -148,6 +148,19 @@ export function addMediaToVisualPages(pages, mediaId) {
   ));
 }
 
+export function composeUploadedMedia(pages, sections, mediaIds = []) {
+  const visualPages = mediaIds.reduce(
+    (current, mediaId) => addMediaToVisualPages(current, mediaId),
+    pages,
+  );
+  return {
+    visual_pages: visualPages,
+    document_sections: mediaIds.length
+      ? toggleDocumentSection(sections, 'VISUAL', true)
+      : normalizeDocumentSections(sections),
+  };
+}
+
 export function updateVisualPage(pages, pageIndex, updates) {
   return normalizeVisualPages(pages.map((page, index) => (
     index === pageIndex ? { ...page, ...updates } : page
