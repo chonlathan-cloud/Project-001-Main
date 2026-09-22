@@ -821,7 +821,10 @@ export default function BoqWorkspace() {
     setBusy(true);
     setSaveError(null);
     try {
-      const issued = await issueNativeBoqQuotation(revision.revision_id, revision.version);
+      const checkedPreview = await createNativeBoqPreview(revision.revision_id, revision.version);
+      const issued = await issueNativeBoqQuotation(revision.revision_id, revision.version, {
+        previewSnapshotId: checkedPreview.snapshot.snapshot_id,
+      });
       selectRevision(issued);
       setWorkspace(await getNativeBoqWorkspace(projectId));
     } catch (requestError) {

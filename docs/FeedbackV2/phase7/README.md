@@ -31,6 +31,18 @@ visual media.
 - Uploads are streamed with a default 10 MiB limit. Signed URLs are short-lived
   and scoped to a media record belonging to the requested revision.
 - Issue and export fail closed on missing media or SHA-256 mismatch.
+- The composer supplies the reviewed preview snapshot identity when issuing;
+  the backend rejects it if its source version no longer matches the draft.
+
+## Frontend
+
+- `/quotations` is the dense, searchable Quotation Center.
+- `/quotations/:quotationId?revision_id=...&snapshot_id=...` pins the document,
+  revision, and optional immutable snapshot.
+- The composer uses a section rail, focused editor, and canonical multi-page A4
+  preview. Mobile uses separate edit/preview modes with a fitted page preview.
+- Drafts remain editable only by Owners. Issued/accepted snapshots are
+  read-only; Admin retains read/export access.
 
 ## Rollout boundary
 
@@ -38,4 +50,5 @@ This phase is authorized for isolated validation and the demo environment only.
 No beta/production migration, deployment, IAM change, or production data change
 is part of this implementation.
 
-See [backend validation evidence](evidence/backend-validation-2026-09-22.md).
+See [backend validation evidence](evidence/backend-validation-2026-09-22.md)
+and [frontend validation evidence](evidence/frontend-validation-2026-09-22.md).

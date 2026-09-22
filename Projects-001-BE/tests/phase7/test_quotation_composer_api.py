@@ -185,6 +185,32 @@ def test_composer_snapshot_center_and_media_ownership(
                 section["enabled"] = True
             section.pop("id", None)
         logical_id = str(uuid4())
+        scope_node = {
+            "logical_id": logical_id,
+            "parent_logical_id": None,
+            "node_kind": "ITEM",
+            "inclusion_state": "REQUIRED",
+            "position": 0,
+            "item_code": "P7-001",
+            "description": "งานพื้น",
+            "specification": "SPC",
+            "quantity": "10.0000",
+            "unit": "m²",
+            "sell_material_unit_rate": "100.0000",
+            "sell_labor_unit_rate": "20.0000",
+            "components": [
+                {
+                    "component_type": "MATERIAL",
+                    "cost_state": "PRICED",
+                    "unit_rate": "70.0000",
+                },
+                {
+                    "component_type": "LABOR",
+                    "cost_state": "PRICED",
+                    "unit_rate": "10.0000",
+                },
+            ],
+        }
         quotation = {
             "title": "งานปรับปรุง / Renovation",
             "customer_name": "บริษัท ลูกค้าทดสอบ จำกัด",
@@ -226,39 +252,18 @@ def test_composer_snapshot_center_and_media_ownership(
             json={
                 "expected_version": current["version"],
                 "quotation": quotation,
-                "nodes": [
-                    {
-                        "logical_id": logical_id,
-                        "parent_logical_id": None,
-                        "node_kind": "ITEM",
-                        "inclusion_state": "REQUIRED",
-                        "position": 0,
-                        "item_code": "P7-001",
-                        "description": "งานพื้น",
-                        "specification": "SPC",
-                        "quantity": "10.0000",
-                        "unit": "m²",
-                        "sell_material_unit_rate": "100.0000",
-                        "sell_labor_unit_rate": "20.0000",
-                        "components": [
-                            {
-                                "component_type": "MATERIAL",
-                                "cost_state": "PRICED",
-                                "unit_rate": "70.0000",
-                            },
-                            {
-                                "component_type": "LABOR",
-                                "cost_state": "PRICED",
-                                "unit_rate": "10.0000",
-                            },
-                        ],
-                    }
-                ],
+                "nodes": [scope_node],
             },
         )
         assert saved.status_code == 200, saved.text
         saved_data = saved.json()["data"]
         assert len(saved_data["quotation"]["visual_pages"]) == 1
+        scope_node["id"] = saved_data["nodes"][0]["id"]
+        persisted_components = {
+            item["component_type"]: item for item in saved_data["nodes"][0]["components"]
+        }
+        for component in scope_node["components"]:
+            component["id"] = persisted_components[component["component_type"]]["id"]
 
         in_use = client.request(
             "DELETE",
@@ -279,6 +284,45 @@ def test_composer_snapshot_center_and_media_ownership(
         assert document["schema_version"] == "boq-v2-document-snapshot-v2"
         assert document["composition"]["media_assets"][0]["sha256"] == media["sha256"]
         assert "storage_key" not in document["composition"]["media_assets"][0]
+
+        changed = client.patch(
+            f"/api/v1/boq/revisions/{draft['revision_id']}",
+            headers={**OWNER, "Idempotency-Key": _key("change-after-preview")},
+            json={
+                "expected_version": saved_data["version"],
+                "quotation": {**quotation, "title": "งานปรับปรุงฉบับแก้ไข"},
+                "nodes": [scope_node],
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        changed_data = changed.json()["data"]
+        stale_issue = client.post(
+            f"/api/v1/boq/revisions/{draft['revision_id']}/issue",
+            headers={**OWNER, "Idempotency-Key": _key("stale-preview-issue")},
+            json={
+                "expected_version": changed_data["version"],
+                "preview_snapshot_id": preview.json()["data"]["snapshot"]["snapshot_id"],
+            },
+        )
+        assert stale_issue.status_code == 409, stale_issue.text
+        assert stale_issue.json()["detail"]["code"] == "QUOTATION_PREVIEW_STALE"
+
+        current_preview = client.post(
+            f"/api/v1/boq/revisions/{draft['revision_id']}/preview-snapshots",
+            headers={**OWNER, "Idempotency-Key": _key("current-preview")},
+            json={"expected_version": changed_data["version"]},
+        )
+        assert current_preview.status_code == 201, current_preview.text
+        issued = client.post(
+            f"/api/v1/boq/revisions/{draft['revision_id']}/issue",
+            headers={**OWNER, "Idempotency-Key": _key("issue")},
+            json={
+                "expected_version": changed_data["version"],
+                "preview_snapshot_id": current_preview.json()["data"]["snapshot"]["snapshot_id"],
+            },
+        )
+        assert issued.status_code == 200, issued.text
+        assert issued.json()["data"]["status"] == "ISSUED"
 
         listing = client.get("/api/v1/boq/quotations?search=Phase%207", headers=ADMIN)
         assert listing.status_code == 200, listing.text

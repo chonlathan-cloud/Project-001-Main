@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 function updateSchedule(schedule, index, updates) {
   return schedule.map((item, itemIndex) => (
@@ -238,8 +239,11 @@ export default function QuotationLifecyclePanel({
       </div>
 
       <div className="quotation-actions" aria-label="Quotation lifecycle actions">
+        <Link className="boq-button boq-button-secondary" to={`/quotations/${revision.document_id}?revision_id=${revision.revision_id}`}>
+          <FilePlus2 size={16} /> Document composer
+        </Link>
         <button type="button" className="boq-button boq-button-secondary" onClick={onPreview} disabled={busy}>
-          <Eye size={16} /> Exact preview
+          <Eye size={16} /> {immutable ? 'ตัวอย่างฉบับตรึง / Exact snapshot' : 'ดูตัวอย่างเอกสาร / Preview quotation'}
         </button>
         {mutable ? (
           <button type="button" className="boq-button boq-button-primary" onClick={onIssue} disabled={busy}>

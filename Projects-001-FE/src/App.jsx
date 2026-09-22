@@ -35,6 +35,8 @@ const ProjectPage = lazy(() => import('./ProjectPage'))
 const ProjectDetailPage = lazy(() => import('./ProjectDetailPage'))
 const BoqWorkspace = lazy(() => import('./components/boq/BoqWorkspace'))
 const QuotationPreview = lazy(() => import('./components/quotations/QuotationPreview'))
+const QuotationCenter = lazy(() => import('./components/quotations/QuotationCenter'))
+const QuotationComposer = lazy(() => import('./components/quotations/QuotationComposer'))
 const PriceDatabaseWorkspace = lazy(() => import('./components/priceDatabase/PriceDatabaseWorkspace'))
 const InsightsPage = lazy(() => import('./InsightsPage'))
 const InputPage = lazy(() => import('./InputPage'))
@@ -233,6 +235,8 @@ function AppRoutes() {
         <Route path="/project/detail/:projectId" element={<ProjectDetailPage />} />
         <Route path="/project/detail/:projectId/boq" element={<BoqWorkspace />} />
         <Route path="/project/detail/:projectId/boq/preview" element={<QuotationPreview />} />
+        <Route path="/quotations" element={<QuotationCenter />} />
+        <Route path="/quotations/:quotationId" element={<QuotationComposer />} />
         <Route path="/price-database" element={<PriceDatabaseWorkspace />} />
         <Route path="/insights" element={<InsightsPage />} />
         <Route path="/approval" element={<ApprovalPage />} />

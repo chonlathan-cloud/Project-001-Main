@@ -38,6 +38,7 @@ from app.schemas.boq_quotation_schema import (
     BOQV2ExpectedVersionRequest,
     BOQV2ExportArtifactResponse,
     BOQV2ExportRequest,
+    BOQV2IssueRequest,
     BOQV2MediaCandidate,
     BOQV2MediaImportRequest,
     BOQV2QuotationPreviewResponse,
@@ -158,6 +159,7 @@ def _domain_http_exception(
         "QUOTATION_MEDIA_MISSING",
         "QUOTATION_MEDIA_HASH_MISMATCH",
         "QUOTATION_DOCUMENT_INVALID",
+        "QUOTATION_PREVIEW_STALE",
     }:
         http_status = status.HTTP_409_CONFLICT
     elif error.code == "QUOTATION_MEDIA_TOO_LARGE":
@@ -558,7 +560,7 @@ async def get_native_boq_preview(
 )
 async def issue_native_boq_quotation(
     revision_id: UUID,
-    request: BOQV2ExpectedVersionRequest,
+    request: BOQV2IssueRequest,
     idempotency_key: IdempotencyKey,
     db: AsyncSession = Depends(get_db),
     user: AuthenticatedUser = Depends(require_owner_user),

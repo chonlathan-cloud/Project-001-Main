@@ -19,6 +19,10 @@ class BOQV2ExpectedVersionRequest(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class BOQV2IssueRequest(BOQV2ExpectedVersionRequest):
+    preview_snapshot_id: UUID | None = None
+
+
 class BOQV2MediaImportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

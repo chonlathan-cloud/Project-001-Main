@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   FileCheck2,
+  FileText,
   HelpCircle,
   LayoutDashboard,
   LogOut,
@@ -335,6 +336,7 @@ const Sidebar = ({ collapsed = false, onToggleCollapsed }) => {
     if (isAdminUser) {
       const sharedAdminItems = [
         { name: 'Projects', icon: Briefcase, path: '/project' },
+        { name: 'Quotations', icon: FileText, path: '/quotations' },
         { name: 'Price Database', icon: LibraryBig, path: '/price-database' },
         { name: 'Daily Reports', icon: FileCheck2, path: '/daily-reports', badge: navBadges.dailyReports },
         { name: 'Input', icon: ClipboardList, path: '/input' },

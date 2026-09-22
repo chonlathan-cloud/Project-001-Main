@@ -878,6 +878,56 @@ export async function getNativeBoqRevision(revisionId) {
   return apiRequest(`/api/v1/boq/revisions/${revisionId}`);
 }
 
+export async function getNativeBoqQuotations(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.search) params.set('search', filters.search);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.documentKind) params.set('document_kind', filters.documentKind);
+  if (filters.dateFrom) params.set('date_from', filters.dateFrom);
+  if (filters.dateTo) params.set('date_to', filters.dateTo);
+  params.set('limit', String(filters.limit || 25));
+  params.set('offset', String(filters.offset || 0));
+  return apiRequest(`/api/v1/boq/quotations?${params}`);
+}
+
+export async function getNativeBoqMediaCandidates(revisionId) {
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}/media-candidates`);
+}
+
+export async function uploadNativeBoqMedia(revisionId, expectedVersion, file) {
+  const body = new FormData();
+  body.append('expected_version', String(expectedVersion));
+  body.append('file', file);
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}/media`, {
+    method: 'POST',
+    body,
+    timeoutMs: 120000,
+  });
+}
+
+export async function importNativeBoqMedia(revisionId, expectedVersion, originType, originId) {
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}/media/import`, {
+    method: 'POST',
+    body: JSON.stringify({
+      expected_version: expectedVersion,
+      origin_type: originType,
+      origin_id: originId,
+    }),
+    timeoutMs: 120000,
+  });
+}
+
+export async function deleteNativeBoqMedia(revisionId, mediaId, expectedVersion) {
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}/media/${mediaId}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ expected_version: expectedVersion }),
+  });
+}
+
+export async function getNativeBoqMediaSignedUrl(revisionId, mediaId) {
+  return apiRequest(`/api/v1/boq/revisions/${revisionId}/media/${mediaId}/signed-url`);
+}
+
 export async function createNativeBoqDocument(projectId, { idempotencyKey } = {}) {
   return apiRequest(`/api/v1/projects/${projectId}/boq/documents`, {
     method: 'POST',
@@ -932,10 +982,17 @@ export async function getNativeBoqPreview(revisionId, snapshotId) {
   return apiRequest(`/api/v1/boq/revisions/${revisionId}/preview?${params}`);
 }
 
-export async function issueNativeBoqQuotation(revisionId, expectedVersion, { idempotencyKey } = {}) {
+export async function issueNativeBoqQuotation(
+  revisionId,
+  expectedVersion,
+  { idempotencyKey, previewSnapshotId = null } = {},
+) {
   return nativeBoqCommand(
     `/api/v1/boq/revisions/${revisionId}/issue`,
-    { expected_version: expectedVersion },
+    {
+      expected_version: expectedVersion,
+      ...(previewSnapshotId ? { preview_snapshot_id: previewSnapshotId } : {}),
+    },
     'boq-issue',
     idempotencyKey,
   );

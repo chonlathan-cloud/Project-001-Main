@@ -1,3 +1,10 @@
+import {
+  DOCUMENT_SCHEMA_VERSION,
+  legacyPagesFromSections,
+  normalizeDocumentSections,
+  normalizeVisualPages,
+} from '../quotations/quotationDocumentState.js';
+
 const COMPONENT_TYPES = ['MATERIAL', 'LABOR'];
 
 function createUuid() {
@@ -201,6 +208,10 @@ function nullableDecimal(value) {
 }
 
 export function normalizeQuotationDraft(quotation = {}) {
+  const documentSections = normalizeDocumentSections(
+    quotation.document_sections,
+    quotation.document_pages,
+  );
   return {
     title: quotation.title || '',
     customer_name: quotation.customer_name || '',
@@ -224,9 +235,11 @@ export function normalizeQuotationDraft(quotation = {}) {
       fixed_amount: item.fixed_amount ?? null,
     })),
     commercial_terms: [...(quotation.commercial_terms || [])],
-    document_pages: quotation.document_pages?.length
-      ? [...quotation.document_pages]
-      : ['BOQ', 'PAYMENT_TERMS', 'COMMERCIAL_TERMS'],
+    document_pages: legacyPagesFromSections(documentSections),
+    document_schema_version: DOCUMENT_SCHEMA_VERSION,
+    document_sections: documentSections,
+    visual_pages: normalizeVisualPages(quotation.visual_pages),
+    media_assets: [...(quotation.media_assets || [])],
   };
 }
 
@@ -285,6 +298,7 @@ export function buildSavePayload(version, nodes, quotation) {
       net_sell_ex_vat: _netSellExVat,
       vat_amount: _vatAmount,
       grand_total: _grandTotal,
+      media_assets: _mediaAssets,
       ...draft
     } = normalizeQuotationDraft(quotation);
     payload.quotation = draft;

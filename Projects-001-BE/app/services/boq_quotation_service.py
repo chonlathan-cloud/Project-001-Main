@@ -33,6 +33,7 @@ from app.schemas.boq_quotation_schema import (
     BOQV2CreateAlternativeRequest,
     BOQV2CreateChangeOrderRequest,
     BOQV2ExpectedVersionRequest,
+    BOQV2IssueRequest,
     BOQV2QuotationPreviewResponse,
     BOQV2RecordAcceptanceRequest,
     BOQV2ReplacementDecision,
@@ -527,7 +528,7 @@ async def issue_quotation(
     db: AsyncSession,
     *,
     revision_id: UUID,
-    request: BOQV2ExpectedVersionRequest,
+    request: BOQV2IssueRequest,
     actor: str,
     idempotency_key: str,
 ) -> BOQV2RevisionResponse:
@@ -536,6 +537,27 @@ async def issue_quotation(
     revision, document, _ = await _revision_context(db, revision_id, for_update=True)
     assert_mutable_draft(revision.status)
     assert_expected_version(current=revision.version, expected=request.expected_version)
+    if request.preview_snapshot_id is not None:
+        reviewed_preview = (
+            await db.execute(
+                select(BOQV2RevisionSnapshot).where(
+                    BOQV2RevisionSnapshot.id == request.preview_snapshot_id,
+                    BOQV2RevisionSnapshot.revision_id == revision.id,
+                    BOQV2RevisionSnapshot.project_id == revision.project_id,
+                    BOQV2RevisionSnapshot.purpose == "PREVIEW",
+                )
+            )
+        ).scalar_one_or_none()
+        if reviewed_preview is None:
+            raise BOQDomainError(
+                "QUOTATION_PREVIEW_NOT_FOUND",
+                "The reviewed preview does not belong to this quotation revision",
+            )
+        if reviewed_preview.source_version != revision.version:
+            raise BOQDomainError(
+                "QUOTATION_PREVIEW_STALE",
+                "The quotation changed after the reviewed preview; create and review a new preview",
+            )
     command, prior_revision_id = await _begin_command(
         db,
         actor=actor,
@@ -545,6 +567,11 @@ async def issue_quotation(
         payload={
             "revision_id": str(revision_id),
             "expected_version": request.expected_version,
+            "preview_snapshot_id": (
+                str(request.preview_snapshot_id)
+                if request.preview_snapshot_id is not None
+                else None
+            ),
         },
     )
     if prior_revision_id is not None:

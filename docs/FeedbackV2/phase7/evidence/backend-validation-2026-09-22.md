@@ -39,12 +39,11 @@ corrupt/oversized uploads, Owner/Admin mutation boundaries, optimistic version
 conflict, cross-project media denial, immutable preview payloads, Quotation
 Center listing, customer-data allowlisting, bilingual multi-page PDF rendering,
 spreadsheet-native XLSX output, embedded visuals, captions, totals, and a
-nonblank rendered first PDF page.
+nonblank rendered first PDF page. It also covers rejection of issue when the
+explicit reviewed preview belongs to an older revision version.
 
 ## Pending gates
 
-- Frontend implementation has not started because the required Google Stitch
-  connector still returns `Authentication required`.
-- Frontend tests/lint/build, viewport screenshots, demo deployment, demo UAT,
-  sample end-to-end artifacts, and demo configuration capture remain pending.
+- Demo deployment/UAT, viewport screenshots, sample end-to-end artifacts, and
+  demo configuration capture remain pending.
 - The pre-existing Phase 6 evidence change remains outside the Phase 7 commit.
