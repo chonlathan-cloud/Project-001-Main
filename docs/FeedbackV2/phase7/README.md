@@ -50,5 +50,6 @@ This phase is authorized for isolated validation and the demo environment only.
 No beta/production migration, deployment, IAM change, or production data change
 is part of this implementation.
 
-See [backend validation evidence](evidence/backend-validation-2026-09-22.md)
-and [frontend validation evidence](evidence/frontend-validation-2026-09-22.md).
+See [backend validation evidence](evidence/backend-validation-2026-09-22.md),
+[frontend validation evidence](evidence/frontend-validation-2026-09-22.md),
+and [demo rollout evidence](evidence/demo-rollout-2026-09-22.md).

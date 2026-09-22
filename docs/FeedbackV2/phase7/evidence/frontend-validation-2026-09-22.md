@@ -43,10 +43,13 @@ passed
 The Vite build retains the pre-existing warning for chunks over 500 kB. Phase 7
 screens are route-level lazy chunks; no new build error was introduced.
 
-## Pending demo evidence
+## Demo status
 
-- Rendered screenshots at 1440, 1024, 768, and 390 px.
-- Authenticated demo walkthrough from BOQ through visual composition, preview,
-  issue, and customer PDF/XLSX export.
-- Artifact inspection and immutable SHA-256 check.
-- Demo configuration/revision/image digest record.
+- Frontend revision `projects-001-fe-00063-k54` serves 100% of demo traffic.
+- `/` and `/quotations` return HTTP 200; the final revision has no ERROR-level
+  Cloud Run logs in the bounded post-deploy query.
+- Frontend runtime spec hash is unchanged from the prior demo revision after
+  excluding the image reference.
+- Authenticated browser walkthrough and screenshots at 1440, 1024, 768, and
+  390 px remain blocked because Chrome reports another extension UI is open.
+  This is an automation-surface blocker, not an observed application error.
