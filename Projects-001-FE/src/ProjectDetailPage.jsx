@@ -25,6 +25,7 @@ import {
 import { getInsightWarehouseRows, getProjectDetailData } from './api';
 import BoqSheetCharts from './components/BoqSheetCharts';
 import BoqWorkbench from './components/BoqWorkbench';
+import { getLegacyBoqPresentation } from './components/boq/legacyBoqPresentation';
 import InspectionWorkspace from './components/inspection/InspectionWorkspace';
 import Loading from './components/Loading';
 import ProjectCashflowCards from './components/ProjectCashflowCards';
@@ -194,6 +195,29 @@ function SummaryCard({ icon, label, value, subtext, tone = 'neutral' }) {
         {subtext}
       </div>
     </div>
+  );
+}
+
+function LegacyBoqDisclosure({ collapsed, children }) {
+  if (!collapsed) return children;
+
+  return (
+    <details className="project-detail-legacy-archive">
+      <summary>
+        <span className="project-detail-legacy-archive-icon" aria-hidden="true">
+          <Database size={18} />
+        </span>
+        <span className="project-detail-legacy-archive-copy">
+          <strong>ประวัติ BOQ เดิม / Legacy BOQ History</strong>
+          <span>
+            ข้อมูล read-only สำหรับ finance และ audit — ไม่รวมกับงบปัจจุบันของ Native BOQ V2
+          </span>
+        </span>
+        <span className="project-detail-legacy-archive-status">READ ONLY</span>
+        <ChevronRight className="project-detail-legacy-archive-chevron" size={18} aria-hidden="true" />
+      </summary>
+      <div className="project-detail-legacy-archive-content">{children}</div>
+    </details>
   );
 }
 
@@ -600,7 +624,6 @@ function ProjectDetailPage() {
     );
   }
 
-  const sheetNames = data?.compareSummary?.sheetNames || [];
   const customerTree = Array.isArray(data?.customerTree) ? data.customerTree : [];
   const subcontractorTree = Array.isArray(data?.subcontractorTree) ? data.subcontractorTree : [];
   const compareTree = Array.isArray(data?.compareTree) ? data.compareTree : [];
@@ -609,6 +632,11 @@ function ProjectDetailPage() {
   const compareSummary = data?.compareSummary || {};
   const activeBudgetSnapshot = data?.budgetSnapshot || null;
   const legacyHistoryOnly = Boolean(data?.legacyHistoryOnly || activeBudgetSnapshot?.source_kind === 'V2');
+  const legacyBoqPresentation = getLegacyBoqPresentation({
+    legacyHistoryOnly,
+    hasCustomerBoq,
+    hasSubcontractorBoq,
+  });
   const isOperations = Boolean(data?.isSystemOperations || data?.systemKey === 'OPERATIONS');
   const canMutateFunds = canMutateAdminData(getStoredAuthUser());
   const wbsSummary = Array.isArray(data?.wbsSummary) ? data.wbsSummary : [];
@@ -625,6 +653,13 @@ function ProjectDetailPage() {
     fill: (executionToneStyles[item.tone] || executionToneStyles.neutral).fill,
   }));
   const projectName = passedProjectName || data.name;
+  const projectSectionTabs = PROJECT_SECTION_TABS
+    .filter((tab) => tab.value !== 'compare' || !legacyBoqPresentation.nativeOnly)
+    .map((tab) => (
+      tab.value === 'compare'
+        ? { ...tab, label: legacyBoqPresentation.navigationLabel }
+        : tab
+    ));
 
   const scrollToProjectSection = (sectionId, navigation) => {
     if (navigation) setActiveProjectNavigation(navigation);
@@ -682,8 +717,10 @@ function ProjectDetailPage() {
             <p style={{ maxWidth: '760px', fontSize: '15px', lineHeight: 1.7, color: 'var(--text-muted)' }}>
               {isOperations
                 ? 'ค่าใช้จ่ายส่วนกลางของบริษัท · Company-wide operating expenses and internal fund allocations.'
-                : legacyHistoryOnly
-                  ? 'งบปัจจุบันมาจาก Native BOQ V2 ส่วน Customer/Subcontractor BOQ ด้านล่างเก็บไว้เพื่อประวัติและการตรวจสอบเท่านั้น'
+                : legacyHistoryOnly && legacyBoqPresentation.hasLegacyRows
+                  ? 'งบปัจจุบันมาจาก Native BOQ V2 ส่วน Customer/Subcontractor BOQ เดิมเก็บไว้แบบ read-only เพื่อประวัติและการตรวจสอบ'
+                  : legacyHistoryOnly
+                    ? 'โครงการนี้ใช้ Native BOQ V2 และไม่มีข้อมูล Google Sheets หรือ Legacy BOQ ที่ต้องแสดง'
                   : 'หน้านี้ใช้เทียบ Customer BOQ กับ Subcontractor BOQ ในโครงสร้าง WBS เดียวกัน เพื่อให้เห็นงบ, variance และ margin ในแต่ละ node ได้ทันที'}
             </p>
           </div>
@@ -834,7 +871,7 @@ function ProjectDetailPage() {
           >
             <Wallet size={16} /> Actual Cashflow
           </button>
-          {PROJECT_SECTION_TABS.map((tab) => {
+          {projectSectionTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeProjectNavigation === tab.value;
             return (
@@ -873,16 +910,33 @@ function ProjectDetailPage() {
       <div id="project-workspace-section" className="project-detail-anchor-section">
 
       {!isOperations && activeProjectSection === 'compare' ? (
-        <>
-          {legacyHistoryOnly ? (
-            <section className="card" style={{ border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)' }}>
-              <strong>Legacy BOQ history</strong>
-              <div style={{ marginTop: '6px', color: 'var(--text-muted)', fontSize: '13px' }}>
-                The values below remain resolvable for finance and audit history. They are not added to or substituted for the active V2 budget.
-              </div>
-            </section>
-          ) : null}
-          {!hasCustomerBoq || !hasSubcontractorBoq ? (
+        legacyBoqPresentation.nativeOnly ? (
+          <section className="project-detail-native-boq-state" aria-labelledby="native-boq-state-title">
+            <span className="project-detail-native-boq-state-icon" aria-hidden="true">
+              <FileSpreadsheet size={22} />
+            </span>
+            <div>
+              <span className="project-detail-native-boq-state-kicker">NATIVE BOQ V2</span>
+              <h2 id="native-boq-state-title">จัดการ BOQ ใน Native Workspace</h2>
+              <p>
+                โครงการนี้ไม่มีข้อมูล Legacy BOQ ให้ตรวจสอบ และไม่ได้เชื่อม Google Sheets
+                รายการ ราคา ต้นทุน และ revisions ปัจจุบันอยู่ใน Native BOQ เท่านั้น
+              </p>
+            </div>
+            {BOQ_V2_ENABLED ? (
+              <Link
+                className="project-detail-native-boq-state-action"
+                to={`/project/detail/${projectId}/boq`}
+                state={{ projectName, projectId }}
+              >
+                Open Native BOQ
+                <ChevronRight size={16} aria-hidden="true" />
+              </Link>
+            ) : null}
+          </section>
+        ) : (
+          <>
+          {legacyBoqPresentation.showIncompleteWarning ? (
             <section
               className="card"
               style={{
@@ -909,6 +963,7 @@ function ProjectDetailPage() {
             </section>
           ) : null}
 
+          <LegacyBoqDisclosure collapsed={legacyBoqPresentation.collapseHistory}>
           <section className="project-detail-summary-grid">
             <SummaryCard
               icon={Building2}
@@ -1021,12 +1076,14 @@ function ProjectDetailPage() {
             onActiveViewChange={setActiveView}
             sheetFilter={sheetFilter}
             onSheetFilterChange={setSheetFilter}
-            sheetNames={sheetNames}
             customerTree={customerTree}
             subcontractorTree={subcontractorTree}
             compareTree={compareTree}
+            historical={legacyBoqPresentation.collapseHistory}
           />
+          </LegacyBoqDisclosure>
         </>
+        )
       ) : null}
 
       {!isOperations && activeProjectSection === 'warehouse' ? (

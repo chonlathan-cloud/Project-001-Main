@@ -7,6 +7,11 @@ import {
   Search,
   Table2,
 } from 'lucide-react';
+import {
+  buildLegacySheetOptions,
+  normalizeSheetKey,
+  normalizeSheetName,
+} from './boq/legacyBoqPresentation';
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
@@ -24,46 +29,7 @@ const VIEW_OPTIONS = [
   { value: 'subcontractor', label: 'Subcontractor' },
 ];
 
-const PRIMARY_SHEETS = ['EE', 'AC', 'IN', 'SN'];
 const TABLE_COLUMN_COUNT = 8;
-
-const normalizeSheetName = (value) => String(value || '').trim();
-const normalizeSheetKey = (value) => normalizeSheetName(value).toUpperCase();
-
-const buildSheetOptions = (sheetNames = [], rows = []) => {
-  const countsBySheet = rows.reduce((accumulator, row) => {
-    const sheetKey = normalizeSheetKey(row.sheetName);
-    if (!sheetKey) return accumulator;
-    return {
-      ...accumulator,
-      [sheetKey]: (accumulator[sheetKey] || 0) + 1,
-    };
-  }, {});
-
-  const apiSheets = sheetNames
-    .map((sheetName) => normalizeSheetName(sheetName))
-    .filter(Boolean);
-  const rowSheets = rows
-    .map((row) => normalizeSheetName(row.sheetName))
-    .filter(Boolean);
-  const orderedSheets = [...PRIMARY_SHEETS, ...apiSheets, ...rowSheets]
-    .filter((sheetName, index, list) => {
-      const sheetKey = normalizeSheetKey(sheetName);
-      return sheetKey && list.findIndex((item) => normalizeSheetKey(item) === sheetKey) === index;
-    });
-
-  return [
-    { value: 'ALL', label: 'All sheets', count: rows.length },
-    ...orderedSheets.map((sheetName) => {
-      const sheetKey = normalizeSheetKey(sheetName);
-      return {
-        value: sheetKey,
-        label: sheetName,
-        count: countsBySheet[sheetKey] || 0,
-      };
-    }),
-  ];
-};
 
 const matchStatusLabel = (status) => {
   if (status === 'CUSTOMER_ONLY') return 'Customer only';
@@ -194,7 +160,7 @@ function MatchBadge({ status }) {
   );
 }
 
-function EmptyState({ activeView, sheetFilter, query }) {
+function EmptyState({ activeView, sheetFilter, query, historical }) {
   const sheetKey = normalizeSheetKey(sheetFilter);
   const hasSheetFilter = Boolean(sheetKey && sheetKey !== 'ALL');
 
@@ -206,8 +172,8 @@ function EmptyState({ activeView, sheetFilter, query }) {
         {query
           ? `No ${activeView} rows match "${query}".`
           : hasSheetFilter
-            ? `No ${activeView} rows in sheet ${sheetFilter}.`
-            : `No ${activeView} BOQ rows are available yet.`}
+            ? `No ${historical ? 'archived ' : ''}${activeView} rows in sheet ${sheetFilter}.`
+            : `No ${historical ? 'archived ' : ''}${activeView} BOQ rows are available.`}
       </span>
     </div>
   );
@@ -218,10 +184,10 @@ export default function BoqWorkbench({
   onActiveViewChange,
   sheetFilter,
   onSheetFilterChange,
-  sheetNames,
   customerTree,
   subcontractorTree,
   compareTree,
+  historical = false,
 }) {
   const [queryDraft, setQueryDraft] = useState('');
   const [expandedState, setExpandedState] = useState(() => ({
@@ -240,8 +206,8 @@ export default function BoqWorkbench({
     [activeTree, activeView]
   );
   const sheetOptions = useMemo(
-    () => buildSheetOptions(sheetNames, allRows),
-    [sheetNames, allRows]
+    () => buildLegacySheetOptions(allRows, historical ? 'All legacy sheets' : 'All sheets'),
+    [allRows, historical]
   );
   const expandableKeys = useMemo(() => getAllExpandableKeys(allRows), [allRows]);
   const rootKeys = useMemo(
@@ -315,16 +281,18 @@ export default function BoqWorkbench({
         <div>
           <div className="boq-workbench-kicker">
             <Table2 size={16} />
-            BOQ Workbench
+            {historical ? 'Archived data' : 'Legacy read-only'}
           </div>
-          <h2>Bill of Quantities</h2>
+          <h2>{historical ? 'Customer / Subcontractor BOQ' : 'Legacy BOQ Comparison'}</h2>
           <p>
-            Inspect WBS hierarchy, sheet source, quantities, material/labor split, and customer vs subcontractor variance in a table layout.
+            {historical
+              ? 'ข้อมูล Customer/Subcontractor BOQ ที่เก็บไว้เพื่อ audit และประวัติเท่านั้น ไม่ใช่งบปัจจุบันของ Native BOQ V2'
+              : 'Read-only comparison of the retained Customer and Subcontractor BOQ hierarchy.'}
           </p>
         </div>
         <div className="boq-workbench-count">
           <span>{visibleRows.length}</span>
-          <small>visible rows</small>
+          <small>{historical ? 'archived rows' : 'visible rows'}</small>
         </div>
       </div>
 
@@ -335,7 +303,11 @@ export default function BoqWorkbench({
               key={option.value}
               type="button"
               className={activeView === option.value ? 'active' : ''}
-              onClick={() => onActiveViewChange(option.value)}
+              onClick={() => {
+                onActiveViewChange(option.value);
+                onSheetFilterChange('ALL');
+                setExpandedState({ signature: '', keys: [] });
+              }}
             >
               {option.label}
             </button>
@@ -364,23 +336,25 @@ export default function BoqWorkbench({
         </div>
       </div>
 
-      <div className="boq-workbench-sheet-filter" aria-label="Filter by BOQ sheet">
-        {sheetOptions.map((option) => {
-          const isActive = normalizeSheetKey(sheetFilter) === normalizeSheetKey(option.value);
-          return (
-            <button
-              key={option.value}
-              type="button"
-              className={`${isActive ? 'active' : ''} ${option.count ? '' : 'is-empty'}`}
-              onClick={() => selectSheetFilter(option.value)}
-              aria-pressed={isActive}
-            >
-              <span>{option.label}</span>
-              <strong>{option.count}</strong>
-            </button>
-          );
-        })}
-      </div>
+      {sheetOptions.length > 1 ? (
+        <div className="boq-workbench-sheet-filter" aria-label="Filter by legacy BOQ sheet">
+          {sheetOptions.map((option) => {
+            const isActive = normalizeSheetKey(sheetFilter) === normalizeSheetKey(option.value);
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className={isActive ? 'active' : ''}
+                onClick={() => selectSheetFilter(option.value)}
+                aria-pressed={isActive}
+              >
+                <span>{option.label}</span>
+                <strong>{option.count}</strong>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       <div className="boq-workbench-table-wrap">
         {visibleRows.length ? (
@@ -503,7 +477,12 @@ export default function BoqWorkbench({
             </tbody>
           </table>
         ) : (
-          <EmptyState activeView={activeView} sheetFilter={sheetFilter} query={queryDraft.trim()} />
+          <EmptyState
+            activeView={activeView}
+            sheetFilter={sheetFilter}
+            query={queryDraft.trim()}
+            historical={historical}
+          />
         )}
       </div>
     </section>
