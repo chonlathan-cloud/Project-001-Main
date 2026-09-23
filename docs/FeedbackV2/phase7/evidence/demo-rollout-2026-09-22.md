@@ -153,3 +153,35 @@ and drag/drop guidance, separate Daily Report/Inspection import, supported
 formats, 10 MB per-image limit, and Draft-only rule. No file was uploaded and
 no Demo record was changed during this verification. The extension-controlled
 viewport screenshot path remains blocked by another Chrome extension UI.
+
+## Legacy BOQ presentation follow-up — 2026-09-23
+
+This frontend-only follow-up was deployed to Demo after simplifying how
+Google Sheets-era BOQ data is presented. It did not run a migration, deploy the
+backend, change IAM, or modify Demo records.
+
+- Commit: `dbaa85036795e5ce15a963118dc39cd3fa03f73c`
+- Image tag: `dbaa850-legacy-boq-history-demo`
+- Image manifest-list digest:
+  `sha256:977061a14300f3b42d91671529a65b2db59009e97cbf89e47568fef59ab9a8ab`
+- Cloud Run platform image digest:
+  `sha256:ecffc3b6341229a90325b89b7a6dcbf9bdf28a6736a88331de93411270ce3b19`
+- Cloud Run revision: `projects-001-fe-00065-69c`, 100% traffic
+- Predecessor and replacement revision `.spec` hashes, canonicalized without
+  the container image: both
+  `424db53aa69cd7c303edcfa4ef071cc46e77a95d105b5542023c7e54e93395e1`
+- Demo frontend `/`, `/project`, and the Renovation The Mall detail route:
+  HTTP 200
+- New frontend revision ERROR-or-5xx logs since creation: zero
+- Beta frontend remained `projects-001-fe-beta-00019-9k7` at 100% traffic.
+
+Validation before rollout was 22 frontend tests passed, ESLint passed,
+production build passed with the existing chunk-size warning, and
+`git diff --check` passed.
+
+Authenticated read-only browser UAT confirmed the new revision is serving.
+The Renovation The Mall detail response currently classifies its active budget
+as `LEGACY / NO_BUDGET_DATA`; therefore the compatibility workbench remains
+visible for that project. The Native V2 behavior in this follow-up only hides
+the legacy workbench when the active snapshot is V2 and there are no legacy
+rows, or collapses it as read-only history when V2 coexists with legacy rows.
