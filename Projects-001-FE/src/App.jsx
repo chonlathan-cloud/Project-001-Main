@@ -40,6 +40,7 @@ const QuotationComposer = lazy(() => import('./components/quotations/QuotationCo
 const PriceDatabaseWorkspace = lazy(() => import('./components/priceDatabase/PriceDatabaseWorkspace'))
 const InsightsPage = lazy(() => import('./InsightsPage'))
 const InputPage = lazy(() => import('./InputPage'))
+const InputSuccessPage = lazy(() => import('./components/InputSuccessPage'))
 const ApprovalPage = lazy(() => import('./ApprovalPage'))
 const ChatAIPage = lazy(() => import('./ChatAIPage'))
 const SettingPage = lazy(() => import('./SettingPage'))
@@ -248,6 +249,7 @@ function AppRoutes() {
 
       <Route element={<ProtectedLayout />}>
         <Route path="/input" element={<InputPage />} />
+        <Route path="/input/success/:requestId" element={<InputSuccessPage />} />
         <Route path="/inspection/tasks" element={<InspectionTasksPage />} />
         <Route path="/profile/me" element={<ProfilePage />} />
         <Route path="/daily-reports/me" element={<DailyReportsPage />} />

@@ -1,4 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import SubcontractorInputWorkflow from './components/SubcontractorInputWorkflow';
+import { createInputSubmissionLock, inputErrorStep, isInputOutcomeUnknown } from './components/inputWorkflowUtils';
 import {
   ArrowUp,
   Camera,
@@ -414,6 +417,8 @@ const InputField = ({
     {label ? <FieldLabel label={label} required={required} hint={hint} /> : null}
     <input
       type={type}
+      aria-label={label}
+      aria-invalid={Boolean(error)}
       inputMode={inputMode}
       value={value}
       onChange={onChange}
@@ -447,6 +452,8 @@ const SelectField = ({
     {label ? <FieldLabel label={label} required={required} hint={hint} /> : null}
     <div style={{ position: 'relative' }}>
       <select
+        aria-label={label}
+        aria-invalid={Boolean(error)}
         value={value}
         onChange={onChange}
         disabled={disabled}
@@ -517,6 +524,8 @@ const TextAreaField = ({ label, placeholder, style = {}, value, onChange, requir
   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', ...style }}>
     {label ? <FieldLabel label={label} required={required} hint={hint} /> : null}
     <textarea
+      aria-label={label}
+      aria-invalid={Boolean(error)}
       value={value}
       onChange={onChange}
       placeholder={placeholder}
@@ -776,7 +785,15 @@ const buildSubmitReviewWarnings = ({
   return warnings;
 };
 
+const WORKFLOW_FIELDS = { InputField, SelectField, TextAreaField, TagInput };
+
 const InputPage = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [inputStep, setInputStep] = useState(1);
+  const [inputErrorField, setInputErrorField] = useState('');
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
+  const submissionLock = useRef(createInputSubmissionLock());
   const authUser = getStoredAuthUser() || {};
   const isSubcontractor = isSubcontractorUser(authUser) && !isAdminUser(authUser);
   const [loading, setLoading] = useState(true);
@@ -968,6 +985,9 @@ const InputPage = () => {
   };
 
   const handleClearDraft = () => {
+    setInputStep(1);
+    setInputErrorField('');
+    setOutcomeUnknown(false);
     setForm(buildDefaultedFormState(inputDefaults, {
       projectId:
         projects.length === 1
@@ -1020,6 +1040,8 @@ const InputPage = () => {
     }
 
     setSelectedFile(file);
+    setOutcomeUnknown(false);
+    setInputErrorField('');
     setExtractData(null);
     setUploadedReceipt(null);
     setSubmitResult(null);
@@ -1095,7 +1117,18 @@ const InputPage = () => {
     }
   };
 
-  const submitForm = async ({ skipReview = false } = {}) => {
+  const failSubmission = (message, field) => {
+    setSubmitError(message);
+    if (isSubcontractor) {
+      setInputErrorField(field);
+      setInputStep(inputErrorStep(field));
+    }
+  };
+
+  const submitForm = async ({ skipReview = false, reviewOnly = false } = {}) => {
+    if (isSubmitting || isExtracting) return;
+    setInputErrorField('');
+    setOutcomeUnknown(false);
     setSubmitError('');
     setSubmitResult(null);
     setSubmitReceiptPreview(null);
@@ -1103,19 +1136,19 @@ const InputPage = () => {
     setFlashMessage('');
 
     if (!form.projectId) {
-      setSubmitError('กรุณาเลือกโครงการก่อนส่งคำขอ');
+      failSubmission('กรุณาเลือกโครงการก่อนส่งคำขอ', 'projectId');
       return;
     }
     if (!selectedFile && !uploadedReceipt) {
-      setSubmitError('กรุณาอัปโหลดรูปหรือ PDF ของบิล/ใบเสร็จก่อนส่งคำขอ');
+      failSubmission('กรุณาอัปโหลดรูปหรือ PDF ของบิล/ใบเสร็จก่อนส่งคำขอ', 'receiptFile');
       return;
     }
     if (!form.requesterName.trim()) {
-      setSubmitError('กรุณากรอกชื่อ - นามสกุล');
+      failSubmission('กรุณากรอกชื่อ - นามสกุล', 'requesterName');
       return;
     }
     if (!form.requestDate) {
-      setSubmitError('กรุณาระบุวันที่');
+      failSubmission('กรุณาระบุวันที่', 'requestDate');
       return;
     }
     const requestEntryType = isSubcontractor ? 'EXPENSE' : form.entryType;
@@ -1127,11 +1160,11 @@ const InputPage = () => {
     });
     const lineItemTotalForValidation = sumLineItems(lineItemsForValidation);
     if (!lineItemsForValidation.length) {
-      setSubmitError('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ');
+      failSubmission('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'lineItems');
       return;
     }
     if (lineItemTotalForValidation <= 0) {
-      setSubmitError('ยอดรวมรายการต้องมากกว่า 0');
+      failSubmission('ยอดรวมรายการต้องมากกว่า 0', 'lineItems');
       return;
     }
 
@@ -1143,40 +1176,40 @@ const InputPage = () => {
         : normalizeWorkType(form.workType);
     const normalizedRequestType = isIncomeRequest ? '' : normalizeRequestType(form.requestType);
     if (!isIncomeRequest && !normalizedWorkType) {
-      setSubmitError(form.workType === OTHER_WORK_TYPE_VALUE ? 'กรุณาระบุประเภทงาน' : 'กรุณาเลือกประเภทงาน');
+      failSubmission(form.workType === OTHER_WORK_TYPE_VALUE ? 'กรุณาระบุประเภทงาน' : 'กรุณาเลือกประเภทงาน', form.workType === OTHER_WORK_TYPE_VALUE ? 'customWorkType' : 'workType');
       return;
     }
     if (!isIncomeRequest && !normalizedRequestType) {
-      setSubmitError('กรุณาเลือกประเภทการเบิก');
+      failSubmission('กรุณาเลือกประเภทการเบิก', 'requestType');
       return;
     }
     if (!isIncomeRequest && !form.vendorName.trim()) {
-      setSubmitError('กรุณากรอกผู้ขาย / ร้านค้า');
+      failSubmission('กรุณากรอกผู้ขาย / ร้านค้า', 'vendorName');
       return;
     }
     if (!isIncomeRequest && !form.documentDate) {
-      setSubmitError('กรุณาระบุวันที่เอกสาร');
+      failSubmission('กรุณาระบุวันที่เอกสาร', 'documentDate');
       return;
     }
     const normalizedVatMode = normalizeAccountingVatMode(form.accountingVatMode);
     if (!isIncomeRequest && !normalizedVatMode) {
-      setSubmitError('กรุณาเลือกรูปแบบ VAT');
+      failSubmission('กรุณาเลือกรูปแบบ VAT', 'accountingVatMode');
       return;
     }
     const submitNeedsVatFields = !isIncomeRequest && ['vat_inclusive', 'vat_exclusive'].includes(normalizedVatMode);
     const submitNeedsTaxFields = submitNeedsVatFields || normalizedRequestType === 'ค่าแรง';
     if (submitNeedsVatFields && !form.receiptNo.trim()) {
-      setSubmitError('กรุณากรอกเลขที่ใบเสร็จสำหรับรายการที่มี VAT');
+      failSubmission('กรุณากรอกเลขที่ใบเสร็จสำหรับรายการที่มี VAT', 'receiptNo');
       return;
     }
     if (submitNeedsTaxFields) {
       if (!form.vendorTaxId.trim() || !form.vendorBranch.trim() || !form.vendorAddress.trim()) {
-        setSubmitError('กรุณากรอกเลขผู้เสียภาษี สาขา และที่อยู่ผู้ขายให้ครบ');
+        failSubmission('กรุณากรอกเลขผู้เสียภาษี สาขา และที่อยู่ผู้ขายให้ครบ', !form.vendorTaxId.trim() ? 'vendorTaxId' : !form.vendorBranch.trim() ? 'vendorBranch' : 'vendorAddress');
         return;
       }
     }
     if (form.vendorTaxId.trim() && form.vendorTaxId.trim().length !== 13) {
-      setSubmitError('เลขผู้เสียภาษีผู้ขายต้องมี 13 หลัก');
+      failSubmission('เลขผู้เสียภาษีผู้ขายต้องมี 13 หลัก', 'vendorTaxId');
       return;
     }
     const normalizedDocumentDate = form.documentDate || form.requestDate;
@@ -1190,27 +1223,27 @@ const InputPage = () => {
     const numericAmount = Number((enteredAmount > 0 ? enteredAmount : normalizedLineItemTotal).toFixed(2));
 
     if (isIncomeRequest && normalizedTags.length === 0) {
-      setSubmitError('รายการรายรับต้องมีแท็กอย่างน้อย 1 รายการ');
+      failSubmission('รายการรายรับต้องมีแท็กอย่างน้อย 1 รายการ', 'tags');
       return;
     }
     if (!isIncomeRequest && form.workType === OTHER_WORK_TYPE_VALUE && !normalizedWorkType) {
-      setSubmitError('กรุณาระบุประเภทงานอื่นๆ');
+      failSubmission('กรุณาระบุประเภทงานอื่นๆ', 'customWorkType');
       return;
     }
     if (!isIncomeRequest && form.requestType && !normalizedRequestType) {
-      setSubmitError('ประเภทการเบิกไม่ถูกต้อง กรุณาเลือกใหม่');
+      failSubmission('ประเภทการเบิกไม่ถูกต้อง กรุณาเลือกใหม่', 'requestType');
       return;
     }
     if (normalizedRequestType === 'ค่าเบิกล่วงหน้า' && requestEntryType !== 'EXPENSE') {
-      setSubmitError('ค่าเบิกล่วงหน้า ใช้ได้เฉพาะรายการรายจ่าย');
+      failSubmission('ค่าเบิกล่วงหน้า ใช้ได้เฉพาะรายการรายจ่าย', 'requestType');
       return;
     }
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      setSubmitError('จำนวนเงินไม่ถูกต้อง');
+      failSubmission('จำนวนเงินไม่ถูกต้อง', 'amount');
       return;
     }
     if (!normalizedLineItems.length) {
-      setSubmitError('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ');
+      failSubmission('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', 'lineItems');
       return;
     }
 
@@ -1224,10 +1257,10 @@ const InputPage = () => {
       lineItemTotal: normalizedLineItemTotal,
     });
 
-    if (!skipReview && reviewWarnings.length) {
+    if (reviewOnly || (!skipReview && reviewWarnings.length)) {
       const selectedProject = projects.find((project) => String(project.project_id) === String(form.projectId));
       setSubmitReview({
-        open: true,
+        open: !reviewOnly,
         warnings: reviewWarnings,
         summary: {
           projectName: selectedProject?.name || '-',
@@ -1240,11 +1273,13 @@ const InputPage = () => {
           receiptFileName,
         },
       });
-      return;
+      return reviewOnly;
     }
 
-    setSubmitReview(createEmptySubmitReview());
+    if (!isSubcontractor) setSubmitReview(createEmptySubmitReview());
 
+    if (!submissionLock.current.acquire()) return;
+    let postAttempted = false;
     try {
       setIsSubmitting(true);
       let uploadedReceiptPayload = uploadedReceipt;
@@ -1254,6 +1289,7 @@ const InputPage = () => {
         setUploadedReceipt(uploadedReceiptPayload);
       }
 
+      postAttempted = true;
       const response = await submitInputRequest({
         project_id: form.projectId,
         entry_type: requestEntryType,
@@ -1287,6 +1323,11 @@ const InputPage = () => {
         ocr_low_confidence_fields: extractData?.low_confidence_fields || [],
       });
 
+      if (isSubcontractor) {
+        if (!response?.request_id) throw Object.assign(new Error('ยังยืนยันผลการส่งไม่ได้'), { code: 'UNCONFIRMED_RESULT' });
+        navigate(`/input/success/${response.request_id}`, { state: { request: response, ownerSubcontractorId: authUser.subcontractor_id }, replace: true });
+        return;
+      }
       setSubmitResult(response);
       if (normalizedWorkType) {
         setWorkTypeOptions((current) =>
@@ -1319,8 +1360,10 @@ const InputPage = () => {
       }
       setMobilePreviewOpen(false);
     } catch (error) {
+      setOutcomeUnknown(postAttempted && isInputOutcomeUnknown(error));
       setSubmitError(error.message || 'ส่งคำขอไม่สำเร็จ');
     } finally {
+      submissionLock.current.release();
       setIsSubmitting(false);
     }
   };
@@ -1340,6 +1383,10 @@ const InputPage = () => {
     setSubmitReview(createEmptySubmitReview());
     await submitForm({ skipReview: true });
   };
+
+  if (isSubcontractor && new URLSearchParams(location.search).get('view') === 'history') {
+    return <SubcontractorInputWorkflow form={form} fields={WORKFLOW_FIELDS} busy={isExtracting || isSubmitting} />;
+  }
 
   if (loading) return <Loading />;
 
@@ -1445,6 +1492,37 @@ const InputPage = () => {
     isExtracting ||
     !hasAssignedProjects ||
     hasBlockingInputRequirements;
+
+  if (isSubcontractor) {
+    const nextStep = async () => {
+      if (inputStep === 1) {
+        if (!form.projectId) { failSubmission('กรุณาเลือกโครงการ', 'projectId'); return; }
+        if (!hasReceiptFile) { failSubmission('กรุณาแนบบิลก่อน', 'receiptFile'); return; }
+        setSubmitError('');
+        setInputErrorField('');
+        setInputStep(2);
+      } else {
+        setHasAttemptedSubmit(true);
+        if (await submitForm({ reviewOnly: true })) setInputStep(3);
+      }
+    };
+    return <SubcontractorInputWorkflow
+      form={form} fields={WORKFLOW_FIELDS} requirements={inputFieldRequirements}
+      projectOptions={projectOptions} workTypeOptions={workTypeSelectOptions}
+      requestTypeOptions={REQUEST_TYPE_OPTIONS} vatOptions={ACCOUNTING_VAT_MODE_OPTIONS}
+      otherWorkType={OTHER_WORK_TYPE_VALUE} lineItems={formLineItems} lineTotal={numericFormAmount}
+      onChange={handleFieldChange} onLineItemsChange={handleLineItemsChange}
+      tagProps={{ selectedTags, suggestions: tagOptions, draftValue: tagDraft, onDraftChange: setTagDraft, onAddTag: handleAddTag, onRemoveTag: handleRemoveTag }}
+      selectedFile={selectedFile} fileInputRef={fileInputRef} cameraInputRef={cameraInputRef}
+      onFileChange={handleFileChange} onPickFile={handlePickFile} onPickCamera={handlePickCamera}
+      extractData={extractData} localPreviewUrl={localReceiptPreviewUrl} ocrWarning={extractWarningText}
+      formatEntryTypeLabel={formatEntryTypeLabel} step={inputStep}
+      onStepChange={(step) => { setInputErrorField(''); setSubmitError(''); setInputStep(step); }}
+      onNext={nextStep} onSubmit={() => submitForm({ skipReview: true })} onClear={handleClearDraft}
+      busy={isExtracting || isSubmitting} extracting={isExtracting} error={submitError}
+      errorField={inputErrorField} outcomeUnknown={outcomeUnknown} reviewWarnings={submitReview.warnings}
+    />;
+  }
 
   return (
     <div className="subcontractor-input-page" style={{ maxWidth: '1400px', margin: '0 auto', padding: '20px' }}>

@@ -79,7 +79,7 @@ export default function WorkspaceTopbar({ authUser, pathname }) {
       if (isSubcontractor && pathname.startsWith('/input')) {
         return {
           title: 'ส่งคำขอ',
-          description: 'อัปโหลดใบเสร็จและส่งรายการรายรับหรือรายจ่ายให้ผู้ดูแลตรวจสอบ',
+          description: '',
         };
       }
       if (isSubcontractor && pathname.startsWith('/profile')) {
@@ -103,7 +103,7 @@ export default function WorkspaceTopbar({ authUser, pathname }) {
     <header className={`workspace-topbar${isSubcontractor ? ' subcontractor-workspace-topbar' : ''}`}>
       <div>
         <h1 className="workspace-title">{meta.title}</h1>
-        <p className="workspace-description">{meta.description}</p>
+        {meta.description ? <p className="workspace-description">{meta.description}</p> : null}
       </div>
 
       <div className="workspace-actions">

@@ -102,6 +102,7 @@ function InputLineItemsEditor({
             <div role="cell">
               <input
                 type="text"
+                aria-label={`รายการที่ ${index + 1}`}
                 value={item.description || ''}
                 onChange={(event) => handleChange(index, 'description', event.target.value)}
                 placeholder="ชื่อรายการ"
@@ -109,8 +110,10 @@ function InputLineItemsEditor({
               />
             </div>
             <div role="cell">
+              <span className="input-line-items-control-label" aria-hidden="true">จำนวน</span>
               <input
                 type="number"
+                aria-label={`จำนวนรายการที่ ${index + 1}`}
                 inputMode="decimal"
                 value={item.qty ?? ''}
                 onChange={(event) => handleChange(index, 'qty', event.target.value)}
@@ -119,8 +122,10 @@ function InputLineItemsEditor({
               />
             </div>
             <div role="cell">
+              <span className="input-line-items-control-label" aria-hidden="true">ราคา/หน่วย</span>
               <input
                 type="number"
+                aria-label={`ราคาต่อหน่วยรายการที่ ${index + 1}`}
                 inputMode="decimal"
                 value={item.unit_price ?? ''}
                 onChange={(event) => handleChange(index, 'unit_price', event.target.value)}
@@ -129,8 +134,10 @@ function InputLineItemsEditor({
               />
             </div>
             <div role="cell">
+              <span className="input-line-items-control-label" aria-hidden="true">ยอดรวม</span>
               <input
                 type="number"
+                aria-label={`ยอดรวมรายการที่ ${index + 1}`}
                 inputMode="decimal"
                 value={item.amount ?? ''}
                 onChange={(event) => handleChange(index, 'amount', event.target.value)}

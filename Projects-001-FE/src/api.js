@@ -1784,6 +1784,11 @@ export async function uploadInputReceipt(file) {
   });
 }
 
+export async function getMyInputRequests() {
+  const data = await apiRequest('/api/v1/input/requests');
+  return Array.isArray(data) ? data : [];
+}
+
 export async function submitInputRequest(payload) {
   return apiRequest('/api/v1/input/requests', {
     method: 'POST',
